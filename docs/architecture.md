@@ -71,14 +71,14 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
-| `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 27 |
+| `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 28 |
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**304 tests pass** — 34 + 40 + 81 + 81 + 41 + 27. Run `uv run pytest` to see the count
+**305 tests pass** — 34 + 40 + 81 + 81 + 41 + 28. Run `uv run pytest` to see the count
 yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

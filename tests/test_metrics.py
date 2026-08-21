@@ -54,14 +54,13 @@ def test_sharpe_of_a_two_point_series_is_the_hand_computed_value() -> None:
 def test_sharpe_annualises_by_the_square_root_of_the_period_count() -> None:
     # Same series, so the unannualised ratio is sqrt(2). At 252 periods the
     # answer is sqrt(2) * sqrt(252) = sqrt(504) = 22.449944320643652.
+    # The annualisation must be sqrt(n), not n: those differ by a factor of
+    # sqrt(252) ~ 15.87, the gap between a Sharpe of 1.4 and one of 22, and only
+    # one of them looks wrong at a glance. Pinning the value to sqrt(504)
+    # already excludes sqrt(2)*252 = 356.4, so no second assertion is needed and
+    # one would not be able to fail independently anyway.
     assert sharpe(series([0.01, 0.03]), periods_per_year=252) == pytest.approx(
         math.sqrt(504), rel=1e-12
-    )
-    # The annualisation must be sqrt(n), not n. Those differ by a factor of
-    # sqrt(252) ~ 15.87, which is the difference between a Sharpe of 1.4 and a
-    # Sharpe of 22 - and only one of them looks wrong at a glance.
-    assert sharpe(series([0.01, 0.03]), periods_per_year=252) != pytest.approx(
-        math.sqrt(2) * 252, rel=1e-6
     )
 
 
@@ -69,9 +68,11 @@ def test_the_default_period_count_is_252() -> None:
     # Pinned as a literal, not as TRADING_DAYS_PER_YEAR, so that changing the
     # constant cannot move both sides of the comparison together.
     assert TRADING_DAYS_PER_YEAR == 252
-    assert sharpe(series([0.01, 0.03])) == pytest.approx(
-        sharpe(series([0.01, 0.03]), periods_per_year=252), rel=1e-12
-    )
+    # And the default must BE that, asserted against a hand-derived value rather
+    # than against sharpe(..., periods_per_year=252). Comparing the default call
+    # to the explicit one only checks the default is wired to the constant; it
+    # holds whatever the constant is, so it cannot fail on its own.
+    assert sharpe(series([0.01, 0.03])) == pytest.approx(math.sqrt(504), rel=1e-12)
 
 
 def test_sharpe_uses_the_sample_standard_deviation_not_the_population_one() -> None:
@@ -80,9 +81,31 @@ def test_sharpe_uses_the_sample_standard_deviation_not_the_population_one() -> N
     #   population sd divides by n   = 2  -> sqrt(0.0001)  = 0.01
     # So the population form gives 0.02 / 0.01 = 2.0, against sqrt(2) = 1.414.
     # A wrong-by-41% Sharpe is entirely plausible-looking on its own.
-    value = sharpe(series([0.01, 0.03]), periods_per_year=1)
-    assert value == pytest.approx(math.sqrt(2), rel=1e-12)
-    assert value != pytest.approx(2.0, rel=1e-6)
+    assert sharpe(series([0.01, 0.03]), periods_per_year=1) == pytest.approx(
+        math.sqrt(2), rel=1e-12
+    )
+
+
+def test_the_divisor_is_n_minus_one_and_not_a_hardcoded_one() -> None:
+    # Every other Sharpe case in this file uses two observations, and at n = 2
+    # the divisor n-1 IS 1 - so "divide by n-1" and "divide by the literal 1"
+    # are the same operation and the whole file passes either. An auditor found
+    # that; mutation testing could not, because both forms are the same code
+    # path at n = 2.
+    #
+    # Three observations separate all three candidates. returns = [0.01, 0.02,
+    # 0.03], mean 0.02, deviations -0.01 / 0.00 / +0.01, sum of squares 0.0002:
+    #
+    #   divisor n-1 = 2  ->  sd = sqrt(0.0001)     = 0.01       ->  0.02/sd = 2.0
+    #   divisor 1        ->  sd = sqrt(0.0002)     = 0.014142   ->  0.02/sd = sqrt(2)
+    #   divisor n   = 3  ->  sd = sqrt(0.00006667) = 0.0081650  ->  0.02/sd = sqrt(6)
+    #
+    # Exactly 2.0, and the two wrong answers are named so the exclusion is
+    # readable rather than implied.
+    value = sharpe(series([0.01, 0.02, 0.03]), periods_per_year=1)
+    assert value == pytest.approx(2.0, rel=1e-12)
+    assert value != pytest.approx(math.sqrt(2), rel=1e-9)  # divisor hardcoded to 1
+    assert value != pytest.approx(math.sqrt(6), rel=1e-9)  # population divisor
 
 
 def test_a_zero_mean_series_has_a_sharpe_of_zero() -> None:
@@ -108,8 +131,13 @@ def test_a_negative_mean_gives_a_negative_sharpe() -> None:
 
 def test_sharpe_is_scale_invariant_in_the_returns() -> None:
     # Doubling every return doubles both the mean and the standard deviation,
-    # so the ratio is unchanged. A implementation that squared or halved one of
-    # the two would fail this without needing a hand-computed target.
+    # so the ratio is unchanged.
+    #
+    # What this does NOT establish, despite an earlier comment here claiming it:
+    # it does not exclude a halved or squared denominator. Both sides go through
+    # the same function, so any error that scales with the input cancels on both
+    # and the equality still holds. It is a property test for homogeneity and
+    # nothing more - the hand-derived cases above are what pin the value.
     base = sharpe(series([0.01, 0.03, -0.02, 0.005]))
     doubled = sharpe(series([0.02, 0.06, -0.04, 0.010]))
     assert base == pytest.approx(doubled, rel=1e-12)

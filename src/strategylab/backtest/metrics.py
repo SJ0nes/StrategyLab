@@ -4,8 +4,11 @@ Kept in their own module with their own tests. A Sharpe ratio computed slightly
 wrong is the kind of error that survives review, because the number it produces
 is always plausible.
 
-Two conventions are fixed here and stated rather than left to be inferred, since
-both are places where implementations silently differ:
+The conventions this module fixes are recorded in
+``docs/decisions/0005-sharpe-conventions.md``, outside the code that applies
+them - an implementation and its own test agreeing with each other is not a
+specification. Two of them are worth repeating here, because both are places
+implementations silently differ:
 
 - The standard deviation is the SAMPLE one, dividing by ``n - 1``. The
   population form divides by ``n`` and reports a Sharpe that is too high by
