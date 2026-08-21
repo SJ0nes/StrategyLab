@@ -139,11 +139,16 @@ inferred.
 
 What that does and does not mean:
 
-- **Every design decision was made by a human**, at three explicit gates: the
+- **Every design decision was ratified by a human at three explicit gates**: the
   pre-registration in `protocol.yaml`, a review of every module contract before
   any implementation, and a check of the first fetched prices against known
-  values. The three amendments to the pre-registration are recorded in
-  `docs/decisions/0003`, including the one that is not a uniform tightening.
+  values. Be precise about what that means: the session prompt in
+  `.claude/setup.md` is tracked in this repository, and its suggested defaults
+  are verbatim the values that ended up in `protocol.yaml`. So the instrument,
+  the windows, and the cost rates were *chosen from* proposed defaults rather
+  than originated. The amendments at the second gate were not — those came from
+  reviewing the contracts, and they are recorded in `docs/decisions/0003`,
+  including the one that is not a uniform tightening.
 - **Every change-set was reviewed by read-only audit agents** — one checking
   implementations against their docstring contracts, one recomputing every
   hardcoded number in the tests from first principles without reading the
@@ -152,8 +157,12 @@ What that does and does not mean:
   that passed validation entirely, an access counter that could not read a CRLF
   file, a cost model that accepted infinity, and several documents that claimed
   tests which did not exist. Those findings and their fixes are in the history.
-- **The numbers here were measured, not estimated.** Where a figure appears, the
-  command that produces it appears beside it.
+- **The numbers here were measured, not estimated.** Where a figure appears in
+  this README, the command that produces it appears beside it. One measurement
+  in `LIMITATIONS.md` — the two fetches ninety minutes apart that returned 4,161
+  differing rows out of 5,033 — came from a paired comparison run during the
+  audit and is not reproducible from a single command; it is labelled there as a
+  measurement rather than something you can re-run in one line.
 
 The reason to say this plainly is the same reason `LIMITATIONS.md` exists: a
 reviewer who works it out for themselves reads it as concealment, and a reviewer

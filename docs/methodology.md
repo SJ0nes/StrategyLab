@@ -1,5 +1,13 @@
 # Methodology
 
+> **Status: this document describes the intended method, and most of it is not
+> built.** Only the in-sample/walk-forward split is enforced in code today, by
+> `load_protocol`. Plateau scoring, the graveyard, the noise ceiling, and
+> walk-forward validation are all stubs, so every sentence below written in the
+> present tense describes a design rather than a running system. See
+> [architecture.md](architecture.md) for what exists and
+> [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
+
 Why this project is arranged the way it is. Every rule below exists because the
 obvious alternative produces a number that looks good and means nothing.
 
