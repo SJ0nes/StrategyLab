@@ -1,0 +1,10 @@
+{
+  "content_hash": "49227c671c176702d125f82c34e9fe8858a30f9838de3fa3adf6f822e68208f6",
+  "end": "2011-01-03",
+  "fetched_at": "2026-08-21T13:13:17.613108+00:00",
+  "path": "tests/fixtures/SPY.parquet",
+  "rows": 253,
+  "source": "yfinance",
+  "start": "2010-01-04",
+  "ticker": "SPY"
+}
