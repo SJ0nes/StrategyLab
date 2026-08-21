@@ -237,8 +237,9 @@ cost-arithmetic standard asks that it should.
 and the resulting traceback contains the absolute path of the file that raised
 it, which on most machines includes your username. Nothing is written anywhere
 and nothing leaves the machine, but if you paste such a traceback into a bug
-report or an issue, that path goes with it. `status` deliberately prints no
-paths for the same reason.
+report or an issue, that path goes with it. `status` prints no ABSOLUTE paths
+for that reason — it names `configs/ma_crossover.yaml`, which is a repository
+path and carries nothing about the machine it ran on.
 
 **The risk layer is not implemented.** `risk/limits.py` exists and carries its
 contracts, but both functions are stubs, there is no `configs/risk_limits.yaml`

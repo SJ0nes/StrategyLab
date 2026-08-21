@@ -28,9 +28,9 @@ because the backtester, the search, and the validator are not written yet.**
 **154 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, and the cost model. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 27 of them across
-13 files (`grep -rc NotImplementedError src/ --include='*.py'`) — so that each
-later component is built against a fixed interface.
+docstring contract with a `raise NotImplementedError` body — 27 of them across 13
+files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
+that each later component is built against a fixed interface.
 
 Two guarantees this project will rest on are **currently unproven**: that
 strategy evaluation cannot read past the current bar, and that the backtest
