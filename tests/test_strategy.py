@@ -6,10 +6,15 @@ prove, because a test trusted for more than it establishes is worse than none.
 
 `evaluate` receives a window whose LAST ROW is the bar being evaluated. It
 therefore cannot read the future in the ordinary sense: there is no future in
-the frame it is handed. `test_the_intent_at_t_survives_every_later_bar_being_
-corrupted` is the test the project prompt specifies, and it holds that property
-against regression - but it is close to true by construction, and it should not
-be read as proof that no leak is possible.
+the frame it is handed. The test the project prompt specifies - corrupt every
+bar after `t`, assert the intent at `t` is unchanged - is therefore not merely
+weak. It CANNOT FAIL: the corrupted rows are sliced off before the call, so both
+invocations receive identical data. An earlier version of this docstring called
+it "close to true by construction", which was too generous by exactly the margin
+that matters. It is named
+`test_the_specified_corruption_test_which_no_implementation_can_fail` and it
+asserts its own vacuity, so that nobody reads the suite and concludes lookahead
+is covered.
 
 The leak that IS possible with this signature is subtler, and
 `test_the_intent_at_t_does_not_depend_on_how_much_history_precedes_it` is the
@@ -50,9 +55,14 @@ CROSS_BAR = 5
 def frame(closes: list[float]) -> pd.DataFrame:
     """Build an OHLCV frame from a close series.
 
-    The other four columns are present because the frame contract requires them
-    and are deliberately not equal to the close, so a test cannot pass by an
-    implementation reading the wrong column.
+    The other three price columns are NOT constant offsets of the close, and the
+    reason is worth stating. They were, and that made this helper's own docstring
+    false: a crossover compares two moving averages of the same column, so a
+    constant offset cancels exactly in the difference and `open` produced a
+    signal identical to `close` at every bar. No test here could tell which
+    column the implementation read. The offsets now vary bar to bar, so a wrong
+    column changes the answer, and
+    `test_only_the_close_column_moves_the_signal` pins it directly.
 
     Args:
         closes: Close price per bar, in order.
@@ -61,11 +71,17 @@ def frame(closes: list[float]) -> pd.DataFrame:
         A frame indexed by consecutive business days.
     """
     index = pd.bdate_range("2020-01-01", periods=len(closes), name="date")
+    # A varying, non-cancelling perturbation. The pattern repeats every three
+    # bars so it stays hand-checkable.
+    wobble = [0.3, -0.7, 1.1]
+    opens = [c + wobble[i % 3] for i, c in enumerate(closes)]
+    highs = [max(opens[i], c) + 1.0 + wobble[i % 3] for i, c in enumerate(closes)]
+    lows = [min(opens[i], c) - 1.0 - wobble[i % 3] for i, c in enumerate(closes)]
     return pd.DataFrame(
         {
-            "open": [c - 0.5 for c in closes],
-            "high": [c + 1.0 for c in closes],
-            "low": [c - 1.0 for c in closes],
+            "open": opens,
+            "high": highs,
+            "low": lows,
             "close": closes,
             "volume": [1_000_000 + i for i in range(len(closes))],
         },
@@ -115,19 +131,31 @@ NEEDED = 4
 # --------------------------------------------------------------------------
 
 
-def test_the_intent_at_t_survives_every_later_bar_being_corrupted() -> None:
-    # The test the project prompt specifies: corrupt every bar after t to
-    # absurd values, and the intent at t must not move. Run at EVERY evaluable
-    # t, not one of them.
+def test_the_specified_corruption_test_which_no_implementation_can_fail() -> None:
+    # THIS TEST CANNOT FAIL, and it is named so nobody has to discover that.
+    #
+    # It is the test .claude/setup.md specifies: corrupt every bar after t to
+    # absurd values and assert the intent at t is unchanged. But `evaluate`
+    # takes a window whose last row IS bar t, so the corrupted rows are sliced
+    # away before the call and both invocations receive value-identical frames.
+    # An auditor confirmed the inputs are bit-identical. No implementation, no
+    # matter how badly it peeked, could fail this.
+    #
+    # It is kept for one narrow reason: it pins the SIGNATURE. If `evaluate`
+    # ever grows a full-frame-plus-index form, the slicing below stops removing
+    # the corruption and this test starts having teeth - and until then, its
+    # presence and this comment stop anyone reading the suite and concluding
+    # that lookahead is covered. The test that covers it is the next one.
     bars = frame(V_SHAPE)
     definition = crossover()
     for t in range(NEEDED - 1, len(bars)):
         clean = evaluate(definition, bars.iloc[: t + 1], PARAMS)
         corrupted = bars.copy()
         corrupted.iloc[t + 1 :] = 1e12
-        assert evaluate(definition, corrupted.iloc[: t + 1], PARAMS) == clean, (
-            f"the intent at bar {t} moved when bars after it were corrupted"
-        )
+        # Proof of the vacuity, asserted rather than claimed: what the two calls
+        # receive is the same data.
+        pd.testing.assert_frame_equal(bars.iloc[: t + 1], corrupted.iloc[: t + 1], check_exact=True)
+        assert evaluate(definition, corrupted.iloc[: t + 1], PARAMS) == clean
 
 
 def test_the_intent_at_t_does_not_depend_on_how_much_history_precedes_it() -> None:
@@ -160,6 +188,30 @@ def test_evaluate_does_not_modify_the_frame_it_is_given() -> None:
     pd.testing.assert_frame_equal(bars, before, check_exact=True)
 
 
+def test_only_the_close_column_moves_the_signal() -> None:
+    # The vocabulary is defined on the close. Until the wobble was added to
+    # `frame`, open/high/low were constant offsets of close - and a constant
+    # offset cancels exactly in a difference of two moving averages, so an
+    # implementation reading `open` produced an identical signal and no test
+    # here could have told.
+    bars = frame(V_SHAPE).iloc[: CROSS_BAR + 1]
+    definition = crossover()
+    reference = evaluate(definition, bars, PARAMS)
+
+    for column in ("open", "high", "low", "volume"):
+        moved = bars.copy()
+        moved[column] = moved[column] * 3.0 + 17.0
+        assert evaluate(definition, moved, PARAMS) == reference, (
+            f"the intent changed when only '{column}' moved, so something reads it"
+        )
+
+    moved_close = bars.copy()
+    moved_close["close"] = moved_close["close"] * 3.0 + 17.0
+    assert evaluate(definition, moved_close, PARAMS) != reference, (
+        "the intent did not change when the close moved, so the test above proves nothing"
+    )
+
+
 def test_evaluate_is_deterministic() -> None:
     bars = frame(V_SHAPE)
     definition = crossover()
@@ -182,8 +234,11 @@ def test_the_entry_fires_on_the_bar_where_the_averages_cross() -> None:
     assert intent.size_pct == 95.0
     assert intent.conditions_failed == ()
     assert len(intent.conditions_met) == 2
-    assert "sma($fast)=11.5 crosses_above sma($slow)=11" in intent.conditions_met[0]
-    assert "close=12 above sma($slow)=11" in intent.conditions_met[1]
+    # Equality, not containment. `"sma($slow)=11" in "...sma($slow)=11.5"` is
+    # True, so the containment form passed against the very value it exists to
+    # distinguish 11.0 from.
+    assert intent.conditions_met[0] == "sma($fast)=11.5 crosses_above sma($slow)=11"
+    assert intent.conditions_met[1] == "close=12 above sma($slow)=11"
 
 
 @pytest.mark.parametrize("t", [3, 4, 6, 7])
@@ -202,9 +257,12 @@ def test_a_hold_reports_the_entry_conditions_that_failed() -> None:
     # At t=6 the cross has passed but the trend filter still holds, so exactly
     # one of the two entry conditions failed and the other did not.
     assert len(intent.conditions_failed) == 1
-    assert "crosses_above" in intent.conditions_failed[0]
+    assert " crosses_above " in intent.conditions_failed[0]
     assert len(intent.conditions_met) == 1
-    assert "above" in intent.conditions_met[0]
+    # " above " with spaces, because "above" is a substring of "crosses_above"
+    # and the bare form is satisfied by the operator it is distinguishing from.
+    assert " above " in intent.conditions_met[0]
+    assert "crosses" not in intent.conditions_met[0]
 
 
 def test_the_exit_fires_on_the_reverse_cross() -> None:
@@ -445,6 +503,26 @@ def test_a_position_size_outside_nought_to_a_hundred_percent_is_refused(size: fl
         fixed={"position_size_pct": size},
     )
     with pytest.raises(ValueError, match="must be above 0 and at most 100"):
+        evaluate(definition, frame(V_SHAPE), {})
+
+
+@pytest.mark.parametrize("empty", ["entry", "exit"])
+def test_an_empty_condition_list_is_refused(empty: str) -> None:
+    # An empty AND-list is vacuously TRUE, and the vacuous answer here is a
+    # position: `exit=()` returned EXIT_LONG on every bar and `entry=()`
+    # returned ENTER_LONG at the full declared size, both silently. The loader
+    # refuses an empty list, but the loader is not on this function's path.
+    always = Condition(left=IndicatorRef(indicator="close"), operator="above", right=0.0)
+    definition = StrategyDef(
+        name="vacuous",
+        version=1,
+        description="Test fixture.",
+        entry=() if empty == "entry" else (always,),
+        exit=() if empty == "exit" else (always,),
+        search={},
+        fixed={"position_size_pct": 95.0},
+    )
+    with pytest.raises(ValueError, match=f"'{empty}' list is empty"):
         evaluate(definition, frame(V_SHAPE), {})
 
 

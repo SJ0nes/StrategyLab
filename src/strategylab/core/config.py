@@ -22,9 +22,10 @@ which does not exist yet. A :class:`StrategyDef` returned from here is validated
 and not yet evaluable.
 
 One honest caveat about the vocabulary. The rule is that every name in it is one
-the engine implements and tests. ``evaluate`` is still a stub, so today the
-vocabulary is what the engine WILL be built against rather than a description of
-running code, and this module is the only place either name is enforced.
+the engine implements and tests. :func:`strategylab.core.strategy.evaluate` now
+implements exactly these names and refuses any other, so the two agree - but
+they agree because both were written to this list, not because any code path
+yet loads a config and evaluates it. Nothing calls both.
 """
 
 from __future__ import annotations

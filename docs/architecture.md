@@ -128,11 +128,11 @@ these exist:
   periods may still be `$fast` rather than a number. Substituting the grid's
   values belongs with `expand_grid`, which is a stub, so no `StrategyDef` in this
   repository has ever been made evaluable.
-- **An engine that implements the vocabulary.** `core/config.py` declares two
-  indicators and three operators and enforces them at load time, but
-  `core.evaluate` is a stub, so nothing computes an `sma` or decides what
-  `crosses_above` means. The vocabulary is what the engine will be built against,
-  not a description of running code.
+- **Anything that puts the two halves of `core/` together.** `config.py` parses
+  a strategy and `strategy.py` evaluates one, and no code path in this
+  repository does both: `cli.search` still raises before reading its argument.
+  The loader and the engine agree on the vocabulary because they were written to,
+  not because anything exercises the seam.
 
 ## The one thing the diagram does not show
 

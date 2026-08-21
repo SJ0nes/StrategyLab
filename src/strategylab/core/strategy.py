@@ -395,8 +395,10 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
         the question a reader of the log is asking is why nothing was bought.
 
     Raises:
-        ValueError: If ``bars`` is empty, is not sorted ascending, carries
-            duplicate timestamps, lacks a required column, or holds fewer rows
+        ValueError: If either condition list is empty, since an empty AND-list
+            holds on every bar and would fire on every bar; if ``bars`` is
+            empty, is not sorted ascending, carries duplicate timestamps, lacks
+            a required column, or holds fewer rows
             than the longest lookback needs; if ``params`` omits a placeholder
             the definition references; if a condition names an indicator or
             operator this module does not implement; if a value needed for a
@@ -404,6 +406,20 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
             declare ``fixed.position_size_pct``.
     """
     _validate_frame(bars)
+
+    # An empty AND-list is vacuously true, and the vacuous answer here is a
+    # position. `exit=()` would return EXIT_LONG on every bar; `entry=()` would
+    # return ENTER_LONG on every bar, at the full declared size. The loader
+    # refuses an empty list for exactly this reason, but the loader is not on
+    # this function's path: a StrategyDef can be built in code, and the live
+    # worker will build one. A guarantee that holds only when a particular
+    # caller went first is not a guarantee.
+    for name, conditions in (("entry", definition.entry), ("exit", definition.exit)):
+        if not conditions:
+            raise ValueError(
+                f"the strategy's '{name}' list is empty; an empty AND-list holds on every bar, "
+                "so this would fire on every bar rather than never"
+            )
 
     needed = _required_history(definition, params)
     if len(bars) < needed:

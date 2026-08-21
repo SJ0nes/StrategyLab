@@ -6,23 +6,25 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Five modules have working bodies: `protocol.py`, `data/source.py`,
-`backtest/costs.py`, `core/config.py`, and the `status` and `fetch` commands in
-`cli.py`. Twenty-six `NotImplementedError` bodies remain, across 12 files. Two
+Six modules have working bodies: `protocol.py`, `data/source.py`,
+`backtest/costs.py`, `core/config.py`, `core/strategy.py`, and the `status` and
+`fetch` commands in `cli.py`. Twenty-six `NotImplementedError` bodies remain, across 12 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
 `tests/test_strategy_config.py`.
 
-**A strategy config can be read, and nothing can act on what it says.**
+**A strategy config can be read and evaluated, and nothing joins the two.**
 `core/config.py` parses and validates `configs/ma_crossover.yaml` into a
 `StrategyDef`, and the "fixed vocabulary" the declarative-config rule depends on
 is now a closed set enforced at load time rather than an example in a docstring.
-Two things that vocabulary is not: it is not implemented anywhere, because
-`core.evaluate` is still a stub, so the loader is the only thing in the system
-that knows what `crosses_above` means; and it is small — two indicators (`close`,
-`sma`) and three operators (`above`, `crosses_above`, `crosses_below`), which is
-what the one committed config uses and no more. Nor are `$placeholder` periods
+`core.evaluate` now implements that vocabulary, so the loader is no longer the
+only thing that knows what `crosses_above` means. But no code path does both:
+`cli.search` still raises before reading its argument, so nothing in this
+repository has ever loaded a config and evaluated it. The vocabulary is also
+small — two indicators (`close`, `sma`) and three operators (`above`,
+`crosses_above`, `crosses_below`), which is what the one committed config uses
+and no more. Nor are `$placeholder` periods
 resolved: the loader checks that each has a parameter behind it and leaves the
 substitution to a grid that does not exist. `strategylab status` points at
 `uv run strategylab search configs/ma_crossover.yaml` once price data is cached;
@@ -37,22 +39,31 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 that has never run on anything.
 
 273 tests pass (`uv run pytest`). They cover the protocol loader, the data
-layer, the cost model, and the strategy-config loader. Nothing else has tests
-because nothing else has code.
+layer, the cost model, the strategy-config loader, and strategy evaluation.
+Nothing else has tests because nothing else has code.
 
-**The lookahead test exists and is green, and it is weaker than its name.**
-`core.evaluate` is handed a window whose last row IS the bar being evaluated, so
-it cannot read the future in the ordinary sense — there is no future in the frame
-it receives. The test the project prompt specifies, corrupting every bar after
-`t` and asserting the intent at `t` is unchanged, therefore holds close to by
-construction. It is kept as a regression guard on that interface and should not
-be read as proof that no leak is possible.
+**The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
+handed a window whose last row IS the bar being evaluated, so it cannot read the
+future in the ordinary sense — there is no future in the frame it receives. The
+test the project prompt specifies, corrupting every bar after `t` and asserting
+the intent at `t` is unchanged, slices the corrupted rows away before the call:
+both invocations receive identical data, and no implementation could fail it. An
+earlier version of this entry called it "weaker than its name", which was too
+generous. It is kept because it pins the signature, and it asserts its own
+vacuity so the suite cannot be misread as covering lookahead.
 
 The test that carries real weight is the other one: the intent at a bar must not
 change with how much history precedes it. That is what fails when a rolling
 window is quietly an expanding one — a bug that does not read the future, reads
 too much of the past, and produces the same symptom, a backtest that cannot be
 reproduced live. Both are in `tests/test_strategy.py`.
+
+**The lookahead risk has moved, not gone.** Because `evaluate` can only see the
+window it is handed, the entire guarantee now rests on whoever chooses that
+window — which will be the backtest engine, which does not exist. When it is
+written, the question "does this read the future" becomes a question about its
+slicing, and no test in this repository addresses that yet. That is the one to
+write alongside the engine, and it is not the test that exists today.
 
 One guarantee is still **unproven**: that the backtest engine is deterministic.
 There is no engine. `evaluate` itself is deterministic and tested to be.

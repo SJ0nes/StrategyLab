@@ -24,15 +24,16 @@ because the backtester, the search, and the validator are not written yet.**
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Strategy evaluation (`core.evaluate`) |
-| Price data layer — validation, provenance, parquet cache | Backtest engine and metrics |
-| Cost model — hand-verified arithmetic | Grid search, plateau scoring, noise ceiling |
-| Strategy-config loader — closed schema, closed vocabulary | Walk-forward validation |
-| `status` and `fetch` commands *(untested)* | Decision logging, risk limits, venue adapters, HTML reports |
+| Protocol loader and validator | Backtest engine and metrics |
+| Price data layer — validation, provenance, parquet cache | Grid search, plateau scoring, noise ceiling |
+| Cost model — hand-verified arithmetic | Walk-forward validation |
+| Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters, HTML reports |
+| Strategy evaluation (`core.evaluate`), with the lookahead test | |
+| `status` and `fetch` commands *(untested)* | |
 
 **273 tests pass** — verify with `uv run pytest`. They cover the protocol
-loader, the data layer, the cost model, and the strategy-config loader. The two
-CLI commands have no tests,
+loader, the data layer, the cost model, the strategy-config loader, and strategy
+evaluation. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
 docstring contract with a `raise NotImplementedError` body — 26 of them across 12
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
@@ -40,8 +41,9 @@ that each later component is built against a fixed interface.
 
 Of the two guarantees this project rests on, one now has a test and one does
 not. **Strategy evaluation cannot read past the current bar** — the lookahead
-test exists and is green, and `LIMITATIONS.md` states plainly which half of it
-carries the weight, because the obvious half is nearly true by construction.
+test exists and is green, and `LIMITATIONS.md` states plainly that the half
+named in the project's own rules cannot fail, and which test carries the weight
+instead.
 **The backtest engine is deterministic** remains unproven: there is no engine.
 See [LIMITATIONS.md](LIMITATIONS.md).
 
