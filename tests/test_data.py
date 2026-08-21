@@ -394,3 +394,22 @@ def test_recorded_fixture_sits_inside_the_in_sample_window() -> None:
     _, entry = cache_read(FIXTURE_TICKER, FIXTURE_DIR)
     assert entry.start >= date(2005, 1, 1)
     assert entry.end <= date(2018, 12, 31)
+
+
+def test_nan_volume_raises() -> None:
+    # `NaN <= 0` is False, so a NaN volume slips through a bare comparison and
+    # passes validation entirely. validate_bars is the only gate between the
+    # vendor and the cache, so a silent pass here reaches every later result.
+    df = clean_frame(5)
+    df["volume"] = df["volume"].astype(float)
+    df.loc[df.index[2], "volume"] = float("nan")
+    with pytest.raises(DataQualityError, match="non-finite volume"):
+        validate_bars(df)
+
+
+def test_infinite_volume_raises() -> None:
+    df = clean_frame(5)
+    df["volume"] = df["volume"].astype(float)
+    df.loc[df.index[1], "volume"] = float("inf")
+    with pytest.raises(DataQualityError, match="non-finite volume"):
+        validate_bars(df)

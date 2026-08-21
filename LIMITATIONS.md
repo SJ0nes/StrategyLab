@@ -4,13 +4,26 @@ Written before any result existed, which is the only time this is easy to write
 honestly. Everything here is a reason to distrust a number this project
 produces. Nothing here is a footnote.
 
-## Nothing is implemented yet
+## Most of the system is not implemented
 
-As of this commit, `protocol.py` is the only module with a working body. Every
-other function in `src/` raises `NotImplementedError`. There are no backtest
-results, no search results, and no validation outcomes, because there is no
-backtester, no search, and no validator. The 23 passing tests cover the protocol
-loader and nothing else.
+Four modules have working bodies: `protocol.py`, `data/source.py`,
+`backtest/costs.py`, and the `status` and `fetch` commands in `cli.py`.
+Everything else in `src/` raises `NotImplementedError` — 27 occurrences across
+13 files.
+
+**There are no backtest results, no search results, and no validation outcomes**,
+because there is no backtester, no search, and no validator. No cost has ever
+been applied to a trade: `apply_costs` works and is heavily tested, but
+`run_backtest` is a stub, so the entire cost section below describes a model
+that has never run on anything.
+
+123 tests pass (`uv run pytest -q`). They cover the protocol loader, the data
+layer, and the cost model. Nothing else has tests because nothing else has code.
+
+Two guarantees this project rests on are **currently unproven**: that
+`core.evaluate` cannot read past the current bar, and that the backtest engine
+is deterministic. Both are stated as design rules in `CLAUDE.md`; neither has a
+test, because neither has an implementation.
 
 ## The instrument
 
@@ -129,3 +142,57 @@ measure drift between predicted and actual behaviour.
 **The T212 order endpoint is not idempotent.** A repeated request can create a
 duplicate order, so no retry is ever automatic. Rate limits are one account
 summary per five seconds and six historical requests per minute.
+
+## Gaps in the tooling itself
+
+These are limitations of the code as it stands, not of the method.
+
+**The ingest gate is all-or-nothing, and can refuse correct history.**
+`validate_bars` raises on the first violation and `fetch` then caches nothing —
+so a single bad or unusual bar anywhere in twenty years refuses the entire
+download. Two rules are strict enough to hit real data: more than three absent
+weekday sessions (a genuine multi-day exchange closure longer than the 2012
+Hurricane Sandy shutdown would trip it), and any bar reporting zero volume (a
+half-day session, or a vendor quirk). This is deliberate — the alternative is
+silently repairing data — but it means the tool can decline to ingest history
+that is perfectly real.
+
+**The held-back window is cached in the same file as the in-sample window.**
+`fetch` downloads 2005-01-01 through 2024-12-31 in one request and writes one
+parquet file. Nothing in the code partitions it, and nothing prevents a future
+component from slicing past 2018-12-31. The split is this project's central
+claim, and at present it is enforced by the absence of a consumer rather than by
+any guard.
+
+**Nothing calls `increment_walk_forward_touches`.** The counter is implemented
+and tested, and no production code path invokes it, because the only thing that
+should — walk-forward validation — does not exist. The counter currently reads
+zero because nothing has ever read the held-back window, not because anything is
+enforcing that.
+
+**The fetch path itself has no test.** `YFinanceSource.fetch` and the
+vendor-frame normalisation behind it are the one part of the data layer that
+touches the network, and by policy no test may call them. What is tested against
+the recorded fixture is the cache path. The vendor adapter is exercised only when
+a human runs `strategylab fetch`.
+
+**The CLI cannot fetch the execution instrument.** `fetch` downloads
+`instruments.research` and only that. There is no command that will obtain
+`VUAG.L`, so the execution-side price history this project would need to model
+real fills does not exist anywhere in the repository.
+
+**The content hash normalises to ten decimal places.** Two frames differing
+beyond the tenth decimal hash identically. That is far below any revision a
+vendor would make, but the guarantee has a limit and this is it.
+
+**`fetched_at` is caller-supplied and unverified.** The provenance record is only
+as honest as whatever called `cache_write`.
+
+**The cost rates have no recorded source.** `protocol.yaml` fixes commission,
+spread, and slippage before any search runs, which is the important property —
+but it does not record where those three numbers came from, and the project's own
+cost-arithmetic standard asks that it should.
+
+**The risk layer does not exist.** No `configs/risk_limits.yaml`, no tests, both
+functions stubs. `CLAUDE.md` describes it as untouchable with its own file and
+its own tests; it currently has neither.

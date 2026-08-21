@@ -21,7 +21,10 @@ from strategylab.protocol import (
     load_protocol,
 )
 
-REPO_PROTOCOL = Path("protocol.yaml")
+# Anchored to this file, not to the process working directory. A cwd-relative
+# path plus a skipif marker means the one test of the COMMITTED
+# pre-registration quietly disappears when pytest runs from elsewhere.
+REPO_PROTOCOL = Path(__file__).resolve().parent.parent / "protocol.yaml"
 
 # The committed protocol, used as the base for mutation in the failure cases.
 # Kept as a literal rather than read from disk so a test cannot be made to pass
@@ -87,11 +90,16 @@ def test_costs_convert_percent_to_fraction(tmp_path: Path) -> None:
 
 
 def test_conversion_is_exactly_one_hundredth(tmp_path: Path) -> None:
-    # Guards the direction of the division. Multiplying by 100 instead of
-    # dividing gives 5.0, which is also a "plausible" number.
+    # Pins the divisor as a LITERAL 100. Writing the expected side as
+    # `0.05 / PERCENT_PER_UNIT` would take the constant from the module under
+    # test, so a PERCENT_PER_UNIT of 10 would move both sides together and the
+    # assertion could not fail.
     costs = load_protocol(write_protocol(tmp_path, BASE)).costs
-    assert costs.commission_frac == pytest.approx(0.05 / PERCENT_PER_UNIT, rel=1e-12)
+    assert PERCENT_PER_UNIT == 100.0
+    assert costs.commission_frac == pytest.approx(0.05 / 100.0, rel=1e-12)
+    # Excludes multiplication (5.0), the identity (0.05), and /10 (0.005).
     assert costs.commission_frac < 0.05
+    assert costs.commission_frac > 0.0001
 
 
 def test_commission_min_flat_is_cash_and_is_not_converted(tmp_path: Path) -> None:
@@ -241,10 +249,18 @@ def test_increment_is_visible_to_a_reload(tmp_path: Path) -> None:
 
 def test_increment_targets_the_access_log_block_only(tmp_path: Path) -> None:
     # A counter of the same name under another key must not be touched.
-    text = BASE.replace("access_log:", "other_block:\n  walk_forward_touches: 99\n\naccess_log:")
+    #
+    # The decoy carries the SAME value as the real counter. With a different
+    # value (say 99) a naive global replace of "walk_forward_touches: 0" would
+    # never match the decoy, leave it alone, and pass this test while having no
+    # block-targeting logic at all. The decoy has to be indistinguishable from
+    # the real counter except by its position in the file.
+    text = BASE.replace("access_log:", "other_block:\n  walk_forward_touches: 0\n\naccess_log:")
     path = write_protocol(tmp_path, text)
     assert increment_walk_forward_touches(path) == 1
-    assert "walk_forward_touches: 99" in path.read_text(encoding="utf-8")
+    after = path.read_text(encoding="utf-8")
+    assert "other_block:\n  walk_forward_touches: 0\n" in after
+    assert "  walk_forward_touches: 1\n" in after
 
 
 def test_missing_counter_raises(tmp_path: Path) -> None:
@@ -258,10 +274,62 @@ def test_missing_counter_raises(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not REPO_PROTOCOL.exists(), reason="run from the repository root")
 def test_repository_protocol_loads() -> None:
     protocol = load_protocol(REPO_PROTOCOL)
     assert protocol.instruments.research == "SPY"
     assert protocol.instruments.execution == "VUAG.L"
     assert protocol.costs.commission_frac == pytest.approx(0.0005, rel=1e-12)
     assert protocol.validation.effective_sharpe_bar == pytest.approx(1.20, rel=1e-12)
+
+
+# --------------------------------------------------------------------------
+# Unit hazards with no other coverage.
+# --------------------------------------------------------------------------
+
+
+def test_drawdown_ceiling_stays_a_percentage(tmp_path: Path) -> None:
+    # max_drawdown_ceiling_pct carries the same _pct suffix as the cost rates,
+    # but it is NOT converted: it stays a percentage end to end. If it were put
+    # through the same /100 as the rates, a 25% ceiling would become 0.25% and
+    # reject every candidate ever tested, with no error and no clue why.
+    validation = load_protocol(write_protocol(tmp_path, BASE)).validation
+    assert validation.max_drawdown_ceiling_pct == 25.0
+
+
+def test_fx_rate_converts_percent_to_fraction(tmp_path: Path) -> None:
+    # The same hundred-fold hazard as commission, and previously the only rate
+    # whose conversion nothing asserted.
+    text = BASE.replace(
+        "  slippage_pct: 0.05\n",
+        "  slippage_pct: 0.05\n  fx_conversion_pct: 0.15\n",
+    )
+    costs = load_protocol(write_protocol(tmp_path, text)).costs
+    assert costs.fx_conversion_frac == pytest.approx(0.0015, rel=1e-12)
+
+
+def test_walk_forward_window_divides_into_whole_folds(tmp_path: Path) -> None:
+    # protocol.yaml claims this window "yields six folds". Nothing asserted it.
+    # 2019-01-01..2024-12-31 is 72 months; at 12 months per fold that is 6.
+    windows = load_protocol(write_protocol(tmp_path, BASE)).windows
+    span_months = (
+        (windows.walk_forward.end.year - windows.walk_forward.start.year) * 12
+        + (windows.walk_forward.end.month - windows.walk_forward.start.month)
+        + 1
+    )
+    assert span_months == 72
+    assert span_months % windows.fold_months == 0
+    assert span_months // windows.fold_months == 6
+
+
+def test_counter_survives_a_crlf_file(tmp_path: Path) -> None:
+    # The regex anchors must tolerate a \r before end-of-line. Without that,
+    # both patterns fail on a CRLF file and the counter is reported as missing
+    # from a file that plainly contains it - in the one module written to
+    # preserve line endings byte for byte.
+    path = write_protocol(tmp_path, BASE.replace("\n", "\r\n"))
+    before = path.read_bytes()
+    assert before.count(b"\r\n") > 0
+    assert increment_walk_forward_touches(path) == 1
+    after = path.read_bytes()
+    assert after == before.replace(b"walk_forward_touches: 0", b"walk_forward_touches: 1")
+    assert after.count(b"\r\n") == before.count(b"\r\n")

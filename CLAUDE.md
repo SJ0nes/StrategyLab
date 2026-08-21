@@ -11,7 +11,9 @@ strategy — there will never be enough live trades to judge a strategy.
   alike. Never write the logic twice — divergence silently invalidates every
   backtest result.
 - **No lookahead.** `core.evaluate` may read up to and including the current bar
-  and nothing after it. There is a test that proves it.
+  and nothing after it. The test that proves it ships in the same commit as the
+  implementation. NEITHER EXISTS YET - `core/` is still a stub, and until that
+  test is green this guarantee is an intention, not a property.
 - **Config stays declarative.** Strategy conditions are a flat list combined with
   AND, from a fixed vocabulary. No nesting, no OR, no expressions in YAML. When a
   proposal needs more, that is a code change with a test. A config format that
@@ -54,10 +56,15 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
 - **Never fabricate results.** If a test or backtest has not run, say so. No
   unverified numbers in a README, a docstring, or a commit message. Do not write
   "there is a test asserting this" until that test exists and has been run.
-- **No test makes a network call.** The fetch path is tested against recorded
-  fixtures in `tests/fixtures/`. Live fetching is a manual command only. A CI
+- **No test makes a network call.** Live fetching is a manual command only, and
+  `yfinance` is imported inside the method body so no test can pull it in. A CI
   badge that goes red on a vendor rate limit is worse than no badge.
-- **Determinism.** Same config, same data, same result. There is a test asserting it.
+  Be precise about what this buys: the CACHE path is tested against the recorded
+  fixture in `tests/fixtures/`. The FETCH path - `YFinanceSource.fetch` and the
+  vendor-frame normalisation behind it - has no test at all, and cannot get one
+  without either a recorded HTTP fixture or a fake source.
+- **Determinism.** Same config, same data, same result. Required of the engine,
+  and the test asserting it ships with the engine. NOT YET WRITTEN.
 - **Ask before adding a dependency.** Name what it does and what it replaces.
 - **One component per commit**, with its tests, conventional message
   (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`).

@@ -1,7 +1,7 @@
 ---
 name: docs-auditor
 description: Use when documentation must be checked against the code that backs it - before a commit that touches README.md or LIMITATIONS.md, at the end of a build phase, and before any push. Verifies that every public function has a docstring, that no README claim is unbacked by something in the repository, that LIMITATIONS.md describes what actually exists, and that the quickstart commands really run in a clean checkout - it executes them and reports what happened.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: inherit
 color: blue
 ---
@@ -53,3 +53,16 @@ Rules:
 Your reply IS the report. Return it complete and raw, including the command output you
 captured. You hold no write tool on purpose; the session that dispatched you copies your reply
 verbatim into `state/audit/docs-auditor.txt`, and that file is what the operator reads.
+
+## Recording your findings
+
+Your LAST action is to write your full reply, verbatim, to `state/audit/docs-auditor.txt`, using the
+Write tool. Then reply with a three-line summary and nothing more.
+
+That file is the deliverable and the operator reads it directly. Writing it yourself is the
+point: if the agent that orchestrates you retypes your reply, it becomes a summary of a summary,
+and the finding you buried on line ninety is the one that gets lost.
+
+`state/audit/docs-auditor.txt` is the ONLY path you may write. Never write to `src/`, `tests/`,
+`docs/`, `protocol.yaml`, or anywhere else — you are an auditor, and an auditor that edits the
+thing it is auditing is worthless.

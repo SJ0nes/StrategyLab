@@ -124,7 +124,9 @@ def apply_costs(price: float, side: Side, costs: CostModel, quantity: float = 1.
     The tests parameterise over several mids for exactly that reason.
 
     Commission is ``max(commission_frac x executed notional,
-    commission_min_flat)``.
+    commission_min_flat)`` -- EXCEPT at ``quantity == 0``, where every cash
+    charge is zero. A trade of nothing is not a trade, and applying the flat
+    minimum to it would invent a cost for an execution that never happened.
 
     Args:
         price: The mid price before costs, in price units. Must be positive.

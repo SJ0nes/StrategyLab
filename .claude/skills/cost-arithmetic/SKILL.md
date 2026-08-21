@@ -32,6 +32,21 @@ impact, commission is a fee, and a breakdown that merges them cannot answer "wha
 cheaper broker be worth". Second, folding it in makes buy and sell prices asymmetric about the
 mid, which destroys the invariant below and makes every test harder to reason about.
 
+**Two cash charges sit alongside it, on the same executed notional.**
+
+```
+commission_cash = max(commission_rate * executed_price * quantity, commission_min_flat)
+fx_cash         = fx_conversion_rate * executed_price * quantity
+```
+
+`commission_min_flat` is a per-trade floor in account currency, not a rate, and it is what makes
+small positions uneconomic. `fx_conversion_rate` applies when the instrument's currency differs
+from the account's. Both are cash; neither ever touches the executed price.
+
+**At `quantity == 0` every cash charge is zero.** A trade of nothing is not a trade, and
+`max(0, commission_min_flat)` would otherwise invent a fee for an execution that never happened.
+This is the one exception to the `max` above, and it is deliberate.
+
 ## Worked example
 
 Mid `100.00`, commission `0.05%`, spread `0.03%`, slippage `0.05%`.
@@ -42,8 +57,17 @@ Price impact is `0.015 + 0.05 = 0.065` per side.
 
 | Side | Executed price | Commission (charged separately) |
 |------|----------------|---------------------------------|
-| BUY  | **100.065**    | **0.0500**                      |
-| SELL | **99.935**     | **0.0500**                      |
+| BUY  | **100.065**    | **0.0500325**                   |
+| SELL | **99.935**     | **0.0499675**                   |
+
+The two commissions are **not equal**, and the difference is the whole point.
+Commission is charged on the *executed* notional, and the two legs execute at
+different prices: `0.0005 x 100.065` against `0.0005 x 99.935`. They differ by
+`0.000065`.
+
+Rounded to four decimal places both read `0.0500`, which is also exactly what a
+wrong implementation charging on the **mid** notional produces. **Never assert
+these to 4dp.** A test that does passes against the bug this page forbids.
 
 Round trip on 100.00 of notional:
 
@@ -66,7 +90,13 @@ These hold for every input, and each one is worth a test.
   pure sign error, and it is the most common mistake in this domain.
 - **Linearity.** Costs scale linearly with notional. Double the quantity, double the cash cost;
   the executed *price* does not change with size, because this model has no market impact term.
-  That is a limitation and it belongs in LIMITATIONS.md.
+  That is a limitation and it belongs in LIMITATIONS.md. **Holds only while
+  `commission_min_flat` is zero** — `max(...)` is not linear, and below the floor doubling the
+  size does not double the cost. That non-linearity is the entire reason the field exists, so a
+  linearity test must pin the flat minimum at zero to mean anything.
+- **Both halves of linearity, or neither.** Assert that the cash cost doubles AND that the
+  executed price is unchanged. Asserting only the first passes against an implementation that
+  added a spurious size-dependent price term.
 - **Zero-cost identity.** With all rates at zero, the executed price is the input price
   unchanged and the breakdown is all zeros. Not approximately - exactly.
 - **Non-negativity.** With non-negative rates, no component of the breakdown is ever negative.

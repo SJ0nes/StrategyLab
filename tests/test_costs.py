@@ -106,9 +106,11 @@ def test_round_trip_totals() -> None:
 
 
 def test_total_executed_notional_is_exactly_twice_the_mid() -> None:
-    # 100.065 + 99.935 = 200.000 exactly, structurally, by symmetry of the
-    # price-impact term. This is what makes the round-trip commission exact
-    # rather than a rounding coincidence.
+    # 100.065 + 99.935 = 200.000 exactly IN THE REALS, structurally, by the
+    # symmetry of the price-impact term - which is what makes the round-trip
+    # commission exact rather than a rounding coincidence. It is NOT exact in
+    # IEEE-754: the two roundings are independent and need not cancel, so a
+    # bare == here would be flaky. approx is the correct operator.
     buy = apply_costs(100.00, Side.BUY, REALISTIC)
     sell = apply_costs(100.00, Side.SELL, REALISTIC)
     assert buy.executed_price + sell.executed_price == pytest.approx(200.000, rel=1e-12)
@@ -195,14 +197,16 @@ def test_a_buyer_crosses_half_the_spread_not_all_of_it() -> None:
     assert fill.costs.spread == pytest.approx(0.015, rel=1e-12)
 
 
-@pytest.mark.parametrize("quantity", [1.0, 2.0, 10.0, 137.5])
+# 1.0 is excluded: it makes the assertion `one == one * 1.0`, a tautology.
+@pytest.mark.parametrize("quantity", [2.0, 10.0, 137.5])
 def test_cash_costs_scale_linearly_with_quantity(quantity: float) -> None:
     one = apply_costs(100.00, Side.BUY, REALISTIC, quantity=1.0)
     many = apply_costs(100.00, Side.BUY, REALISTIC, quantity=quantity)
     assert many.costs.commission == pytest.approx(one.costs.commission * quantity, rel=1e-12)
 
 
-@pytest.mark.parametrize("quantity", [1.0, 2.0, 10.0, 137.5])
+# 1.0 excluded for the same reason: it compares two identical calls.
+@pytest.mark.parametrize("quantity", [2.0, 10.0, 137.5])
 def test_executed_price_does_not_change_with_size(quantity: float) -> None:
     # The other half of linearity. Asserting only the cash half would pass
     # against an implementation that added a spurious size-dependent price
@@ -232,7 +236,9 @@ def test_no_breakdown_component_is_ever_negative(side: Side, mid: float) -> None
     assert fill.costs.spread >= 0
     assert fill.costs.slippage >= 0
     assert fill.costs.commission >= 0
-    assert fill.costs.fx >= 0
+    # fx is deliberately NOT asserted here: REALISTIC sets no fx rate, so fx
+    # is structurally 0.0 and `fx >= 0` could not fail. It is covered against
+    # a non-zero rate in test_fx_is_charged_on_executed_notional_and_kept_separate.
 
 
 def test_commission_never_appears_in_the_executed_price() -> None:

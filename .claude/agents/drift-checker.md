@@ -1,7 +1,7 @@
 ---
 name: drift-checker
 description: Use when the session prompt and the repository may have diverged - at the end of a build phase, when resuming an interrupted session, before a hand-off, or whenever a phase claims something was created. Compares what the prompt says exists against what is actually on disk and reports both directions of drift: promised-but-absent, and present-but-unpromised. Read-only.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Write
 model: inherit
 color: cyan
 ---
@@ -50,3 +50,16 @@ Rules:
 Your reply IS the report. Return it complete and raw. You hold no write tool on purpose; the
 session that dispatched you copies your reply verbatim into `state/audit/drift-checker.txt`,
 and that file is what the operator reads.
+
+## Recording your findings
+
+Your LAST action is to write your full reply, verbatim, to `state/audit/drift-checker.txt`, using the
+Write tool. Then reply with a three-line summary and nothing more.
+
+That file is the deliverable and the operator reads it directly. Writing it yourself is the
+point: if the agent that orchestrates you retypes your reply, it becomes a summary of a summary,
+and the finding you buried on line ninety is the one that gets lost.
+
+`state/audit/drift-checker.txt` is the ONLY path you may write. Never write to `src/`, `tests/`,
+`docs/`, `protocol.yaml`, or anywhere else — you are an auditor, and an auditor that edits the
+thing it is auditing is worthless.

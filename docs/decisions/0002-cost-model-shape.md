@@ -38,6 +38,12 @@ costs alone turns out to be unprofitable in practice. An FX charge applies
 whenever the instrument's currency differs from the account's — which, for a GBP
 account trading a fund that tracks a USD index, is always.
 
+**The model carries both fields; the pre-registration switches both off.**
+`protocol.yaml` sets neither `commission_min_flat` nor `fx_conversion_pct`, so
+both default to zero and no FX charge is currently modelled — for exactly the
+GBP/USD case named above. That is a disclosed gap, recorded in `LIMITATIONS.md`,
+not a claim that FX is being charged.
+
 ## Consequences
 
 **Rates are fixed before any search runs and are never chosen at analysis time.**
@@ -68,6 +74,8 @@ point of the field, and any test of the linearity invariant must hold
 expressed as a percentage and the same rate applied to the mid are numerically
 identical, so an implementation that never multiplies by the mid reproduces every
 figure of the worked example exactly. Round-trip cost is 0.23% of notional at
-every mid, and tests parameterise over several — 100.00, 250.00, and 37.42 — so
-that a units error, a missing multiplication, or a full spread charged where a
-half belongs all break the invariant immediately.
+every mid, and tests parameterise over five — 100.00, 250.00, 37.42, 1.05, and
+4321.99 — so that a units error, a missing multiplication, or a full spread
+charged where a half belongs all break the invariant immediately. The last two
+sit near the bottom of their binades, where relative floating-point error is
+largest.

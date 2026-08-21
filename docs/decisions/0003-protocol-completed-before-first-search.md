@@ -71,11 +71,25 @@ chosen to flatter, which is what distinguishes this from the kind of edit the
 protocol forbids. The same three changes made after the first search would be
 indefensible, and would require resetting the access counter.
 
-The amendment makes the protocol **stricter**, never looser. It adds a criterion
-that did not previously exist (`min_sharpe`), adds a floor that did not
-previously exist (`min_trades_pooled`), and removes an argument through which a
-threshold could have been supplied at run time. Nothing that would previously
-have failed now passes.
+Two of the three changes are unambiguous tightenings: `min_sharpe` adds a
+criterion that did not previously exist, and removing the run-time argument
+closes the channel through which a threshold could have been chosen after seeing
+a result.
+
+**The trade-floor change is NOT a uniform tightening, and it would be dishonest
+to describe it as one.** `min_trades_per_fold` moves from 30 to 10. Under the old
+value a fold with twelve trades returned `insufficient_data`; under the new one
+it returns a real per-fold verdict, which may be a pass. Something that
+previously could not pass now can.
+
+What can be said is narrower: the POOLED decision — the one that actually
+determines the outcome — is harder to satisfy, because it now has both a Sharpe
+floor and a trade floor where before it had neither. Even that is asserted
+rather than demonstrated: if the old `min_trades_per_fold: 30` was read as a
+pooled threshold, which was one of the two live readings this record exists to
+resolve, then `min_trades_pooled: 30` is numerically identical to it and nothing
+tightened at all. No run exists on either version to compare, because
+`walk_forward` is still a stub.
 
 `min_trades_per_fold` moves from 30 to 10, which is a loosening in isolation —
 but it is paired with a pooled floor of 30 that did not exist before, and it

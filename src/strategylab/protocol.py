@@ -26,10 +26,18 @@ DEFAULT_PROTOCOL_PATH = Path("protocol.yaml")
 # one conversion in the system is greppable.
 PERCENT_PER_UNIT = 100.0
 
+# The trailing ``\r?`` is load-bearing. Under re.MULTILINE, ``$`` matches only
+# at end-of-string or immediately before ``\n`` - so on a CRLF file the ``\r``
+# sits between the digits and the anchor and neither pattern matches at all.
+# This module exists to preserve a file's line endings byte for byte, and
+# without this it would refuse the CRLF file it promises to handle.
+# The trailing context is a LOOKAHEAD, not a match. Consuming it would put the
+# line ending inside the replaced span, and splicing over it would strip the
+# ``\r`` from exactly the one line this function edits.
 _TOUCH_LINE = re.compile(
-    r"^(?P<indent>[ \t]+)walk_forward_touches:[ \t]*(?P<count>\d+)[ \t]*$", re.MULTILINE
+    r"^(?P<indent>[ \t]+)walk_forward_touches:[ \t]*(?P<count>\d+)(?=[ \t]*\r?$)", re.MULTILINE
 )
-_ACCESS_LOG_HEADER = re.compile(r"^access_log:[ \t]*$", re.MULTILINE)
+_ACCESS_LOG_HEADER = re.compile(r"^access_log:[ \t]*\r?$", re.MULTILINE)
 # A line beginning in column zero with something other than a comment ends the
 # preceding block. Used to bound the search for the counter to its own mapping.
 _NEXT_TOP_LEVEL = re.compile(r"^[^\s#]", re.MULTILINE)
@@ -641,8 +649,11 @@ def increment_walk_forward_touches(path: Path = DEFAULT_PROTOCOL_PATH) -> int:
     text = _read_preserving_newlines(path)
     match = _find_touch_line(text)
     new_count = int(match.group("count")) + 1
-    replacement = f"{match.group('indent')}walk_forward_touches: {new_count}"
-    updated = text[: match.start()] + replacement + text[match.end() :]
+    # Splice over the DIGITS ONLY. Rewriting the whole line would normalise its
+    # indentation and any trailing whitespace, which is a byte change to a line
+    # this function is supposed to leave alone apart from the number.
+    start, end = match.span("count")
+    updated = text[:start] + str(new_count) + text[end:]
     with path.open("w", encoding="utf-8", newline="") as handle:
         handle.write(updated)
     return new_count

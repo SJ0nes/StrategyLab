@@ -69,7 +69,8 @@ def status() -> None:
     """Report where the project is and which command comes next.
 
     Reads the protocol, checks whether price data is cached, counts the
-    searches run so far, and reports the state of each. Names the next command
+    searches run so far, and reports the pass criteria and how many times the
+    held-back window has been read. Names the next command
     but NEVER runs it - a status command that changes state cannot be run
     freely, and one that cannot be run freely does not get run.
     """

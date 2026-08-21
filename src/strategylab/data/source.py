@@ -231,16 +231,21 @@ def _dates(index: pd.Index, positions: Any) -> list[str]:
 def validate_bars(df: pd.DataFrame) -> None:
     """Check a price frame against every rule the rest of the system assumes.
 
-    Raises on: a missing required column, duplicate timestamps, an unsorted
-    index, non-positive prices, ``high`` below ``low``, ``high`` or ``low``
-    inconsistent with ``open``/``close``, non-finite values, zero volume, and
-    gaps longer than :data:`MAX_GAP_DAYS` calendar days.
+    Raises on: an empty frame, an index that is not a ``DatetimeIndex``, a
+    missing required column, a non-numeric price or volume column, duplicate
+    timestamps, an unsorted index, non-finite or non-positive prices, ``high``
+    below ``low``, ``high`` or ``low`` inconsistent with ``open``/``close``,
+    non-finite or non-positive volume, and more than
+    :data:`MAX_MISSING_SESSIONS` absent weekday sessions between consecutive
+    bars.
 
     Never interpolates. A filled-in bar is a fabricated observation, and
     fabricated observations are indistinguishable from real ones by the time
     they reach a result.
 
-    The missing-day rule is a calendar-gap HEURISTIC, not an exchange calendar.
+    The missing-day rule counts WEEKDAY SESSIONS, not calendar days, so a
+    weekend contributes nothing to the count. It is a HEURISTIC, not an
+    exchange calendar.
     It catches a vendor dropping a run of days; it does not know that a
     particular Thursday was Thanksgiving. A real exchange calendar would need a
     dependency and the instrument's venue, neither of which this function has.
@@ -296,7 +301,7 @@ def validate_bars(df: pd.DataFrame) -> None:
     # multiplying raw prices by a split/dividend factor - which can round the
     # high and the close differently in the last bit. Real SPY history contains
     # such a bar, off by 1.4e-16 relative, and an exact `<` rejects it. The
-    # tolerance is seven orders of magnitude above that noise and four below a
+    # tolerance is seven orders of magnitude above that noise and five below a
     # one-cent error on a hundred-dollar share, so it cannot mask a real defect.
     lower = 1.0 - PRICE_REL_TOLERANCE
     upper = 1.0 + PRICE_REL_TOLERANCE
@@ -314,7 +319,19 @@ def validate_bars(df: pd.DataFrame) -> None:
     if bool(outside.any()):
         raise DataQualityError(f"high/low do not bracket open/close at {_dates(df.index, outside)}")
 
-    zero_volume = df["volume"] <= 0
+    # Volume is checked for finiteness FIRST and separately. `NaN <= 0` is
+    # False, so a NaN volume would otherwise slip through the comparison below
+    # and pass validation entirely - and this function is the only gate between
+    # the vendor and the cache.
+    try:
+        volume = df["volume"].to_numpy(dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise DataQualityError(f"volume column is not numeric: {exc}") from exc
+    bad_volume = ~np.isfinite(volume)
+    if bool(bad_volume.any()):
+        raise DataQualityError(f"non-finite volume at {_dates(df.index, bad_volume)}")
+
+    zero_volume = volume <= 0
     if bool(zero_volume.any()):
         raise DataQualityError(f"zero or negative volume at {_dates(df.index, zero_volume)}")
 

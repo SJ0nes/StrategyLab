@@ -34,14 +34,17 @@ Set-Content -LiteralPath $marker -Value $sig -Encoding ascii
 
 Deny @"
 Audit dispatch: this change-set has not been audited. Before ending the turn, dispatch all four
-read-only auditors and copy each one's RAW reply - verbatim, not a summary - into state/audit/:
+auditors in parallel. Each writes its OWN raw reply to state/audit/:
 
   contract-auditor    -> state/audit/contract-auditor.txt
   arithmetic-checker  -> state/audit/arithmetic-checker.txt
   drift-checker       -> state/audit/drift-checker.txt
   docs-auditor        -> state/audit/docs-auditor.txt
 
-The auditors hold no write tool by design, so writing those four files is your job. Run them in
-parallel. Tell the operator what was found; the files are what they read.
+Each auditor holds Write and its instructions name the single path it may write. Do NOT
+transcribe their replies yourself: retyping a reply makes you a summary layer between the
+auditor and the operator, which is exactly what writing the raw file to disk exists to prevent.
+Confirm the four files were written and changed, then tell the operator what was found in a few
+lines. The files are what they read.
 This dispatch fires once per change-set, so it will not repeat this turn.
 "@
