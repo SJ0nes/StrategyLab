@@ -140,8 +140,8 @@ AI assistant. That is visible in `git log` if you look at the timestamps — the
 whole history spans one sitting of a few hours, and
 `git log --format=%ad --date=iso` will show you exactly how long. It is stated
 here rather than left to be inferred. No figure is quoted because it grows with
-every commit; twice now a precise span has been written down and been stale by
-the next one, so the command is the only honest form.
+every commit: the one time a precise span was written down it was already stale
+at the commit that introduced it, so the command is the only honest form.
 
 What that does and does not mean:
 

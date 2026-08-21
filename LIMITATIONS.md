@@ -214,8 +214,13 @@ real fills does not exist anywhere in the repository.
 was designed for.** It was intended as an alarm for vendor revisions. Measured:
 two fetches of the same ticker over the same span, ninety minutes apart on the
 same machine with the same code, produced 5,033 rows each with an identical
-index — and **4,161 of those rows differed**, by up to 2.1e-4. The adjustment
-factor moves continuously, so the hash moves with it.
+index — and **4,161 of those rows differed**, by up to 2.1e-4. A second,
+independent pair of snapshots taken eight minutes apart showed 210 of 253
+overlapping bars differing bidirectionally at 7.7e-7 relative — neither the
+shape nor the magnitude a dividend produces.
+
+Why the values move on this timescale is **not established**. It is recorded
+here as a measurement, not as an explanation.
 
 That measurement came from a paired comparison run during an audit — two fetches
 separated in time, then compared row by row. It is not reproducible from a
