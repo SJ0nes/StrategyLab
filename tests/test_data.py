@@ -8,6 +8,7 @@ in for the vendor.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -132,6 +133,27 @@ def test_high_not_bracketing_close_raises() -> None:
         validate_bars(df)
 
 
+def test_close_equal_to_high_one_ulp_over_is_accepted() -> None:
+    # Real SPY history contains a bar where the adjusted close exceeds the
+    # adjusted high by 1.4e-16 relative - one unit in the last place - because
+    # the vendor multiplies raw prices by an adjustment factor and rounds the
+    # two differently. The day simply closed at its high. An exact `<` rejects
+    # it; a relative tolerance does not.
+    df = clean_frame(3)
+    high = float(df.loc[df.index[1], "high"])
+    df.loc[df.index[1], "close"] = math.nextafter(high, math.inf)
+    validate_bars(df)  # must not raise
+
+
+def test_a_real_price_error_is_still_caught() -> None:
+    # The counterpart: one penny on a hundred-dollar share is 1e-4 relative,
+    # five orders of magnitude above the tolerance, and must still fail.
+    df = clean_frame(3)
+    df.loc[df.index[1], "close"] = float(df.loc[df.index[1], "high"]) + 0.01
+    with pytest.raises(DataQualityError, match="bracket"):
+        validate_bars(df)
+
+
 def test_missing_trading_days_raise() -> None:
     df = clean_frame(10)
     # Drop a fortnight from the middle, leaving a gap no weekend explains.
@@ -147,6 +169,55 @@ def test_normal_weekend_gap_does_not_raise() -> None:
     gaps = df.index.to_series().diff().dt.days.dropna()
     assert gaps.max() == 3, "fixture should contain a weekend"
     validate_bars(df)  # must not raise
+
+
+@pytest.mark.parametrize(
+    ("last_bar", "next_bar", "why"),
+    [
+        # Fri 2006-12-29 -> Wed 2007-01-03. Mon was New Year's Day and Tue was
+        # the national day of mourning for President Ford: US markets shut.
+        ("2006-12-29", "2007-01-03", "Ford day of mourning"),
+        # Fri 2012-10-26 -> Wed 2012-10-31. Hurricane Sandy closed US markets
+        # on the Monday and Tuesday.
+        ("2012-10-26", "2012-10-31", "Hurricane Sandy"),
+    ],
+)
+def test_real_multi_day_market_closures_are_accepted(
+    last_bar: str, next_bar: str, why: str
+) -> None:
+    # These are verified historical closures, not vendor errors. A calendar-day
+    # threshold flags both; counting absent weekday sessions does not. If this
+    # test starts failing, the gap rule was tightened without checking it
+    # against what actually happened.
+    index = pd.DatetimeIndex([pd.Timestamp(last_bar), pd.Timestamp(next_bar)], name="date")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1_000_000, 1_000_000],
+        },
+        index=index,
+    )
+    validate_bars(df)  # must not raise, because of: why
+
+
+def test_a_dropped_working_week_still_raises() -> None:
+    # The counterpart: five absent sessions is a vendor problem, not a holiday.
+    index = pd.DatetimeIndex([pd.Timestamp("2020-01-06"), pd.Timestamp("2020-01-14")], name="date")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1_000_000, 1_000_000],
+        },
+        index=index,
+    )
+    with pytest.raises(DataQualityError, match="missing trading days"):
+        validate_bars(df)
 
 
 def test_unsorted_index_raises() -> None:

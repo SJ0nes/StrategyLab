@@ -22,12 +22,27 @@ REQUIRED_COLUMNS: tuple[str, ...] = ("open", "high", "low", "close", "volume")
 # Suffix for the JSON sidecar written next to each cached parquet file.
 PROVENANCE_SUFFIX = ".provenance.json"
 
-# A gap longer than this many calendar days between consecutive bars is treated
-# as missing data rather than as a normal weekend or holiday. Four calendar days
-# covers a Friday-to-Monday gap (three days); anything longer means at least one
-# whole trading day is absent. This is a heuristic and NOT an exchange calendar -
-# see the note in validate_bars.
-MAX_GAP_DAYS = 4
+# How many weekday sessions may be absent between two consecutive bars before
+# the gap is treated as missing data.
+#
+# Counted in BUSINESS days, not calendar days, so weekends contribute nothing
+# and the threshold means what it says. Three accommodates every ordinary
+# exchange closure and the multi-day ones that actually occurred in the window
+# this project uses: the 2007-01-02 national day of mourning for President Ford
+# (2 sessions missing alongside New Year's Day) and the Hurricane Sandy closure
+# of 2012-10-29 and 2012-10-30 (2 sessions). A vendor dropping a working week
+# is 5 and still trips it.
+#
+# This is a heuristic and NOT an exchange calendar - see the note in
+# validate_bars.
+MAX_MISSING_SESSIONS = 3
+
+# Relative tolerance for the ordering comparisons between open, high, low, and
+# close. Adjusted prices are raw prices multiplied by a split/dividend factor,
+# so a bar that genuinely closed at its high can come back with the two values
+# differing by one unit in the last place - about 1e-16 relative. This sits far
+# above that and far below any error a human would care about.
+PRICE_REL_TOLERANCE = 1e-9
 
 
 class DataQualityError(Exception):
@@ -276,15 +291,25 @@ def validate_bars(df: pd.DataFrame) -> None:
     if bool(non_positive.any()):
         raise DataQualityError(f"non-positive price at {_dates(df.index, non_positive)}")
 
-    inverted = df["high"] < df["low"]
+    # Compared with a relative tolerance rather than exactly. A day that closes
+    # at its high is ordinary, and vendors compute adjusted prices by
+    # multiplying raw prices by a split/dividend factor - which can round the
+    # high and the close differently in the last bit. Real SPY history contains
+    # such a bar, off by 1.4e-16 relative, and an exact `<` rejects it. The
+    # tolerance is seven orders of magnitude above that noise and four below a
+    # one-cent error on a hundred-dollar share, so it cannot mask a real defect.
+    lower = 1.0 - PRICE_REL_TOLERANCE
+    upper = 1.0 + PRICE_REL_TOLERANCE
+
+    inverted = df["high"] < df["low"] * lower
     if bool(inverted.any()):
         raise DataQualityError(f"high below low at {_dates(df.index, inverted)}")
 
     outside = (
-        (df["high"] < df["open"])
-        | (df["high"] < df["close"])
-        | (df["low"] > df["open"])
-        | (df["low"] > df["close"])
+        (df["high"] < df["open"] * lower)
+        | (df["high"] < df["close"] * lower)
+        | (df["low"] > df["open"] * upper)
+        | (df["low"] > df["close"] * upper)
     )
     if bool(outside.any()):
         raise DataQualityError(f"high/low do not bracket open/close at {_dates(df.index, outside)}")
@@ -294,11 +319,17 @@ def validate_bars(df: pd.DataFrame) -> None:
         raise DataQualityError(f"zero or negative volume at {_dates(df.index, zero_volume)}")
 
     if len(df.index) > 1:
-        gaps = df.index.to_series().diff().dt.days
-        long_gaps = gaps > MAX_GAP_DAYS
-        if bool(long_gaps.any()):
+        # Business days strictly between each pair of consecutive bars.
+        # busday_count spans [begin, end), and the earlier bar is itself a
+        # weekday session, so subtracting one leaves only the absent sessions.
+        days = df.index.to_numpy(dtype="datetime64[D]")
+        absent_sessions = np.busday_count(days[:-1], days[1:]) - 1
+        gapped = np.zeros(len(days), dtype=bool)
+        gapped[1:] = absent_sessions > MAX_MISSING_SESSIONS
+        if bool(gapped.any()):
             raise DataQualityError(
-                f"missing trading days before {_dates(df.index, long_gaps.fillna(False))}"
+                f"missing trading days before {_dates(df.index, gapped)}; "
+                f"more than {MAX_MISSING_SESSIONS} weekday sessions absent"
             )
 
 
