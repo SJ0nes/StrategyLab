@@ -25,7 +25,7 @@ because the backtester, the search, and the validator are not written yet.**
 | `status` and `fetch` commands *(untested)* | Walk-forward validation |
 | | Decision logging, risk limits, venue adapters, HTML reports |
 
-**137 tests pass** — verify with `uv run pytest`. They cover the protocol
+**140 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, and the cost model. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
 docstring contract with a `raise NotImplementedError` body: 27 of them, so that
@@ -68,7 +68,7 @@ the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 137 tests, none touching the network
+uv run pytest                   # 140 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

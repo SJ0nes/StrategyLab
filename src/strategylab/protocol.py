@@ -10,6 +10,7 @@ Everything downstream reaches the protocol through attribute access on
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -26,11 +27,6 @@ DEFAULT_PROTOCOL_PATH = Path("protocol.yaml")
 # one conversion in the system is greppable.
 PERCENT_PER_UNIT = 100.0
 
-# The trailing ``\r?`` is load-bearing. Under re.MULTILINE, ``$`` matches only
-# at end-of-string or immediately before ``\n`` - so on a CRLF file the ``\r``
-# sits between the digits and the anchor and neither pattern matches at all.
-# This module exists to preserve a file's line endings byte for byte, and
-# without this it would refuse the CRLF file it promises to handle.
 # Two things these patterns must tolerate, both learned the hard way.
 #
 # The ``\r?`` is load-bearing: under re.MULTILINE ``$`` matches only before a
@@ -368,7 +364,13 @@ def _as_int(value: Any, where: str) -> int:
 
 
 def _non_negative(value: float, where: str) -> float:
-    """Return ``value`` if it is zero or positive, else raise naming the field.
+    """Return ``value`` if it is zero or positive and finite, else raise.
+
+    Finiteness is part of the check, not a separate one. ``nan < 0`` is False,
+    so a bare comparison lets ``.nan`` through - and YAML spells that literal
+    plainly enough that it reaches this function from the file. It would then be
+    rejected further downstream by :class:`CostModel`, as a ``ValueError`` that
+    escapes :func:`load_protocol` in defiance of its own contract.
 
     Args:
         value: The value to check.
@@ -378,10 +380,12 @@ def _non_negative(value: float, where: str) -> float:
         ``value`` unchanged.
 
     Raises:
-        ProtocolError: If ``value`` is negative.
+        ProtocolError: If ``value`` is negative or not finite.
     """
-    if value < 0:
-        raise ProtocolError(f"protocol.yaml: field '{where}' must be >= 0, got {value}")
+    if not math.isfinite(value) or value < 0:
+        raise ProtocolError(
+            f"protocol.yaml: field '{where}' must be a finite number >= 0, got {value}"
+        )
     return value
 
 

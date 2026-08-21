@@ -363,3 +363,15 @@ def test_a_hash_without_preceding_space_is_not_a_comment(tmp_path: Path) -> None
         load_protocol(path)
     with pytest.raises(ProtocolError, match="walk_forward_touches"):
         increment_walk_forward_touches(path)
+
+
+@pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf"])
+def test_non_finite_rate_raises_protocol_error(tmp_path: Path, literal: str) -> None:
+    # YAML spells these plainly, so they reach the loader from the file. A bare
+    # `value < 0` check lets .nan through, because `nan < 0` is False - and it
+    # would then be rejected downstream by CostModel as a ValueError, escaping
+    # load_protocol in defiance of its own contract that every failure is a
+    # ProtocolError naming the field.
+    text = BASE.replace("spread_pct: 0.03", f"spread_pct: {literal}")
+    with pytest.raises(ProtocolError, match=r"costs\.spread_pct"):
+        load_protocol(write_protocol(tmp_path, text))
