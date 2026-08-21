@@ -32,6 +32,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
                      │ strategy.py    │  STUB — the shared brain.
                      │      STUB      │  Used by BOTH the backtester and
                      │ types.py BUILT │  the live worker. Written once.
+                     │ config.py BUILT│  The only reader of configs/.
                      └───────┬────────┘
                              │  Intent
               ┌──────────────┼──────────────┐
@@ -70,11 +71,13 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 33 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
-| `core/types.py` | The value types shared by the backtester and the live worker. Complete, but types rather than behaviour. | none |
+| `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 63 |
+| `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 63 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**154 tests pass** — 33 + 40 + 81. Run `uv run pytest` to see the count yourself.
+**217 tests pass** — 33 + 40 + 81 + 63. Run `uv run pytest` to see the count
+yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
 normalisation behind it are **written but untested**, because no test may make a
@@ -116,12 +119,18 @@ these exist:
   yet be compared against simply owning the index.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and
   tested and wired to nothing, because walk-forward validation does not exist.
-- **A strategy-config loader.** The largest hole here, and not even a stub.
-  Nothing can read `configs/ma_crossover.yaml`: every consumer takes a
-  `StrategyDef` and nothing constructs one. `yaml.safe_load` appears once in
-  `src/`, reading `protocol.yaml`. The declarative-config rule rests on a fixed
-  vocabulary that exists only as a docstring example — `Condition.operator` is
-  typed `str` and nothing validates it. Whoever builds `core/` builds this first.
+- **Any caller of `load_strategy`.** The loader is built and tested; nothing
+  calls it. `cli.search` takes a config path and raises `NotImplementedError`
+  before reading it.
+- **Placeholder resolution.** `load_strategy` returns a `StrategyDef` whose
+  periods may still be `$fast` rather than a number. Substituting the grid's
+  values belongs with `expand_grid`, which is a stub, so no `StrategyDef` in this
+  repository has ever been made evaluable.
+- **An engine that implements the vocabulary.** `core/config.py` declares two
+  indicators and three operators and enforces them at load time, but
+  `core.evaluate` is a stub, so nothing computes an `sma` or decides what
+  `crosses_above` means. The vocabulary is what the engine will be built against,
+  not a description of running code.
 
 ## The one thing the diagram does not show
 

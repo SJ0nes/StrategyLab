@@ -39,16 +39,39 @@ class Action(Enum):
 class IndicatorRef:
     """A reference to one indicator series, as named in a strategy config.
 
+    A period written in a config is either a literal number of bars or a
+    ``$placeholder`` the search grid supplies a value for. The two are kept in
+    separate fields so that ``period`` is only ever a real lookback: a single
+    field holding ``int | str`` would make every reader check which it got, and
+    the one that forgot would use the string ``"$fast"`` as a window length.
+
     Attributes:
         indicator: Name from the engine's fixed vocabulary, such as ``sma`` or
             ``close``.
-        period: Lookback in bars, or ``None`` for an indicator that takes no
-            period, such as ``close``. Resolved from the search grid before
-            evaluation, so it is never a ``$placeholder`` by this point.
+        period: Lookback in bars, or ``None`` when the indicator takes no period
+            (``close``) or when the period is still a placeholder. Never a
+            ``$placeholder`` itself.
+        period_param: Name of the ``$placeholder`` supplying the period, without
+            the leading ``$``, or ``None`` once resolved or never placed. A
+            reference carrying this is not yet evaluable; the search grid
+            resolves it into ``period`` first.
     """
 
     indicator: str
     period: int | None = None
+    period_param: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a reference that is both resolved and unresolved at once.
+
+        Raises:
+            ValueError: If both ``period`` and ``period_param`` are set.
+        """
+        if self.period is not None and self.period_param is not None:
+            raise ValueError(
+                f"indicator '{self.indicator}' has both a period ({self.period}) and a "
+                f"placeholder (${self.period_param}); exactly one of the two, or neither"
+            )
 
 
 @dataclass(frozen=True)

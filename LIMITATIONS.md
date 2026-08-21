@@ -6,22 +6,27 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Four modules have working bodies: `protocol.py`, `data/source.py`,
-`backtest/costs.py`, and the `status` and `fetch` commands in `cli.py`.
-Twenty-seven `NotImplementedError` bodies remain, across 13 files. Two further
-modules are complete but are types rather than behaviour: `core/types.py` holds
-the shared value types, and `execution/venue.py` holds the venue interface and
-its data classes. Neither has any tests.
+Five modules have working bodies: `protocol.py`, `data/source.py`,
+`backtest/costs.py`, `core/config.py`, and the `status` and `fetch` commands in
+`cli.py`. Twenty-seven `NotImplementedError` bodies remain, across 13 files. Two
+further modules are mostly types rather than behaviour: `core/types.py` holds the
+shared value types, and `execution/venue.py` holds the venue interface and its
+data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
+`tests/test_strategy_config.py`.
 
-**Nothing can read a strategy config.** There is no loader for
-`configs/ma_crossover.yaml` — not an implementation, not even a stub. Every
-component that consumes a strategy takes a `StrategyDef` as a parameter and
-nothing anywhere constructs one. The "fixed vocabulary" of indicators and
-operators that the declarative-config rule depends on exists only as an example
-inside a docstring; `Condition.operator` is typed `str` and nothing validates
-it. `strategylab status` prints `Next: uv run strategylab search
-configs/ma_crossover.yaml`, which a reader will reasonably take as evidence
-that something can parse that file. Nothing can.
+**A strategy config can be read, and nothing can act on what it says.**
+`core/config.py` parses and validates `configs/ma_crossover.yaml` into a
+`StrategyDef`, and the "fixed vocabulary" the declarative-config rule depends on
+is now a closed set enforced at load time rather than an example in a docstring.
+Two things that vocabulary is not: it is not implemented anywhere, because
+`core.evaluate` is still a stub, so the loader is the only thing in the system
+that knows what `crosses_above` means; and it is small — two indicators (`close`,
+`sma`) and three operators (`above`, `crosses_above`, `crosses_below`), which is
+what the one committed config uses and no more. Nor are `$placeholder` periods
+resolved: the loader checks that each has a parameter behind it and leaves the
+substitution to a grid that does not exist. `strategylab status` prints
+`Next: uv run strategylab search configs/ma_crossover.yaml`; that file now parses,
+and `search` is still a `NotImplementedError`.
 
 **There are no backtest results, no search results, and no validation outcomes**,
 because there is no backtester, no search, and no validator. No cost has ever
@@ -29,8 +34,9 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-154 tests pass (`uv run pytest`). They cover the protocol loader, the data
-layer, and the cost model. Nothing else has tests because nothing else has code.
+217 tests pass (`uv run pytest`). They cover the protocol loader, the data
+layer, the cost model, and the strategy-config loader. Nothing else has tests
+because nothing else has code.
 
 Two guarantees this project rests on are **currently unproven**: that
 `core.evaluate` cannot read past the current bar, and that the backtest engine
