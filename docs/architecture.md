@@ -20,8 +20,8 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 │    data/      │   │    backtest/    │   │     risk/      │
 │               │   │                 │   │                │
 │ source.py     │   │ costs.py  BUILT │   │ limits.py STUB │
-│        BUILT  │   │ engine.py  STUB │   │ + no config    │
-│               │   │ metrics.py STUB │   │   file exists  │
+│        BUILT  │   │ engine.py BUILT │   │ + no config    │
+│               │   │ metrics.py BUILT│   │   file exists  │
 └───────┬───────┘   └────────┬────────┘   └────────┬───────┘
         │                    │                     │
         │  bars              │  fills, equity      │  veto
@@ -71,6 +71,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
+| `backtest/engine.py` | `run_backtest` — `evaluate` stepped bar by bar with costs applied. Signal from a close, fill at the NEXT bar's open. Carries the lookahead test that can actually fail, plus the determinism test. | 33 |
 | `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 28 |
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
@@ -78,7 +79,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**305 tests pass** — 34 + 40 + 81 + 81 + 41 + 28. Run `uv run pytest` to see the count
+**338 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33. Run `uv run pytest` to see the count
 yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -88,12 +89,12 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **24
-`NotImplementedError` bodies across 11 files:**
+session builds against a fixed interface rather than inventing one. **23
+`NotImplementedError` bodies across 10 files:**
 
 `cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
 `search/plateau.py` (3) · `logging/decisions.py` (2) ·
-`risk/limits.py` (2) · `backtest/engine.py` ·
+`risk/limits.py` (2) ·
 `search/grid.py` · `search/noise.py` · `search/graveyard.py` ·
 `validate/walkforward.py` · `report/render.py`.
 

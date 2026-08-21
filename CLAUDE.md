@@ -17,8 +17,11 @@ strategy — there will never be enough live trades to judge a strategy.
   test named in this rule CANNOT FAIL - `evaluate` is handed a window ending at
   the bar it evaluates, so the corrupted rows are sliced away before the call.
   The test beside it, that a bar's intent does not change with the history in
-  front of it, is the one that catches a real leak. And once the engine exists,
-  the guarantee rests on ITS slicing, which nothing tests yet.
+  front of it, is the one that catches a real leak. The guarantee itself rests
+  on the ENGINE's slicing, and that now has a test that can fail:
+  `tests/test_engine.py` hands `run_backtest` a frame whose future has been
+  corrupted, intact, and asserts no earlier decision moves. Widening the slice
+  by one bar turns seven tests red.
 - **Config stays declarative.** Strategy conditions are a flat list combined with
   AND, from a fixed vocabulary. No nesting, no OR, no expressions in YAML. When a
   proposal needs more, that is a code change with a test. A config format that
@@ -72,7 +75,9 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
   vendor-frame normalisation behind it - has no test at all, and cannot get one
   without either a recorded HTTP fixture or a fake source.
 - **Determinism.** Same config, same data, same result. Required of the engine,
-  and the test asserting it ships with the engine. NOT YET WRITTEN.
+  and the test asserting it ships with the engine. BOTH NOW EXIST -
+  `tests/test_engine.py` asserts an identical equity curve, decision log, fill
+  list and metric set across two runs.
 - **Ask before adding a dependency.** Name what it does and what it replaces.
 - **One component per commit**, with its tests, conventional message
   (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`).

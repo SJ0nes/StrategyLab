@@ -6,9 +6,10 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Seven modules have working bodies: `protocol.py`, `data/source.py`,
-`backtest/costs.py`, `backtest/metrics.py`, `core/config.py`, `core/strategy.py`,
-and the `status` and `fetch` commands in `cli.py`. Twenty-four `NotImplementedError` bodies remain, across 11 files. Two
+Eight modules have working bodies: `protocol.py`, `data/source.py`,
+`backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
+`core/config.py`, `core/strategy.py`, and the `status` and `fetch` commands in
+`cli.py`. Twenty-three `NotImplementedError` bodies remain, across 10 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -32,13 +33,23 @@ in a clean checkout, where `data/` is empty because it is gitignored, it points 
 `fetch` instead. Either way that config now parses and `search` is still a
 `NotImplementedError`.
 
-**There are no backtest results, no search results, and no validation outcomes**,
-because there is no backtester, no search, and no validator. No cost has ever
-been applied to a trade: `apply_costs` works and is heavily tested, but
-`run_backtest` is a stub, so the entire cost section below describes a model
-that has never run on anything.
+**There are no backtest results, no search results, and no validation outcomes.**
+A backtester now exists — `run_backtest` steps `evaluate` bar by bar and charges
+`apply_costs` on every fill, so the cost model below has finally been applied to
+a trade. But it has only ever run on the synthetic twelve-bar series in its own
+tests. It has never been pointed at `SPY`, because nothing calls it: `cli.search`
+still raises before reading its argument, and there is no grid to hand it
+parameters. There is no search and no validator.
 
-305 tests pass (`uv run pytest`). They cover the protocol loader, the data
+**The engine's fill convention is a decision, not a detail.** A signal computed
+from bar `t`'s close is filled at bar `t+1`'s OPEN. Filling at the same close
+would transact at a price only known once that bar had closed, which is the
+error that flatters most amateur backtests. The cost: `apply_costs` prices
+against a mid and an open is a traded price, so using it as the mid is an
+approximation — a smaller error than the one it avoids, and stated rather than
+hidden. The last bar's signal is recorded and never filled.
+
+338 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, and the
 performance metrics. Nothing else has tests because nothing else has code.
 
@@ -65,8 +76,18 @@ written, the question "does this read the future" becomes a question about its
 slicing, and no test in this repository addresses that yet. That is the one to
 write alongside the engine, and it is not the test that exists today.
 
-One guarantee is still **unproven**: that the backtest engine is deterministic.
-There is no engine. `evaluate` itself is deterministic and tested to be.
+**The determinism guarantee now has its test.** `run_backtest` consults no clock
+and no random source, and `tests/test_engine.py` asserts that the same inputs
+produce an identical equity curve, decision log, fill list and metrics.
+
+**And the lookahead guarantee finally has a test that can fail.** The engine holds
+the whole frame and chooses what to hand `evaluate`; that choice is the entire
+guarantee. `test_corrupting_the_future_does_not_change_any_earlier_decision`
+corrupts every bar after `k` and passes the frame in INTACT — nothing is sliced
+away before the call — so an engine that peeked by a single bar produces
+different earlier decisions and the test says so. Verified against a deliberately
+broken engine: widening the slice by one bar turns seven tests red. That is the
+first test in this project to carry the claim the whole design rests on.
 
 ## The instrument
 

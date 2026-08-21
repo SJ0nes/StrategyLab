@@ -24,28 +24,31 @@ because the backtester, the search, and the validator are not written yet.**
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Backtest engine and metrics |
-| Price data layer — validation, provenance, parquet cache | Grid search, plateau scoring, noise ceiling |
-| Cost model — hand-verified arithmetic | Walk-forward validation |
-| Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters, HTML reports |
+| Protocol loader and validator | Grid search, plateau scoring, noise ceiling |
+| Price data layer — validation, provenance, parquet cache | Walk-forward validation |
+| Cost model — hand-verified arithmetic | Decision logging, risk limits, venue adapters, HTML reports |
+| Strategy-config loader — closed schema, closed vocabulary | |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | |
+| Backtest engine and metrics, with the determinism test | |
 | `status` and `fetch` commands *(untested)* | |
 
-**305 tests pass** — verify with `uv run pytest`. They cover the protocol
+**338 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
-evaluation, and the performance metrics. The two CLI commands have no tests,
+evaluation, the performance metrics, and the backtest engine. The two CLI
+commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 24 of them across 11
+docstring contract with a `raise NotImplementedError` body — 23 of them across 10
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
-Of the two guarantees this project rests on, one now has a test and one does
-not. **Strategy evaluation cannot read past the current bar** — the lookahead
+Both guarantees this project rests on now have tests.
+**Strategy evaluation cannot read past the current bar** — the lookahead
 test exists and is green, and `LIMITATIONS.md` states plainly that the half
 named in the project's own rules cannot fail, and which test carries the weight
 instead.
-**The backtest engine is deterministic** remains unproven: there is no engine.
-See [LIMITATIONS.md](LIMITATIONS.md).
+**The backtest engine is deterministic** now has one too, and the engine has
+the lookahead test that can actually fail — it hands the engine a corrupted
+future intact rather than slicing it away. See [LIMITATIONS.md](LIMITATIONS.md).
 
 ## Architecture
 
@@ -74,14 +77,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 305 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 338 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 305 tests, none touching the network
+uv run pytest                   # 338 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

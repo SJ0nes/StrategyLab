@@ -179,8 +179,13 @@ def _lookback_of(ref: IndicatorRef, definition: StrategyDef, params: dict[str, i
     return 1 if period is None else period
 
 
-def _required_history(definition: StrategyDef, params: dict[str, int]) -> int:
+def required_history(definition: StrategyDef, params: dict[str, int]) -> int:
     """Return the minimum number of bars needed to evaluate every condition.
+
+    Public because the backtest engine needs to know where a strategy's warm-up
+    ends before it starts stepping bars. The alternative - calling
+    :func:`evaluate` and catching the ValueError - would use an exception for
+    control flow and would swallow the other six reasons it raises.
 
     The longest lookback in the strategy, plus one more bar if any operator
     compares the current bar against the previous one.
@@ -421,7 +426,7 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
                 "so this would fire on every bar rather than never"
             )
 
-    needed = _required_history(definition, params)
+    needed = required_history(definition, params)
     if len(bars) < needed:
         raise ValueError(
             f"bars holds {len(bars)} rows but this strategy needs {needed} to evaluate its "
