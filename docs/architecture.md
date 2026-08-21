@@ -69,12 +69,12 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 |---|---|---|
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 33 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
-| `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 67 |
+| `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Complete, but types rather than behaviour. | none |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**140 tests pass** — 33 + 40 + 67. Run `uv run pytest` to see the count yourself.
+**154 tests pass** — 33 + 40 + 81. Run `uv run pytest` to see the count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
 normalisation behind it are **written but untested**, because no test may make a

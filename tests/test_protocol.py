@@ -359,7 +359,9 @@ def test_a_hash_without_preceding_space_is_not_a_comment(tmp_path: Path) -> None
     # rewritten on a line the loader cannot read.
     text = BASE.replace("  walk_forward_touches: 0", "  walk_forward_touches: 0#note")
     path = write_protocol(tmp_path, text)
-    with pytest.raises(ProtocolError):
+    # Matched, not bare: an unmatched raises passes on ANY ProtocolError,
+    # including one raised for a reason this test is not about.
+    with pytest.raises(ProtocolError, match=r"walk_forward_touches.*must be an integer"):
         load_protocol(path)
     with pytest.raises(ProtocolError, match="walk_forward_touches"):
         increment_walk_forward_touches(path)

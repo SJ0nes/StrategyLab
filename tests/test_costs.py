@@ -382,6 +382,21 @@ def test_negative_rates_are_rejected_at_construction(field: str) -> None:
         CostModel(**kwargs)
 
 
-def test_non_finite_rates_are_rejected_at_construction() -> None:
-    with pytest.raises(ValueError, match="spread_frac"):
-        CostModel(spread_frac=float("nan"), slippage_frac=0.0005, commission_frac=0.0005)
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "spread_frac",
+        "slippage_frac",
+        "commission_frac",
+        "commission_min_flat",
+        "fx_conversion_frac",
+    ],
+)
+def test_non_finite_rates_are_rejected_at_construction(field: str, bad: float) -> None:
+    # Every field, every non-finite value - the name promises non-finite, so a
+    # single NaN on a single field would not honour it.
+    kwargs = {"spread_frac": 0.0003, "slippage_frac": 0.0005, "commission_frac": 0.0005}
+    kwargs[field] = bad
+    with pytest.raises(ValueError, match=field):
+        CostModel(**kwargs)

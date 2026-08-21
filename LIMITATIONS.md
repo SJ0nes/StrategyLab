@@ -29,7 +29,7 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-140 tests pass (`uv run pytest`). They cover the protocol loader, the data
+154 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, and the cost model. Nothing else has tests because nothing else has code.
 
 Two guarantees this project rests on are **currently unproven**: that
@@ -218,6 +218,8 @@ spread, and slippage before any search runs, which is the important property —
 but it does not record where those three numbers came from, and the project's own
 cost-arithmetic standard asks that it should.
 
-**The risk layer does not exist.** No `configs/risk_limits.yaml`, no tests, both
-functions stubs. `CLAUDE.md` describes it as untouchable with its own file and
-its own tests; it currently has neither.
+**The risk layer is not implemented.** `risk/limits.py` exists and carries its
+contracts, but both functions are stubs, there is no `configs/risk_limits.yaml`
+for it to read, and there are no tests. `CLAUDE.md` describes it as untouchable
+with its own file and its own tests: it has the file, and neither of the other
+two.
