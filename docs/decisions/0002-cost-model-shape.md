@@ -38,6 +38,15 @@ costs alone turns out to be unprofitable in practice. An FX charge applies
 whenever the instrument's currency differs from the account's — which, for a GBP
 account trading a fund that tracks a USD index, is always.
 
+> **Corrected by [0004](0004-two-cost-components-decided-at-zero.md).** That last
+> clause is wrong. It conflates currency *exposure* with a conversion *fee*.
+> `VUAG.L` is GBP-denominated, so a GBP account buying it converts nothing and
+> the broker charges nothing; the fund's USD holdings are exposure, internal to
+> the fund, and not a charge at the point of trade. The paragraph is left as
+> written because these records are historical, and the error is corrected here
+> rather than edited away. Both rates are now set explicitly to zero in
+> `protocol.yaml`, with the reasoning in 0004.
+
 **The model carries both fields; the pre-registration switches both off.**
 `protocol.yaml` sets neither `commission_min_flat` nor `fx_conversion_pct`, so
 both default to zero and no FX charge is currently modelled — for exactly the

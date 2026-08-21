@@ -94,16 +94,32 @@ not a finding.
 
 ## The cost model
 
-**Two real cost components are configured to zero.** `commission_min_flat` and
-`fx_conversion_pct` both default to `0.0` because `protocol.yaml` does not set
-them. The first is the flat minimum commission that dominates small positions;
-the second is the currency conversion charge — for a strategy whose research
-currency is USD and whose execution currency is GBP. The cost model's own
-documentation names both as the things that kill otherwise-viable strategies,
-and both are currently switched off.
+**Two cost components are zero, and that is now a decision rather than an
+omission.** `commission_min_flat` and `fx_conversion_pct` are set explicitly in
+`protocol.yaml`, both to `0.0`: the execution account is a Trading 212 stocks and
+shares ISA, which charges no commission and no per-trade minimum, and the
+execution instrument `VUAG.L` is GBP-denominated on the LSE, so a GBP account
+converts nothing to buy it. Reasoning and its limits in
+[docs/decisions/0004](docs/decisions/0004-two-cost-components-decided-at-zero.md).
+Read that before reusing these numbers: the FX zero is a property of that
+account-and-instrument pairing, not of the broker, and executing `SPY` directly
+would make it wrong.
 
-**Missing entirely:** UK stamp duty on purchases, taxes of any kind, interest
-earned on uninvested cash, and borrow costs.
+**A commission-free broker is not a cost-free one.** The spread is still charged
+at `0.03` percent and slippage at `0.05`, on every fill. That is where the cost
+of commission-free execution actually sits.
+
+**The fund's own ongoing charge is not modelled anywhere.** `VUAG.L` levies an
+annual management charge against the fund's assets. It is not a transaction cost,
+so `CostModel` has no term for it: `apply_costs` charges per fill, and nothing in
+this project charges anything per unit of time held. A trend strategy holding for
+months pays that charge and the backtest will not show it. This is the cost
+omission most likely to matter to a result, and it is a code change to fix, not a
+config edit.
+
+**Missing entirely:** taxes of any kind, interest earned on uninvested cash, and
+borrow costs. UK stamp duty is not charged on this instrument, so its absence
+from the model is correct rather than a gap.
 
 **Paper fills are optimistic.** No market impact modelling — the executed price
 does not move with size. No partial fills. Fractional shares are assumed

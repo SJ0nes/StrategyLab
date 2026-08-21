@@ -9,6 +9,7 @@ is.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -280,6 +281,34 @@ def test_repository_protocol_loads() -> None:
     assert protocol.instruments.execution == "VUAG.L"
     assert protocol.costs.commission_frac == pytest.approx(0.0005, rel=1e-12)
     assert protocol.validation.effective_sharpe_bar == pytest.approx(1.20, rel=1e-12)
+
+
+def test_every_cost_rate_is_stated_explicitly_in_the_committed_protocol() -> None:
+    # The two optional rates default to zero when absent, which is the same
+    # number a deliberate decision produces and carries none of the meaning.
+    # docs/decisions/0004 records that both ARE decided at zero for this account
+    # and instrument; this pins them as written down rather than left out, so
+    # deleting either line fails here instead of silently reverting the decision
+    # to an omission.
+    text = REPO_PROTOCOL.read_text(encoding="utf-8")
+    for key in (
+        "commission_pct",
+        "spread_pct",
+        "slippage_pct",
+        "commission_min_flat",
+        "fx_conversion_pct",
+    ):
+        assert re.search(rf"^\s+{re.escape(key)}:", text, re.MULTILINE), (
+            f"'{key}' is not stated in protocol.yaml; an unstated rate is not a decision"
+        )
+
+    costs = load_protocol(REPO_PROTOCOL).costs
+    assert costs.commission_min_flat == 0.0
+    assert costs.fx_conversion_frac == 0.0
+    # And the two that are NOT zero, so this test cannot be read as "costs are
+    # switched off". A commission-free broker still charges the spread.
+    assert costs.spread_frac > 0.0
+    assert costs.slippage_frac > 0.0
 
 
 # --------------------------------------------------------------------------

@@ -23,6 +23,21 @@ costs:
   commission_pct: 0.05
   spread_pct: 0.03
   slippage_pct: 0.05
+  # These two are DECIDED at zero, not omitted. Both were absent before, which
+  # defaults them to zero and reads as "never considered" - the difference
+  # matters, because a cost silently at zero is the single most effective way to
+  # turn a losing strategy into a winning one. See
+  # docs/decisions/0004-two-cost-components-decided-at-zero.md.
+  #
+  # commission_min_flat: the execution account is a Trading 212 stocks and
+  # shares ISA, which charges no commission and no per-trade minimum.
+  #
+  # fx_conversion_pct: the execution instrument VUAG.L is GBP-denominated on the
+  # LSE, so a GBP account converts nothing to buy it. This zero is a property of
+  # THAT PAIRING, not of the broker: executing SPY directly from a GBP account
+  # would attract a conversion charge and this number would be wrong.
+  commission_min_flat: 0.0
+  fx_conversion_pct: 0.0
 
 validation:
   primary_metric: sharpe
