@@ -1,12 +1,131 @@
 # StrategyLab
 
-A backtesting and validation pipeline for systematic trading strategies, plus a
-paper-trading worker that measures how far live results drift from what the
-backtest predicted.
+A research pipeline for testing whether a trading strategy has any real edge.
+It searches parameters on years of price history, tests the survivor on data the
+search was never allowed to see, and compares the result against what the same
+search achieves on noise. A paper-trading worker then measures how far live
+behaviour drifts from what the backtest predicted.
+
+The project is built around one assumption: **given enough parameter
+combinations, something will always look profitable.** Most of the machinery here
+exists to tell that apart from an actual edge.
+
+*CI badge pending — no GitHub remote has been configured for this repository yet.*
 
 ## Current state
 
-Scaffolding in progress. This README is written in full at the end of the first
-build session; until then it deliberately claims nothing about what works.
+**Foundations only. No strategy has been backtested, searched, or validated,
+because the backtester, the search, and the validator are not written yet.**
 
-See `LIMITATIONS.md` and `protocol.yaml`.
+| Built and tested | Not built |
+|---|---|
+| Protocol loader and validator | Strategy evaluation (`core/`) |
+| Price data layer — validation, provenance, parquet cache | Backtest engine and metrics |
+| Cost model — hand-verified arithmetic | Grid search, plateau scoring, noise ceiling |
+| `status` and `fetch` commands | Walk-forward validation |
+| | Decision logging, risk limits, venue adapters, HTML reports |
+
+**123 tests pass** — verify with `uv run pytest -q`. They cover the protocol
+loader, the data layer, and the cost model. Everything else is a signature and a
+docstring contract with a `raise NotImplementedError` body: 27 of them, so that
+each later component is built against a fixed interface.
+
+Two guarantees this project will rest on are **currently unproven**: that
+strategy evaluation cannot read past the current bar, and that the backtest
+engine is deterministic. Both are stated as rules in `CLAUDE.md`; neither has a
+test yet, because neither has an implementation. See
+[LIMITATIONS.md](LIMITATIONS.md).
+
+## Architecture
+
+```
+protocol.yaml ──▶ protocol.py ──▶ data/ ──▶ core/ ──▶ backtest/ ──▶ search/
+   the rules       the only        bars      shared     costs and     grid,
+   written once    reader                    by both    engine        plateau,
+                                             sim and                  noise
+                                             live          │             │
+                                                │          └──────┬──────┘
+                                                ▼                 ▼
+                                          execution/ ◀─ risk/  validate/
+                                          venue, T212   veto   walk-forward
+                                                │                  │
+                                                └────▶ logging/ ◀───┘
+                                                          │
+                                                          ▼
+                                                       report/
+```
+
+Full version, with every module marked built or stubbed, in
+[docs/architecture.md](docs/architecture.md).
+
+## Quickstart
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). All three commands
+run offline in a fresh clone.
+
+```bash
+git clone <this-repo> && cd StrategyLab
+uv run pytest -q                # 123 tests, no network
+uv run strategylab status       # what exists, and what to run next
+```
+
+`status` reads the protocol and reports where the project is. It never changes
+anything, so it is safe to run at any time.
+
+A fourth command downloads price data. **It is the only command that touches the
+network**, so unlike the three above it can fail for reasons outside this
+repository:
+
+```bash
+uv run strategylab fetch        # ~5,000 daily SPY bars, cached with provenance
+```
+
+Run every command from the repository root — paths in the protocol are relative
+to the working directory.
+
+## Methodology
+
+The full argument is in [docs/methodology.md](docs/methodology.md). In short:
+
+**The split.** Parameter search may look at 2005–2018 and nothing else.
+2019–2024 is held back and used only to test a candidate already chosen. The
+loader refuses a protocol whose windows overlap. Every read of the held-back
+window increments a counter, because the split degrades with use and that
+degradation should be visible rather than forgotten.
+
+**Plateaus over peaks.** The best single cell in a parameter grid is usually the
+luckiest one. Candidates are scored by the median of their parameter
+neighbourhood; winners sitting on a grid boundary are rejected as walls rather
+than optima; and flatness caused by parameters doing nothing is flagged rather
+than reported as robustness.
+
+**The noise ceiling.** The expected maximum across 90 draws from noise is well
+above zero, so the best of 90 parameter combinations will post a positive Sharpe
+on data with no structure in it at all. Every search therefore reruns its entire
+grid against surrogate series and reports the distribution of best-in-grid
+results. A winning Sharpe means nothing until compared against it.
+*Not yet implemented.*
+
+**Three outcomes, not two.** Validation returns pass, fail, or
+`insufficient_data`. The third is not a soft failure — it means the strategy was
+never really tested. Conflating it with failure throws away a candidate that was
+never refuted.
+
+## Results
+
+**There are none.** No backtest has ever been run. When results exist, they will
+appear here with the command that produced them, the protocol version in force,
+and the fixture hash of the data they used.
+
+## Limitations
+
+[LIMITATIONS.md](LIMITATIONS.md) was written before any result existed, which is
+the only time such a document gets written honestly. The most important entries:
+the strategy is searched on `SPY` but would be traded as `VUAG.L`, which did not
+exist for most of the in-sample window; the cost model's minimum-commission and
+FX-conversion terms are both configured to zero; and the noise ceiling does not
+currently feed the pass decision.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
