@@ -24,9 +24,11 @@ that knows what `crosses_above` means; and it is small — two indicators (`clos
 `sma`) and three operators (`above`, `crosses_above`, `crosses_below`), which is
 what the one committed config uses and no more. Nor are `$placeholder` periods
 resolved: the loader checks that each has a parameter behind it and leaves the
-substitution to a grid that does not exist. `strategylab status` prints
-`Next: uv run strategylab search configs/ma_crossover.yaml`; that file now parses,
-and `search` is still a `NotImplementedError`.
+substitution to a grid that does not exist. `strategylab status` points at
+`uv run strategylab search configs/ma_crossover.yaml` once price data is cached;
+in a clean checkout, where `data/` is empty because it is gitignored, it points at
+`fetch` instead. Either way that config now parses and `search` is still a
+`NotImplementedError`.
 
 **There are no backtest results, no search results, and no validation outcomes**,
 because there is no backtester, no search, and no validator. No cost has ever

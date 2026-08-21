@@ -10,7 +10,10 @@ The project is built around one assumption: **given enough parameter
 combinations, something will always look profitable.** Most of the machinery here
 exists to tell that apart from an actual edge.
 
-*CI badge pending — no GitHub remote has been configured for this repository yet.*
+*CI runs test, lint, and type-check on every push
+([.github/workflows/ci.yml](.github/workflows/ci.yml)) and is green on the latest
+pushed commit. No badge is embedded: a badge URL hardcodes the repository owner's
+account name, and this README deliberately names no account and no absolute path.*
 
 ## Current state
 
