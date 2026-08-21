@@ -7,8 +7,10 @@ something if a nested target, an expression, an unknown operator, or a searched
 parameter nothing references stops the run rather than passing quietly into a
 search that takes hours and answers a question nobody asked.
 
-Every rejection test asserts on the dotted field path in the message, because an
-error that does not say where is an error the operator has to hunt for.
+Every rejection test asserts on WHERE the message says the fault is - the dotted
+field path for a fault in a field, the filename for a fault that is the file's
+own - because an error that does not say where is an error the operator has to
+hunt for.
 """
 
 from __future__ import annotations
@@ -152,6 +154,12 @@ def test_a_placeholder_period_stays_unresolved(tmp_path: Path) -> None:
 def test_a_literal_period_is_kept_as_a_count_of_bars(tmp_path: Path) -> None:
     right = load_strategy(write_config(tmp_path, BASE)).entry[1].right
     assert right == IndicatorRef(indicator="sma", period=200, period_param=None)
+    # Equality alone cannot see this: 200 == 200.0 and dataclass equality is
+    # equality of fields, so a loader that stored a float would pass the line
+    # above. A period is an index offset into a frame of bars, and a float one
+    # is a bug that surfaces much later.
+    assert isinstance(right, IndicatorRef)
+    assert type(right.period) is int
 
 
 def test_an_indicator_without_a_period_carries_neither(tmp_path: Path) -> None:
@@ -173,6 +181,12 @@ def test_search_and_fixed_are_read_as_given(tmp_path: Path) -> None:
         "slow": {"min": 40.0, "max": 120.0, "step": 20.0},
     }
     assert definition.fixed == {"position_size_pct": 95.0}
+    # StrategyDef.search is typed dict[str, dict[str, float]], and 5 == 5.0, so
+    # the equality above holds whether the loader coerced or not. Pin the type.
+    assert all(
+        type(bound) is float for spec in definition.search.values() for bound in spec.values()
+    )
+    assert type(definition.fixed["position_size_pct"]) is float
 
 
 def test_search_and_fixed_default_to_empty(tmp_path: Path) -> None:
@@ -204,7 +218,10 @@ def test_the_conditions_keep_the_order_the_file_gives(tmp_path: Path) -> None:
 def test_the_committed_config_loads_as_the_strategy_it_describes() -> None:
     definition = load_strategy(REPO_CONFIG)
     assert definition.name == "ma_crossover"
-    assert definition.version == SUPPORTED_VERSION
+    # A literal 1, not SUPPORTED_VERSION. The loader refuses any file whose
+    # version differs from that constant, so comparing the loaded value back
+    # against it cannot fail whatever either one is.
+    assert definition.version == 1
     # The folded scalar ends in a newline; the loader strips it.
     assert definition.description.startswith("Trend following.")
     assert not definition.description.endswith("\n")
@@ -218,6 +235,12 @@ def test_the_committed_config_loads_as_the_strategy_it_describes() -> None:
     ]
     assert sorted(definition.search) == ["fast", "slow", "trend"]
     assert definition.fixed == {"position_size_pct": 95.0}
+
+
+def test_the_supported_schema_version_is_one() -> None:
+    # Pinned here rather than inside a load, so that bumping the constant is a
+    # deliberate act with a test to change rather than a silent widening.
+    assert SUPPORTED_VERSION == 1
 
 
 def test_the_committed_config_declares_a_ninety_cell_grid() -> None:
@@ -241,7 +264,9 @@ def test_the_committed_config_declares_a_ninety_cell_grid() -> None:
 
 
 def test_a_missing_file_names_the_path(tmp_path: Path) -> None:
-    with pytest.raises(StrategyConfigError, match="file not found"):
+    # Both halves: that it says what went wrong, and that it says which file.
+    # The name of this test claims the second, so it has to assert it.
+    with pytest.raises(StrategyConfigError, match=r"absent\.yaml: file not found at "):
         load_strategy(tmp_path / "absent.yaml")
 
 
@@ -427,11 +452,32 @@ def test_an_unknown_operator_is_refused(tmp_path: Path) -> None:
         load_strategy(write_config(tmp_path, text))
 
 
-def test_the_vocabulary_the_message_offers_is_the_vocabulary_enforced() -> None:
+def test_the_vocabulary_the_message_offers_is_the_vocabulary_enforced(tmp_path: Path) -> None:
     # The suggestion in a rejection message has to be usable. If these drift,
     # the operator is told to write a name the loader will also reject.
     assert set(INDICATORS) == {"close", "sma"}
     assert set(OPERATORS) == {"above", "crosses_above", "crosses_below"}
+
+    # And the message must actually carry the list. Asserting the constants
+    # alone leaves a loader free to enforce these and offer something else.
+    for bad, good in (
+        ("  - {indicator: rsi, period: 14, operator: above, target: 30}\n", sorted(INDICATORS)),
+        ("  - {indicator: close, operator: below, target: 1}\n", sorted(OPERATORS)),
+    ):
+        text = mutate(SECOND_ENTRY, bad)
+        with pytest.raises(StrategyConfigError) as caught:
+            load_strategy(write_config(tmp_path, text))
+        for name in good:
+            assert name in str(caught.value)
+
+    # Every name the message offers must itself load, which is the property the
+    # operator relies on when they act on the suggestion.
+    for operator in sorted(OPERATORS):
+        text = mutate(
+            SECOND_ENTRY,
+            f"  - {{indicator: close, operator: {operator}, target: 1}}\n",
+        )
+        assert load_strategy(write_config(tmp_path, text)).entry[1].operator == operator
 
 
 def test_an_indicator_that_needs_a_period_must_have_one(tmp_path: Path) -> None:
@@ -582,7 +628,8 @@ def test_a_fixed_period_that_is_not_a_whole_number_of_bars_is_refused(
         "  position_size_pct: 95.0\n", f"  position_size_pct: 95.0\n  trend: {value}\n"
     )
     with pytest.raises(
-        StrategyConfigError, match="'fixed.trend' supplies a lookback period, so it must be"
+        StrategyConfigError,
+        match=rf"'fixed\.trend' supplies a lookback period, .*of at least 1, got {value}",
     ):
         load_strategy(write_config(tmp_path, text))
 
