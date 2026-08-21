@@ -3,9 +3,24 @@
 Kept in their own module with their own tests. A Sharpe ratio computed slightly
 wrong is the kind of error that survives review, because the number it produces
 is always plausible.
+
+Two conventions are fixed here and stated rather than left to be inferred, since
+both are places where implementations silently differ:
+
+- The standard deviation is the SAMPLE one, dividing by ``n - 1``. The
+  population form divides by ``n`` and reports a Sharpe that is too high by
+  ``sqrt(n / (n - 1))`` - about 0.2% on a year of daily bars, and much more on a
+  short fold, which is exactly where a marginal candidate gets decided.
+- Returns are SIMPLE per-period fractions, not log returns and not percentages.
+  A series of percentages passed here yields a Sharpe a hundred times too small
+  in the numerator and a hundred times too large in the denominator, which is to
+  say identical - so the error is invisible in the ratio and shows up only in
+  the equity curve. Nothing here can detect it; the caller has to be right.
 """
 
 from __future__ import annotations
+
+import math
 
 import pandas as pd
 
@@ -33,14 +48,35 @@ def sharpe(returns: pd.Series, periods_per_year: int = TRADING_DAYS_PER_YEAR) ->
         of rather than an infinite one.
 
     Raises:
-        ValueError: If ``returns`` holds fewer than two observations, or
-            ``periods_per_year`` is not positive.
+        ValueError: If ``returns`` holds fewer than two observations, if any
+            observation is not finite, or if ``periods_per_year`` is not
+            positive.
     """
-    raise NotImplementedError
+    if periods_per_year <= 0:
+        raise ValueError(f"periods_per_year must be positive, got {periods_per_year}")
+    if len(returns) < 2:
+        raise ValueError(
+            f"sharpe needs at least two observations to have a standard deviation, "
+            f"got {len(returns)}"
+        )
+    # Checked rather than allowed to propagate. A NaN here yields a NaN Sharpe,
+    # and `nan >= min_sharpe` is False, so the candidate fails validation for a
+    # data reason while looking as though it failed on merit.
+    if not bool(returns.notna().all()) or not bool(returns.abs().ne(float("inf")).all()):
+        raise ValueError("returns holds a non-finite value; a NaN Sharpe fails silently")
+
+    deviation = float(returns.std(ddof=1))
+    if deviation == 0.0:
+        return 0.0
+    return float(returns.mean()) / deviation * math.sqrt(periods_per_year)
 
 
 def max_drawdown(equity: pd.Series) -> float:
     """Largest peak-to-trough decline in an equity curve.
+
+    Measured against the RUNNING peak, not against the starting value: a curve
+    that doubles and then halves has lost half of what it had, and reporting
+    that as no drawdown because it ended where it began is the flattering error.
 
     Args:
         equity: Account equity by timestamp, ascending. Values are levels, not
@@ -52,6 +88,20 @@ def max_drawdown(equity: pd.Series) -> float:
         ``0.0``.
 
     Raises:
-        ValueError: If ``equity`` is empty or holds a non-positive value.
+        ValueError: If ``equity`` is empty, or holds a value that is not
+            positive and finite.
     """
-    raise NotImplementedError
+    if equity.empty:
+        raise ValueError("equity is empty; there is no drawdown to measure")
+    if not bool(equity.notna().all()):
+        raise ValueError("equity holds a NaN; the drawdown would silently skip it")
+    if not bool((equity > 0).all()):
+        raise ValueError(
+            "equity holds a value that is not positive; a drawdown is measured as a "
+            "fraction of the running peak and cannot be taken against zero or less"
+        )
+    if not bool(equity.abs().ne(float("inf")).all()):
+        raise ValueError("equity holds an infinite value")
+
+    peak = equity.cummax()
+    return float(((peak - equity) / peak).max()) * 100.0

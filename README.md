@@ -31,11 +31,11 @@ because the backtester, the search, and the validator are not written yet.**
 | Strategy evaluation (`core.evaluate`), with the lookahead test | |
 | `status` and `fetch` commands *(untested)* | |
 
-**273 tests pass** — verify with `uv run pytest`. They cover the protocol
-loader, the data layer, the cost model, the strategy-config loader, and strategy
-evaluation. The two CLI commands have no tests,
+**304 tests pass** — verify with `uv run pytest`. They cover the protocol
+loader, the data layer, the cost model, the strategy-config loader, strategy
+evaluation, and the performance metrics. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 26 of them across 12
+docstring contract with a `raise NotImplementedError` body — 24 of them across 11
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -74,14 +74,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 273 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 304 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 273 tests, none touching the network
+uv run pytest                   # 304 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

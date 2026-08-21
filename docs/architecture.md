@@ -68,16 +68,17 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 
 | Module | What works | Tests |
 |---|---|---|
-| `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 33 |
+| `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
-| `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 38 |
+| `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 27 |
+| `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**273 tests pass** — 33 + 40 + 81 + 81 + 38. Run `uv run pytest` to see the count
+**304 tests pass** — 34 + 40 + 81 + 81 + 41 + 27. Run `uv run pytest` to see the count
 yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -87,11 +88,11 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **26
-`NotImplementedError` bodies across 12 files:**
+session builds against a fixed interface rather than inventing one. **24
+`NotImplementedError` bodies across 11 files:**
 
 `cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
-`search/plateau.py` (3) · `backtest/metrics.py` (2) · `logging/decisions.py` (2) ·
+`search/plateau.py` (3) · `logging/decisions.py` (2) ·
 `risk/limits.py` (2) · `backtest/engine.py` ·
 `search/grid.py` · `search/noise.py` · `search/graveyard.py` ·
 `validate/walkforward.py` · `report/render.py`.

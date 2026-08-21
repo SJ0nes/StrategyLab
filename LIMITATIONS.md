@@ -6,9 +6,9 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Six modules have working bodies: `protocol.py`, `data/source.py`,
-`backtest/costs.py`, `core/config.py`, `core/strategy.py`, and the `status` and
-`fetch` commands in `cli.py`. Twenty-six `NotImplementedError` bodies remain, across 12 files. Two
+Seven modules have working bodies: `protocol.py`, `data/source.py`,
+`backtest/costs.py`, `backtest/metrics.py`, `core/config.py`, `core/strategy.py`,
+and the `status` and `fetch` commands in `cli.py`. Twenty-four `NotImplementedError` bodies remain, across 11 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -38,9 +38,9 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-273 tests pass (`uv run pytest`). They cover the protocol loader, the data
-layer, the cost model, the strategy-config loader, and strategy evaluation.
-Nothing else has tests because nothing else has code.
+304 tests pass (`uv run pytest`). They cover the protocol loader, the data
+layer, the cost model, the strategy-config loader, strategy evaluation, and the
+performance metrics. Nothing else has tests because nothing else has code.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
