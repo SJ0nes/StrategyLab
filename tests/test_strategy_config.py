@@ -15,6 +15,7 @@ hunt for.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -281,8 +282,13 @@ def test_malformed_yaml_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_root_that_is_not_a_mapping_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(StrategyConfigError, match="'<root>' must be a mapping, got list"):
+    # The top level is the file, not a field in it. Naming it `field '<root>'`
+    # sent the operator looking for a line that does not exist.
+    with pytest.raises(
+        StrategyConfigError, match="must hold a mapping at the top level, got list"
+    ) as caught:
         load_strategy(write_config(tmp_path, "- name: test_strategy\n"))
+    assert "<root>" not in str(caught.value)
 
 
 def test_deeply_nested_yaml_is_refused_rather_than_crashing(tmp_path: Path) -> None:
@@ -291,6 +297,38 @@ def test_deeply_nested_yaml_is_refused_rather_than_crashing(tmp_path: Path) -> N
     # so it escaped the loader's "any failure" contract until it was caught.
     text = mutate(BLOCKS["entry"], "entry: " + "[" * 4000 + "]" * 4000 + "\n")
     with pytest.raises(StrategyConfigError, match="nests too deeply to parse"):
+        load_strategy(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    ("label", "field", "value"),
+    [
+        # float() of an integer past ~1.8e308 raises OverflowError, which is not
+        # a ValueError and was escaping the loader's contract entirely.
+        ("overflow in a search bound", "search", "9" * 400),
+        ("overflow in a numeric target", "target", "9" * 400),
+        # PyYAML CONSTRUCTS some scalars, and a construction that fails raises
+        # out of the library rather than as a YAMLError. This one reaches
+        # datetime and comes back as ValueError("month must be in 1..12").
+        ("an impossible date", "fixed", "2021-19-45"),
+        # CPython refuses to parse an integer literal longer than 4300 digits.
+        ("an integer past the digit limit", "target", "1" * 4400),
+    ],
+)
+def test_a_scalar_the_parser_chokes_on_is_refused(
+    tmp_path: Path, label: str, field: str, value: str
+) -> None:
+    # Each of these is a malformed FILE, so each must come back as a
+    # StrategyConfigError rather than as whatever the parser happened to raise.
+    if field == "search":
+        text = mutate(
+            "fast: {min: 5, max: 30, step: 5}", f"fast: {{min: 5, max: {value}, step: 5}}"
+        )
+    elif field == "target":
+        text = mutate(SECOND_ENTRY, f"  - {{indicator: close, operator: above, target: {value}}}\n")
+    else:
+        text = mutate("  position_size_pct: 95.0\n", f"  position_size_pct: 95.0\n  d: {value}\n")
+    with pytest.raises(StrategyConfigError):
         load_strategy(write_config(tmp_path, text))
 
 
@@ -326,8 +364,11 @@ def test_an_unknown_top_level_key_is_refused(tmp_path: Path) -> None:
     # A typo here is the dangerous case: `entires:` beside a valid `entry:`
     # would load as a strategy whose entry rule nobody wrote.
     text = mutate("name: test_strategy\n", "name: test_strategy\nentires: []\n")
-    with pytest.raises(StrategyConfigError, match=r"'<root>' carries unknown keys \['entires'\]"):
+    with pytest.raises(
+        StrategyConfigError, match=r"carries unknown top-level keys \['entires'\]"
+    ) as caught:
         load_strategy(write_config(tmp_path, text))
+    assert "<root>" not in str(caught.value)
 
 
 def test_an_unsupported_schema_version_is_refused(tmp_path: Path) -> None:
@@ -468,7 +509,12 @@ def test_the_vocabulary_the_message_offers_is_the_vocabulary_enforced(tmp_path: 
         with pytest.raises(StrategyConfigError) as caught:
             load_strategy(write_config(tmp_path, text))
         for name in good:
-            assert name in str(caught.value)
+            # Substring containment is too weak here: "above" is inside
+            # "crosses_above", so a message listing only the crossing operators
+            # would satisfy `"above" in message` without ever offering `above`.
+            assert re.search(rf"'{re.escape(name)}'", str(caught.value)), (
+                f"{name!r} is enforced but is not offered as its own name in: {caught.value}"
+            )
 
     # Every name the message offers must itself load, which is the property the
     # operator relies on when they act on the suggestion.
@@ -581,9 +627,13 @@ def test_a_placeholder_may_resolve_from_fixed(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("bound", "spec"),
     [
+        # Exactly ONE bound violates the rule in each case. A spec where two
+        # bounds are bad - {min: -50, max: -10} was the original third case -
+        # only records which check the implementation happens to run first, and
+        # would keep passing if that order were reversed.
         ("min", "{min: 5.5, max: 30, step: 5}"),
         ("min", "{min: 0, max: 30, step: 5}"),
-        ("min", "{min: -50, max: -10, step: 5}"),
+        ("min", "{min: -50, max: 30, step: 5}"),
         ("max", "{min: 5, max: 30.5, step: 5}"),
         ("step", "{min: 5, max: 30, step: 2.5}"),
         ("step", "{min: 5, max: 30, step: 0.3}"),
@@ -594,8 +644,19 @@ def test_a_searched_period_must_be_whole_bars_across_its_whole_range(
 ) -> None:
     # $fast is the left-hand period of an entry and an exit condition, so every
     # value this range produces is an SMA lookback. Half a bar does not exist and
-    # neither does a lookback of minus ten. A fractional STEP matters as much as a
-    # fractional min: the first cell is whole and every cell after it is not.
+    # neither does a lookback of minus fifty.
+    #
+    # A fractional STEP is refused for the same reason, though not for the reason
+    # first written here. `step: 2.5` from `min: 5` gives 5, 7.5, 10, 12.5 - every
+    # OTHER cell is whole, not "every cell after the first is fractional", which
+    # is only true of a step like 0.3. The rule is that SOME cell the range
+    # generates is not a whole number of bars, which both steps satisfy.
+    #
+    # `max: 30.5` is a different case again: with min 5 and step 5 the cells are
+    # 5..30 and every one is legal. It is refused because a bound off the grid is
+    # a bound the operator did not mean - the declared range and the walked range
+    # must be the same range, or the config says one thing and the search does
+    # another.
     text = mutate("fast: {min: 5, max: 30, step: 5}", f"fast: {spec}")
     with pytest.raises(
         StrategyConfigError,

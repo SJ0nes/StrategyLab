@@ -279,6 +279,13 @@ def _as_float(value: Any, source: str, where: str) -> float:
     ``.nan`` plainly, and either one reaching a grid bound produces a range that
     never terminates or a comparison that is silently false forever.
 
+    So is representability, and it has to be checked BEFORE the conversion rather
+    than after it. Python integers are unbounded, YAML will hand one over with as
+    many digits as the file carries, and ``float()`` on an integer past about
+    1.8e308 raises ``OverflowError`` - which is neither a ``ValueError`` nor
+    anything :func:`load_strategy` was catching, so it escaped a contract that
+    promised only :class:`StrategyConfigError`.
+
     Args:
         value: The parsed value.
         source: Display name of the config file.
@@ -288,11 +295,19 @@ def _as_float(value: Any, source: str, where: str) -> float:
         The value as a ``float``.
 
     Raises:
-        StrategyConfigError: If ``value`` is not a real number, or is not finite.
+        StrategyConfigError: If ``value`` is not a real number, is too large to
+            represent as one, or is not finite.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise _fail(source, where, f"must be a number, got {type(value).__name__}")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise _fail(
+            source,
+            where,
+            f"is too large to hold as a number: {len(str(abs(value)))} digits",
+        ) from exc
     if not math.isfinite(number):
         raise _fail(source, where, f"must be a finite number, got {number}")
     return number
@@ -685,7 +700,10 @@ def load_strategy(path: Path) -> StrategyDef:
     Raises:
         StrategyConfigError: On any failure, naming the offending field - or the
             file itself, for a failure that is the file's rather than a field's.
-            No other exception type escapes.
+            This covers every way a FILE can be malformed, including the ones
+            that surface from the parser as an unrelated exception type. It is
+            not a claim that this module is free of bugs: a defect in the code
+            here would still surface as whatever that defect raises.
     """
     source = path.name
     try:
@@ -709,17 +727,41 @@ def load_strategy(path: Path) -> StrategyDef:
     except RecursionError as exc:
         # PyYAML's composer recurses once per level of nesting, so a file nested
         # past the interpreter's limit raises RecursionError - a RuntimeError,
-        # not a YAMLError, so the handler above does not see it. This format has
-        # no nesting at all, which makes such a file a rejection rather than a
-        # crash.
+        # not a YAMLError, so the handler above does not see it. The deepest
+        # structure this schema has is a condition's target, three levels down,
+        # so a file that reaches the interpreter's limit is a rejection rather
+        # than a crash.
         raise _fail(
-            source, "", "nests too deeply to parse; this format has no nested structures"
+            source, "", "nests too deeply to parse; nothing in this schema nests beyond a target"
         ) from exc
+    except (ValueError, OverflowError) as exc:
+        # PyYAML resolves some scalars by CONSTRUCTING them, and a construction
+        # that fails raises out of the library rather than as a YAMLError.
+        # `2021-19-45` reaches datetime and raises ValueError("month must be in
+        # 1..12"); an integer literal longer than CPython's 4300-digit
+        # conversion limit raises ValueError from int(). Both are malformed
+        # files, and both were escaping the contract above.
+        raise _fail(source, "", f"could not be parsed: {exc}") from exc
 
     if parsed is None:
         raise _fail(source, "", f"file at '{path}' is empty")
-    root = _as_mapping(parsed, source, "<root>")
-    _reject_unknown_keys(root, _TOP_LEVEL_KEYS, source, "<root>")
+    # The top level is the file, not a field in it, so these two name the file.
+    # Rendering them as `field '<root>'` invented a third category of message
+    # that the contract on StrategyConfigError does not admit and that no
+    # operator can look up: there is no line in the file called <root>.
+    if not isinstance(parsed, dict):
+        raise _fail(
+            source, "", f"must hold a mapping at the top level, got {type(parsed).__name__}"
+        )
+    root = parsed
+    unknown = sorted(str(key) for key in root if key not in _TOP_LEVEL_KEYS)
+    if unknown:
+        raise _fail(
+            source,
+            "",
+            f"carries unknown top-level keys {unknown}; "
+            f"this schema allows only {sorted(_TOP_LEVEL_KEYS)}",
+        )
 
     version = _as_int(_require(root, "version", source, ""), source, "version")
     if version != SUPPORTED_VERSION:
