@@ -30,33 +30,41 @@ if (-not (Test-Path -LiteralPath (Join-Path $proj 'src'))) { exit 0 }
 # built from HEAD's tree plus `git status` changes when a change-set is
 # committed, so the same content dispatched twice - once dirty, once committed.
 #
-# configs/ and protocol.yaml are in scope because they are not documentation:
-# tests/test_strategy_config.py reads configs/ma_crossover.yaml and
-# tests/test_protocol.py reads protocol.yaml, so an edit to either can turn a
-# test red. Note the consequence: incrementing the walk-forward counter rewrites
-# protocol.yaml and will dispatch. That is the right answer - a touch of the
-# held-back window is exactly the event that deserves four auditors.
+# configs/, protocol.yaml and pyproject.toml are in scope because none of them is
+# documentation: tests/test_strategy_config.py reads configs/ma_crossover.yaml,
+# tests/test_protocol.py reads protocol.yaml, and pyproject.toml carries the ruff
+# and mypy configuration the other gates enforce. Note the consequence:
+# incrementing the walk-forward counter rewrites protocol.yaml and will dispatch.
+# That is the right answer - a touch of the held-back window is exactly the event
+# that deserves four auditors.
 #
-# The top-level entry names are folded in as well, so a NEW top-level directory
-# is visible even though its contents are out of scope. Renaming or adding one
-# is the case a path-scoped signature is otherwise blind to.
+# The top-level entry names are folded in so that adding or renaming a top-level
+# directory is visible even though its contents are out of scope. KNOWN LIMIT:
+# `git ls-tree HEAD` reads the last commit, so a new top-level directory is
+# invisible until it is committed. Uncommitted, it dispatches nobody.
 #
-# The cost, which is deliberate: a change to README.md, LIMITATIONS.md or docs/
-# dispatches nobody, and the docs-auditor is a manual call. Dispatch it by hand
-# when documentation changes on its own.
-$scoped = @('src', 'tests', 'configs', 'protocol.yaml')
+# The costs, all deliberate: a change to README.md, LIMITATIONS.md or docs/
+# dispatches nobody, and the docs-auditor is a manual call. So does a change to
+# .github/workflows/ or to .claude/ itself - which means the hooks and the agent
+# definitions can be edited without dispatching the auditors they govern. That
+# one is a judgement call rather than an oversight: putting .claude/ in scope
+# would dispatch four auditors on every iteration of a hook. Dispatch by hand
+# after changing one.
+$scoped = @('src', 'tests', 'configs', 'protocol.yaml', 'pyproject.toml')
 
 $parts = New-Object System.Collections.Generic.List[string]
 $parts.Add('toplevel:' + ((@(& git ls-tree --name-only HEAD 2>$null) | Sort-Object) -join ','))
 foreach ($f in (@(& git ls-files --cached --others --exclude-standard -- $scoped 2>$null) |
                 Sort-Object)) {
     if (-not $f) { continue }
+    # A file that is gone from the working tree contributes NO line, whether or
+    # not the deletion has been staged. Emitting a placeholder instead made the
+    # signature differ between those two states, so a deletion dispatched once
+    # while unstaged and again after `git rm` - the double dispatch this
+    # content-based signature exists to prevent, reintroduced for deletions.
+    # Removing the line still moves the hash, so a deletion is not silent.
     if (Test-Path -LiteralPath $f -PathType Leaf) {
         $parts.Add($f + ':' + (Get-FileHash -LiteralPath $f -Algorithm SHA1).Hash)
-    } else {
-        # Tracked but gone from the working tree: a deletion has to move the
-        # signature too, or removing a test would silently clear the gate.
-        $parts.Add($f + ':absent')
     }
 }
 $sig = [BitConverter]::ToString(
@@ -72,9 +80,9 @@ if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Ra
 Set-Content -LiteralPath $marker -Value $sig -Encoding ascii
 
 Deny @"
-Audit dispatch: code or a tested input changed (src/, tests/, configs/, protocol.yaml) and this
-change-set has not been audited. Before ending the turn, dispatch all four auditors in parallel.
-Each writes its OWN raw reply to state/audit/:
+Audit dispatch: code or a tested input changed (src/, tests/, configs/, protocol.yaml,
+pyproject.toml) and this change-set has not been audited. Before ending the turn, dispatch all
+four auditors in parallel. Each writes its OWN raw reply to state/audit/:
 
   contract-auditor    -> state/audit/contract-auditor.txt
   arithmetic-checker  -> state/audit/arithmetic-checker.txt
