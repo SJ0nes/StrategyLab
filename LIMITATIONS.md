@@ -111,6 +111,16 @@ erosion; it does not correct for it, and no statistical adjustment is applied.
 
 ## The data
 
+**Every bar is a back-adjusted price, not a traded price.** `YFinanceSource`
+requests `auto_adjust=True`, so each historical close is the raw close scaled
+by every split and dividend that has happened *since*. No trade ever occurred
+at any of these numbers — SPY really closed near $120 on 2005-01-03, and the
+cached bar reads about $81. Two consequences worth stating: a backtest
+denominated in these numbers measures total return rather than price return,
+which is usually what you want but is not what a naive reading assumes; and
+the entire history shifts every time a dividend is paid, which is the
+mechanism behind the content-hash instability described below.
+
 **Vendor history is revised.** Splits and dividend adjustments change past
 values, so "same code, same dates" does not mean the same numbers six months
 from now. Results are reproducible against the cached snapshot and its recorded

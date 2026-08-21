@@ -1,10 +1,17 @@
 # Methodology
 
-> **Status: this document describes the intended method, and most of it is not
-> built.** Only the in-sample/walk-forward split is enforced in code today, by
-> `load_protocol`. Plateau scoring, the graveyard, the noise ceiling, and
-> walk-forward validation are all stubs, so every sentence below written in the
-> present tense describes a design rather than a running system. See
+> **Status: this document describes the intended method. Almost none of it is
+> built, and the split it rests on is not enforced.**
+>
+> `load_protocol` refuses a protocol whose two windows overlap *as declared* —
+> that is the only thing any code does about the split. Nothing prevents a
+> component from reading bars outside the in-sample window, and `fetch` caches
+> both windows in a single file, so the separation currently holds because no
+> component exists that could violate it, not because anything guards it.
+>
+> Plateau scoring, the graveyard, the noise ceiling and walk-forward validation
+> are all stubs. Every sentence below written in the present tense describes a
+> design rather than a running system. See
 > [architecture.md](architecture.md) for what exists and
 > [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 

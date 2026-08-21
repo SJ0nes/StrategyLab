@@ -107,6 +107,7 @@ than reported as robustness.
 
 **The noise ceiling.** *Not yet implemented.* The expected maximum across 90
 draws from noise is well above zero, so the best of 90 parameter combinations
+(6 x 5 x 3, from the `search` block of `configs/ma_crossover.yaml`)
 will post a positive Sharpe on data with no *exploitable* structure in it. Every search therefore reruns its entire
 grid against surrogate series and reports the distribution of best-in-grid
 results. A winning Sharpe means nothing until compared against it.
@@ -136,15 +137,18 @@ currently feed the pass decision.
 
 This repository was built in a single supervised session, pair-working with an
 AI assistant. That is visible in `git log` if you look at the timestamps — the
-whole history spans about an hour — so it is stated here rather than left to be
+whole history spans 2h 13m (`git log --format=%ad --date=iso`) — so it
+is stated here rather than left to be
 inferred.
 
 What that does and does not mean:
 
 - **Every design decision was ratified by a human at three explicit gates**: the
-  pre-registration in `protocol.yaml`, a review of every module contract before
-  any implementation, and a check of the first fetched prices against known
-  values. Be precise about what that means: the session prompt in
+  pre-registration in `protocol.yaml`, a review of every module contract, and a
+  check of the first fetched prices against known values. The contract review
+  came before every implementation except `protocol.py`, which was already
+  written by then — so that one module was reviewed as code rather than as a
+  contract. Be precise about what that means: the session prompt in
   `.claude/setup.md` is tracked in this repository, and its suggested defaults
   are verbatim the values that ended up in `protocol.yaml`. So the instrument,
   the windows, and the cost rates were *chosen from* proposed defaults rather
