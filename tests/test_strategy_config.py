@@ -260,6 +260,22 @@ def test_a_root_that_is_not_a_mapping_is_refused(tmp_path: Path) -> None:
         load_strategy(write_config(tmp_path, "- name: test_strategy\n"))
 
 
+def test_deeply_nested_yaml_is_refused_rather_than_crashing(tmp_path: Path) -> None:
+    # PyYAML's composer recurses once per level, so this raises RecursionError
+    # from inside yaml.load. RecursionError is a RuntimeError, not a YAMLError,
+    # so it escaped the loader's "any failure" contract until it was caught.
+    text = mutate(BLOCKS["entry"], "entry: " + "[" * 4000 + "]" * 4000 + "\n")
+    with pytest.raises(StrategyConfigError, match="nests too deeply to parse"):
+        load_strategy(write_config(tmp_path, text))
+
+
+def test_a_path_with_an_embedded_null_byte_is_refused(tmp_path: Path) -> None:
+    # os.open raises ValueError for this, which is not an OSError and so is not
+    # covered by the read-path handlers around it.
+    with pytest.raises(StrategyConfigError, match="cannot read"):
+        load_strategy(tmp_path / "bad\0name.yaml")
+
+
 def test_a_repeated_top_level_key_is_refused(tmp_path: Path) -> None:
     # PyYAML's default is to keep the last silently. Here the second exit block
     # would replace the first, and the strategy that ran would not be the one
@@ -301,10 +317,43 @@ def test_an_empty_description_is_refused(tmp_path: Path) -> None:
         load_strategy(write_config(tmp_path, text))
 
 
-@pytest.mark.parametrize("name", ["../escape", "with space", "", "name/slash"])
+@pytest.mark.parametrize("name", ["../escape", "with space", "", "name/slash", "trailing\\n"])
 def test_a_name_that_is_not_filename_safe_is_refused(tmp_path: Path, name: str) -> None:
+    # The last case is the one a regex gets wrong for free: Python's `$` matches
+    # before a single trailing newline, so `^[A-Za-z0-9_-]+$` accepts
+    # "trailing\n" and a newline reaches a filename. The anchors are \A and \Z.
     text = mutate("name: test_strategy\n", f'name: "{name}"\n')
     with pytest.raises(StrategyConfigError, match="'name' must be letters, digits"):
+        load_strategy(write_config(tmp_path, text))
+
+
+def test_a_block_scalar_name_does_not_smuggle_in_a_newline(tmp_path: Path) -> None:
+    # The same defect by the route a person would actually hit it: a YAML block
+    # scalar appends "\n" without anyone writing one.
+    text = mutate("name: test_strategy\n", "name: |\n  test_strategy\n")
+    with pytest.raises(StrategyConfigError, match="'name' must be letters, digits"):
+        load_strategy(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    ("indicator", "expected"),
+    [
+        ("close", r"'entry\[1\].period' is not accepted by indicator 'close'"),
+        ("sma", r"'entry\[1\].period' is empty; it must be a count of bars"),
+    ],
+)
+def test_an_explicitly_null_period_is_not_treated_as_absent(
+    tmp_path: Path, indicator: str, expected: str
+) -> None:
+    # `period: null` is a period written down. On `close` it must be refused as
+    # present-and-unwanted, not accepted by a value-is-None check; on `sma` the
+    # operator must not be told it is "missing" while it sits on the line in
+    # front of them.
+    text = mutate(
+        SECOND_ENTRY,
+        f"  - {{indicator: {indicator}, period: null, operator: above, target: 1}}\n",
+    )
+    with pytest.raises(StrategyConfigError, match=expected):
         load_strategy(write_config(tmp_path, text))
 
 

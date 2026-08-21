@@ -10,9 +10,10 @@ vocabulary below - and never a new shape in the YAML.
 Validation is total and it happens here, once, before anything runs. A config
 that half-loads is worse than one that refuses to load: the search that follows
 takes hours, and a condition silently dropped for a typo produces a result that
-looks fine and means nothing. Every failure names the offending field by its
-dotted path, so ``entry[1].target.period`` sends the operator to a line rather
-than back through the file.
+looks fine and means nothing. A failure in a field names that field by its dotted
+path, so ``entry[1].target.period`` sends the operator to a line rather than back
+through the file; a failure in the file itself - missing, unreadable, unparseable
+- names the file, because there is no field to name.
 
 What this module does NOT do is resolve ``$placeholder`` periods. It checks that
 every placeholder has somewhere to get a value from, and that every searched
@@ -37,8 +38,6 @@ import yaml
 
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
 
-DEFAULT_CONFIG_DIR = Path("configs")
-
 # The schema this loader understands. A file declaring anything else is refused
 # rather than read under rules that may no longer be its own.
 SUPPORTED_VERSION = 1
@@ -60,7 +59,13 @@ OPERATORS: frozenset[str] = frozenset({"above", "crosses_above", "crosses_below"
 
 # A strategy name and a parameter name both end up in filenames and in result
 # keys, so both are held to a charset that is safe in either.
-_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+#
+# The anchors are \A and \Z rather than ^ and $ deliberately. Python's $ also
+# matches immediately BEFORE a single trailing newline, so `^[A-Za-z0-9_-]+$`
+# accepts "ma_crossover\n" - which a YAML block scalar produces without anyone
+# meaning to - and a newline would then travel into a filename. \Z has no such
+# concession.
+_NAME_PATTERN = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
 _TOP_LEVEL_KEYS = frozenset({"name", "version", "description", "entry", "exit", "search", "fixed"})
 _CONDITION_KEYS = frozenset({"indicator", "period", "operator", "target"})
@@ -71,8 +76,11 @@ _RANGE_KEYS = frozenset({"min", "max", "step"})
 class StrategyConfigError(Exception):
     """Raised when a strategy config is missing, malformed, or self-inconsistent.
 
-    The message always names the offending field by its dotted path, so the
-    operator can go straight to the line rather than re-reading the whole file.
+    Where the failure is in a field, the message names that field by its dotted
+    path, so the operator can go straight to the line rather than re-reading the
+    whole file. Where the failure is the file's own - absent, undecodable, not
+    YAML, empty - it names the file instead. A caller must not assume a dotted
+    path can be parsed out of every message.
     """
 
 
@@ -349,9 +357,11 @@ def _period(raw: Any, source: str, where: str) -> tuple[int | None, str | None]:
         period, when set, is a count of bars.
 
     Raises:
-        StrategyConfigError: If the value is neither a positive whole number of
-            bars nor a well-formed ``$placeholder``.
+        StrategyConfigError: If the value is ``None``, or is neither a positive
+            whole number of bars nor a well-formed ``$placeholder``.
     """
+    if raw is None:
+        raise _fail(source, where, "is empty; it must be a count of bars or a $placeholder")
     if isinstance(raw, str):
         return None, _placeholder(raw, source, where)
     bars = _as_int(raw, source, where)
@@ -373,10 +383,15 @@ def _indicator_ref(mapping: dict[str, Any], source: str, where: str) -> Indicato
         The reference, its period either a literal count of bars or an
         unresolved placeholder name.
 
+    Presence of ``period`` is decided by whether the KEY is there, not by
+    whether its value is non-null. ``period: null`` is a period written down, and
+    reporting it as missing sends the operator looking for a line that is in
+    front of them.
+
     Raises:
         StrategyConfigError: If the indicator name is absent or outside the
-            vocabulary, or if ``period`` is present on an indicator that takes
-            none, absent from one that requires it, or malformed.
+            vocabulary, or if the ``period`` key is present on an indicator that
+            takes none, absent from one that requires it, or malformed.
     """
     name = _as_str(_require(mapping, "indicator", source, where), source, f"{where}.indicator")
     if name not in INDICATORS:
@@ -387,15 +402,15 @@ def _indicator_ref(mapping: dict[str, Any], source: str, where: str) -> Indicato
         )
 
     takes_period = INDICATORS[name]
-    raw_period = mapping.get("period")
-    if takes_period and raw_period is None:
+    written = "period" in mapping
+    if takes_period and not written:
         raise _fail(source, f"{where}.period", f"is required by indicator {name!r} and is missing")
-    if not takes_period and raw_period is not None:
+    if not takes_period and written:
         raise _fail(source, f"{where}.period", f"is not accepted by indicator {name!r}")
-    if raw_period is None:
+    if not written:
         return IndicatorRef(indicator=name)
 
-    period, period_param = _period(raw_period, source, f"{where}.period")
+    period, period_param = _period(mapping["period"], source, f"{where}.period")
     return IndicatorRef(indicator=name, period=period, period_param=period_param)
 
 
@@ -668,7 +683,9 @@ def load_strategy(path: Path) -> StrategyDef:
         The parsed and validated strategy definition.
 
     Raises:
-        StrategyConfigError: On any failure, naming the offending field.
+        StrategyConfigError: On any failure, naming the offending field - or the
+            file itself, for a failure that is the file's rather than a field's.
+            No other exception type escapes.
     """
     source = path.name
     try:
@@ -679,12 +696,25 @@ def load_strategy(path: Path) -> StrategyDef:
         raise _fail(source, "", f"file at '{path}' is not valid UTF-8") from exc
     except OSError as exc:
         raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
+    except ValueError as exc:
+        # A path carrying an embedded null byte fails in os.open as ValueError,
+        # which is not an OSError and would otherwise escape the contract above.
+        raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
 
     try:
         # _NoDuplicateKeyLoader is a SafeLoader subclass: no arbitrary construction.
         parsed = yaml.load(text, Loader=_NoDuplicateKeyLoader)
     except yaml.YAMLError as exc:
         raise _fail(source, "", f"not valid YAML: {exc}") from exc
+    except RecursionError as exc:
+        # PyYAML's composer recurses once per level of nesting, so a file nested
+        # past the interpreter's limit raises RecursionError - a RuntimeError,
+        # not a YAMLError, so the handler above does not see it. This format has
+        # no nesting at all, which makes such a file a rejection rather than a
+        # crash.
+        raise _fail(
+            source, "", "nests too deeply to parse; this format has no nested structures"
+        ) from exc
 
     if parsed is None:
         raise _fail(source, "", f"file at '{path}' is empty")
