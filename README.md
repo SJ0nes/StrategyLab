@@ -10,10 +10,12 @@ The project is built around one assumption: **given enough parameter
 combinations, something will always look profitable.** Most of the machinery here
 exists to tell that apart from an actual edge.
 
-*CI runs test, lint, and type-check on every push
-([.github/workflows/ci.yml](.github/workflows/ci.yml)) and is green on the latest
-pushed commit. No badge is embedded: a badge URL hardcodes the repository owner's
-account name, and this README deliberately names no account and no absolute path.*
+*CI runs test, lint, and type-check on every push and every pull request
+([.github/workflows/ci.yml](.github/workflows/ci.yml)). No badge is embedded: a
+badge URL hardcodes the repository owner's account name, and this README
+deliberately names no account and no absolute path. That means this file makes no
+claim about whether the pipeline is currently green — check the Actions tab,
+which is the only place that answer is ever current.*
 
 ## Current state
 
@@ -28,7 +30,7 @@ because the backtester, the search, and the validator are not written yet.**
 | Strategy-config loader — closed schema, closed vocabulary | Walk-forward validation |
 | `status` and `fetch` commands *(untested)* | Decision logging, risk limits, venue adapters, HTML reports |
 
-**217 tests pass** — verify with `uv run pytest`. They cover the protocol
+**235 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, and the strategy-config loader. The two
 CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
@@ -69,14 +71,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 217 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 235 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 217 tests, none touching the network
+uv run pytest                   # 235 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

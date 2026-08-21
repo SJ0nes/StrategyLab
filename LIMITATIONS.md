@@ -36,7 +36,7 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-217 tests pass (`uv run pytest`). They cover the protocol loader, the data
+235 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, and the strategy-config loader. Nothing else has tests
 because nothing else has code.
 
@@ -160,8 +160,12 @@ day is therefore unmodelled.
 - **Three searched parameters, 90 grid cells.** The config's own comment notes
   that this much data supports three or four parameters at most.
 - **Integer parameters only.** Lookbacks are whole bars, and the loader refuses a
-  config where they are not — across a searched range's whole span, not merely at
-  its start, since a fractional step walks off the whole numbers after one cell.
+  config where they are not — every bound of a searched range, not merely its
+  start, because a fractional step puts some of the cells it generates off the
+  whole numbers. (Not *all* of them: `step: 2.5` from `min: 5` gives 5, 7.5, 10,
+  12.5, so every other cell is whole. An earlier version of this line claimed
+  every cell after the first was fractional, which is true of `step: 0.3` and
+  false of `step: 2.5`.)
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.
