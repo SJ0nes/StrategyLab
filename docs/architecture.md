@@ -29,8 +29,8 @@ signature and a docstring contract but a `raise NotImplementedError` body.
         │            ┌───────┴────────┐            │
         └───────────▶│     core/      │◀───────────┘
                      │                │
-                     │ strategy.py    │  STUB — the shared brain.
-                     │      STUB      │  Used by BOTH the backtester and
+                     │ strategy.py    │  BUILT — the shared brain.
+                     │      BUILT     │  Used by BOTH the backtester and
                      │ types.py BUILT │  the live worker. Written once.
                      │ config.py BUILT│  The only reader of configs/.
                      └───────┬────────┘
@@ -71,12 +71,13 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 33 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
+| `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 38 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**235 tests pass** — 33 + 40 + 81 + 81. Run `uv run pytest` to see the count
+**273 tests pass** — 33 + 40 + 81 + 81 + 38. Run `uv run pytest` to see the count
 yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -86,12 +87,12 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **27
-`NotImplementedError` bodies across 13 files:**
+session builds against a fixed interface rather than inventing one. **26
+`NotImplementedError` bodies across 12 files:**
 
 `cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
 `search/plateau.py` (3) · `backtest/metrics.py` (2) · `logging/decisions.py` (2) ·
-`risk/limits.py` (2) · `core/strategy.py` · `backtest/engine.py` ·
+`risk/limits.py` (2) · `backtest/engine.py` ·
 `search/grid.py` · `search/noise.py` · `search/graveyard.py` ·
 `validate/walkforward.py` · `report/render.py`.
 
@@ -112,9 +113,10 @@ these exist:
   its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **The report template directory** — `report/render.py` resolves templates
   against the package. There is no template directory and no package data.
-- **The lookahead test and the determinism test** — the two guarantees the
-  project's correctness rests on. Neither exists, because neither implementation
-  does.
+- **The determinism test** — one of the two guarantees the project's correctness
+  rests on. It does not exist because the backtest engine does not. Its sibling,
+  the lookahead test, now does: see `tests/test_strategy.py`, and see
+  `LIMITATIONS.md` for which half of it actually carries weight.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
   yet be compared against simply owning the index.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and

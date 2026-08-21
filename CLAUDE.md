@@ -12,8 +12,12 @@ strategy — there will never be enough live trades to judge a strategy.
   backtest result.
 - **No lookahead.** `core.evaluate` may read up to and including the current bar
   and nothing after it. The test that proves it ships in the same commit as the
-  implementation. NEITHER EXISTS YET - `core/` is still a stub, and until that
-  test is green this guarantee is an intention, not a property.
+  implementation. BOTH NOW EXIST and the suite is green - but read the docstring
+  at the top of `tests/test_strategy.py` before treating this as settled. The
+  test named in this rule is close to true by construction, because `evaluate`
+  is handed a window ending at the bar it evaluates; the test beside it, that a
+  bar's intent does not change with the history in front of it, is the one that
+  catches a real leak.
 - **Config stays declarative.** Strategy conditions are a flat list combined with
   AND, from a fixed vocabulary. No nesting, no OR, no expressions in YAML. When a
   proposal needs more, that is a code change with a test. A config format that

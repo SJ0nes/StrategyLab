@@ -8,7 +8,7 @@ produces. Nothing here is a footnote.
 
 Five modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `core/config.py`, and the `status` and `fetch` commands in
-`cli.py`. Twenty-seven `NotImplementedError` bodies remain, across 13 files. Two
+`cli.py`. Twenty-six `NotImplementedError` bodies remain, across 12 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -36,14 +36,26 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-235 tests pass (`uv run pytest`). They cover the protocol loader, the data
+273 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, and the strategy-config loader. Nothing else has tests
 because nothing else has code.
 
-Two guarantees this project rests on are **currently unproven**: that
-`core.evaluate` cannot read past the current bar, and that the backtest engine
-is deterministic. Both are stated as design rules in `CLAUDE.md`; neither has a
-test, because neither has an implementation.
+**The lookahead test exists and is green, and it is weaker than its name.**
+`core.evaluate` is handed a window whose last row IS the bar being evaluated, so
+it cannot read the future in the ordinary sense — there is no future in the frame
+it receives. The test the project prompt specifies, corrupting every bar after
+`t` and asserting the intent at `t` is unchanged, therefore holds close to by
+construction. It is kept as a regression guard on that interface and should not
+be read as proof that no leak is possible.
+
+The test that carries real weight is the other one: the intent at a bar must not
+change with how much history precedes it. That is what fails when a rolling
+window is quietly an expanding one — a bug that does not read the future, reads
+too much of the past, and produces the same symptom, a backtest that cannot be
+reproduced live. Both are in `tests/test_strategy.py`.
+
+One guarantee is still **unproven**: that the backtest engine is deterministic.
+There is no engine. `evaluate` itself is deterministic and tested to be.
 
 ## The instrument
 
