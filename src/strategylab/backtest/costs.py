@@ -55,6 +55,29 @@ class CostModel:
     commission_min_flat: float = 0.0
     fx_conversion_frac: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Reject rates that would make the breakdown meaningless.
+
+        ``load_protocol`` already checks these, but it is not the only way to
+        construct a :class:`CostModel` - tests and future callers build one
+        directly. Without this, the "always non-negative" guarantee on
+        :class:`CostBreakdown` holds only by convention, and a negative rate
+        would quietly turn a cost into a rebate.
+
+        Raises:
+            ValueError: If any field is negative or not finite.
+        """
+        for name in (
+            "spread_frac",
+            "slippage_frac",
+            "commission_frac",
+            "commission_min_flat",
+            "fx_conversion_frac",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be a non-negative finite number, got {value}")
+
 
 @dataclass(frozen=True)
 class CostBreakdown:

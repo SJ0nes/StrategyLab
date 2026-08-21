@@ -37,17 +37,22 @@ PERCENT_PER_UNIT = 100.0
 # ``\n``, so on a CRLF file the ``\r`` would defeat the anchor entirely and the
 # counter would be reported missing from a file that plainly contains it.
 #
-# The optional ``#`` comment matters just as much. This module exists BECAUSE
+# The optional trailing comment matters just as much. This module exists BECAUSE
 # the comments in protocol.yaml are the rulebook, and the file itself tells the
 # operator to reset this counter by hand - which is exactly the edit that
-# attracts a trailing note. A pattern that rejects
+# attracts a note. A pattern rejecting
 # ``walk_forward_touches: 0  # reset 2026-08-21`` would be stricter than the
 # loader that accepts it.
 #
-# _TOUCH_LINE's trailing context is a LOOKAHEAD rather than a match, so the
-# span covers the digits alone and splicing cannot disturb the comment, the
-# trailing whitespace, or the line ending.
-_LINE_TAIL = r"[ \t]*(?:#[^\n\r]*)?\r?$"
+# The comment alternation requires WHITESPACE before the ``#``, because that is
+# what YAML requires. Without it, ``0#note`` is a plain scalar that the loader
+# rejects as a non-integer - and a pattern that matched it anyway would let the
+# incrementer happily rewrite a line the loader refuses to read.
+#
+# _TOUCH_LINE's trailing context is a LOOKAHEAD rather than a match, so the span
+# covers the digits alone and splicing cannot disturb the comment, the trailing
+# whitespace, or the line ending.
+_LINE_TAIL = r"(?:[ \t]+#[^\n\r]*)?[ \t]*\r?$"
 _TOUCH_LINE = re.compile(
     r"^(?P<indent>[ \t]+)walk_forward_touches:[ \t]*(?P<count>\d+)(?=" + _LINE_TAIL + ")",
     re.MULTILINE,

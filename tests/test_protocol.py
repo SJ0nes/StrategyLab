@@ -238,7 +238,6 @@ def test_increment_preserves_every_other_byte(tmp_path: Path) -> None:
     # Byte-for-byte, line endings included. Text-mode I/O would rewrite every
     # LF to CRLF on Windows and this assertion is what catches that.
     assert after == before.replace(b"walk_forward_touches: 0", b"walk_forward_touches: 1")
-    assert after.count(b"\r\n") == before.count(b"\r\n")
 
 
 def test_increment_is_visible_to_a_reload(tmp_path: Path) -> None:
@@ -333,4 +332,34 @@ def test_counter_survives_a_crlf_file(tmp_path: Path) -> None:
     assert increment_walk_forward_touches(path) == 1
     after = path.read_bytes()
     assert after == before.replace(b"walk_forward_touches: 0", b"walk_forward_touches: 1")
-    assert after.count(b"\r\n") == before.count(b"\r\n")
+
+
+def test_counter_tolerates_a_trailing_yaml_comment(tmp_path: Path) -> None:
+    # protocol.yaml itself tells the operator to reset this counter by hand, so a
+    # trailing note on that line is the likeliest edit anyone will make. The
+    # comment must survive the increment untouched.
+    text = BASE.replace("  walk_forward_touches: 0", "  walk_forward_touches: 0  # reset by hand")
+    path = write_protocol(tmp_path, text)
+    assert increment_walk_forward_touches(path) == 1
+    assert "  walk_forward_touches: 1  # reset by hand" in path.read_text(encoding="utf-8")
+    assert load_protocol(path).walk_forward_touches == 1
+
+
+def test_access_log_header_tolerates_a_trailing_comment(tmp_path: Path) -> None:
+    text = BASE.replace("access_log:", "access_log:  # every read erodes the split")
+    path = write_protocol(tmp_path, text)
+    assert increment_walk_forward_touches(path) == 1
+    assert "# every read erodes the split" in path.read_text(encoding="utf-8")
+
+
+def test_a_hash_without_preceding_space_is_not_a_comment(tmp_path: Path) -> None:
+    # YAML needs whitespace before `#` for a comment to start, so `0#note` is the
+    # plain scalar "0#note" and load_protocol rejects it. The incrementer must
+    # refuse it too: a pattern looser than the loader would let the counter be
+    # rewritten on a line the loader cannot read.
+    text = BASE.replace("  walk_forward_touches: 0", "  walk_forward_touches: 0#note")
+    path = write_protocol(tmp_path, text)
+    with pytest.raises(ProtocolError):
+        load_protocol(path)
+    with pytest.raises(ProtocolError, match="walk_forward_touches"):
+        increment_walk_forward_touches(path)

@@ -141,7 +141,7 @@ Say: "Step 4 of 4: The auditors and the house conventions."
 | `drift-checker` | Compare the session prompt against the repository. Report what the prompt claims exists versus what is on disk. |
 | `docs-auditor` | Every public function has a docstring. No claim in README is unbacked by something in the repository. LIMITATIONS.md reflects what actually exists. The quickstart commands run in a clean checkout — execute them and report. |
 
-**Three skills.** These carry the material every session needs, so no session has to re-read a long prompt to get them:
+**Four skills.** These carry the material every session needs, so no session has to re-read a long prompt to get them:
 
 - **`conventions`** — one component per commit with its tests; conventional commit messages (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`); type hints and docstrings throughout; no dead code, no commented-out blocks, no stray notebooks, nothing at the root that belongs in a subdirectory; anything experimental lives in a branch.
 - **`declarative-config`** — strategy conditions are a flat list combined with AND, drawn from a fixed vocabulary the engine knows. No nesting, no OR, no expressions in YAML. Anything more expressive is a code change with a test, never a config feature. A config format that grows conditionals is a badly-built programming language with no debugger.

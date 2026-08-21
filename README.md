@@ -25,7 +25,7 @@ because the backtester, the search, and the validator are not written yet.**
 | `status` and `fetch` commands *(untested)* | Walk-forward validation |
 | | Decision logging, risk limits, venue adapters, HTML reports |
 
-**128 tests pass** — verify with `uv run pytest`. They cover the protocol
+**137 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, and the cost model. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
 docstring contract with a `raise NotImplementedError` body: 27 of them, so that
@@ -68,7 +68,7 @@ the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 128 tests, none touching the network
+uv run pytest                   # 137 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -129,6 +129,35 @@ the strategy is searched on `SPY` but would be traded as `VUAG.L`, which did not
 exist for most of the in-sample window; the cost model's minimum-commission and
 FX-conversion terms are both configured to zero; and the noise ceiling does not
 currently feed the pass decision.
+
+## How this was built
+
+This repository was built in a single supervised session, pair-working with an
+AI assistant. That is visible in `git log` if you look at the timestamps — the
+whole history spans about an hour — so it is stated here rather than left to be
+inferred.
+
+What that does and does not mean:
+
+- **Every design decision was made by a human**, at three explicit gates: the
+  pre-registration in `protocol.yaml`, a review of every module contract before
+  any implementation, and a check of the first fetched prices against known
+  values. The three amendments to the pre-registration are recorded in
+  `docs/decisions/0003`, including the one that is not a uniform tightening.
+- **Every change-set was reviewed by read-only audit agents** — one checking
+  implementations against their docstring contracts, one recomputing every
+  hardcoded number in the tests from first principles without reading the
+  implementation, one comparing the repository against the session plan, and one
+  checking documentation against the code. They found real defects: a NaN volume
+  that passed validation entirely, an access counter that could not read a CRLF
+  file, a cost model that accepted infinity, and several documents that claimed
+  tests which did not exist. Those findings and their fixes are in the history.
+- **The numbers here were measured, not estimated.** Where a figure appears, the
+  command that produces it appears beside it.
+
+The reason to say this plainly is the same reason `LIMITATIONS.md` exists: a
+reviewer who works it out for themselves reads it as concealment, and a reviewer
+told upfront can weigh it.
 
 ## Licence
 

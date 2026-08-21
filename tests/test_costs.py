@@ -32,7 +32,15 @@ REALISTIC = CostModel(
     commission_min_flat=0.0,
 )
 
-FREE = CostModel(spread_frac=0.0, slippage_frac=0.0, commission_frac=0.0)
+# Every field pinned, including the flat minimum: the zero-cost identity is an
+# EXACT equality, so it must not depend on an unstated default.
+FREE = CostModel(
+    spread_frac=0.0,
+    slippage_frac=0.0,
+    commission_frac=0.0,
+    commission_min_flat=0.0,
+    fx_conversion_frac=0.0,
+)
 
 
 # --------------------------------------------------------------------------
@@ -351,3 +359,29 @@ def test_fill_records_the_mid_it_started_from() -> None:
     assert fill.mid_price == 100.00
     assert fill.quantity == 5.0
     assert fill.side is Side.BUY
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "spread_frac",
+        "slippage_frac",
+        "commission_frac",
+        "commission_min_flat",
+        "fx_conversion_frac",
+    ],
+)
+def test_negative_rates_are_rejected_at_construction(field: str) -> None:
+    # load_protocol validates these, but it is not the only way to build a
+    # CostModel. Without a check here, CostBreakdown's "always non-negative"
+    # guarantee would hold by convention only, and a negative rate would quietly
+    # turn a cost into a rebate.
+    kwargs = {"spread_frac": 0.0003, "slippage_frac": 0.0005, "commission_frac": 0.0005}
+    kwargs[field] = -1.0
+    with pytest.raises(ValueError, match=field):
+        CostModel(**kwargs)
+
+
+def test_non_finite_rates_are_rejected_at_construction() -> None:
+    with pytest.raises(ValueError, match="spread_frac"):
+        CostModel(spread_frac=float("nan"), slippage_frac=0.0005, commission_frac=0.0005)
