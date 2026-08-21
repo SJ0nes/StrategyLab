@@ -45,7 +45,10 @@ $scans = [ordered]@{
     # figures, which is the same unusable gate this fix exists to remove. An
     # 8-digit account number written with a sort code, a space or a hyphen does
     # match. A bare one does not, and no automated check here will catch it.
-    'account-number-shaped string' = '\b\d[\d -]{7,19}\d\b'
+    # The negative lookbehind keeps the decimal TAIL of a long float out of this.
+    # 25.170068027210885 in a hand-derivation comment offered 170068027210885 -
+    # fifteen digits - and the audit duly reported it as an account number.
+    'account-number-shaped string' = '(?<![\w.])\d[\d -]{7,19}\d\b'
     'credential-shaped assignment' = '(?i)\b(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*\S{8,}'
 }
 $exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1')
@@ -64,7 +67,15 @@ $exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-aud
 # how a real hit disappears.
 $benign = @{
     'account-number-shaped string' = @(
-        '^\d{4}-\d{2}-\d{2}$'   # ISO calendar date
+        '^\d{4}-\d{2}-\d{2}$',  # ISO calendar date
+        # TWO OR MORE spaces is column alignment, not digit grouping. The
+        # hand-derivation tables in tests/ are full of it - "100    120    90" -
+        # and an account number groups with single spaces.
+        '\s\s',
+        # A space-padded hyphen is an arithmetic operator, not a separator.
+        # "(10500 - 7857.142857)" is a comment showing its working. Account
+        # numbers and sort codes never pad their hyphens.
+        '\s-\s'
     )
 }
 
