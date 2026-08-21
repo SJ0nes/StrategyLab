@@ -118,8 +118,15 @@ at any of these numbers — SPY really closed near $120 on 2005-01-03, and the
 cached bar reads about $81. Two consequences worth stating: a backtest
 denominated in these numbers measures total return rather than price return,
 which is usually what you want but is not what a naive reading assumes; and
-the entire history shifts every time a dividend is paid, which is the
-mechanism behind the content-hash instability described below.
+the entire history shifts every time a dividend is paid, so the numbers in a
+cached snapshot are only the numbers this vendor reported on the day it was
+fetched.
+
+That is NOT established as the cause of the content-hash instability described
+below. The drift measured there was between two fetches ninety minutes apart,
+with no dividend in between, and it is far smaller than a dividend would
+produce. The mechanism is unexplained. Recording it as measured rather than
+attributing it to a cause that has not been demonstrated.
 
 **Vendor history is revised.** Splits and dividend adjustments change past
 values, so "same code, same dates" does not mean the same numbers six months

@@ -137,9 +137,11 @@ currently feed the pass decision.
 
 This repository was built in a single supervised session, pair-working with an
 AI assistant. That is visible in `git log` if you look at the timestamps — the
-whole history spans 2h 13m (`git log --format=%ad --date=iso`) — so it
-is stated here rather than left to be
-inferred.
+whole history spans one sitting of a few hours, and
+`git log --format=%ad --date=iso` will show you exactly how long. It is stated
+here rather than left to be inferred. No figure is quoted because it grows with
+every commit; twice now a precise span has been written down and been stale by
+the next one, so the command is the only honest form.
 
 What that does and does not mean:
 
