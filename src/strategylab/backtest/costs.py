@@ -138,4 +138,42 @@ def apply_costs(price: float, side: Side, costs: CostModel, quantity: float = 1.
     Raises:
         ValueError: If ``price`` is not positive or ``quantity`` is negative.
     """
-    raise NotImplementedError
+    if not price > 0:
+        raise ValueError(f"price must be positive, got {price}")
+    if quantity < 0:
+        raise ValueError(f"quantity must be non-negative, got {quantity}")
+
+    # Price impact. Both components are per-unit, in price units, and both are
+    # non-negative: which way they move the price is decided by the side, not
+    # by their sign.
+    half_spread = price * costs.spread_frac / 2.0
+    slippage = price * costs.slippage_frac
+
+    direction = 1.0 if side is Side.BUY else -1.0
+    executed_price = price + direction * (half_spread + slippage)
+
+    # Cash charges, on the EXECUTED notional rather than the mid notional.
+    # Those two differ by the price impact, which is small but not nothing, and
+    # charging on the mid is a real and easily-missed error.
+    notional = executed_price * quantity
+    if quantity == 0:
+        # A trade of nothing costs nothing. Without this, the flat minimum
+        # would be charged for an execution that never happened.
+        commission = 0.0
+        fx = 0.0
+    else:
+        commission = max(costs.commission_frac * notional, costs.commission_min_flat)
+        fx = costs.fx_conversion_frac * notional
+
+    return Fill(
+        side=side,
+        mid_price=price,
+        executed_price=executed_price,
+        quantity=quantity,
+        costs=CostBreakdown(
+            spread=half_spread,
+            slippage=slippage,
+            commission=commission,
+            fx=fx,
+        ),
+    )
