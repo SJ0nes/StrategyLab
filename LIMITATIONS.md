@@ -200,6 +200,10 @@ same machine with the same code, produced 5,033 rows each with an identical
 index — and **4,161 of those rows differed**, by up to 2.1e-4. The adjustment
 factor moves continuously, so the hash moves with it.
 
+That measurement came from a paired comparison run during an audit — two fetches
+separated in time, then compared row by row. It is not reproducible from a
+single command, and nothing in this repository re-runs it.
+
 The consequence is that the hash distinguishes "this is not the snapshot the
 result was computed against" — which is real and useful, and is what
 `cache_read` enforces — but it CANNOT distinguish "the vendor revised history
@@ -217,6 +221,14 @@ as honest as whatever called `cache_write`.
 spread, and slippage before any search runs, which is the important property —
 but it does not record where those three numbers came from, and the project's own
 cost-arithmetic standard asks that it should.
+
+**A stub command prints your home directory.** The five unbuilt CLI commands —
+`search`, `validate`, `report`, `run`, `diff` — raise `NotImplementedError`,
+and the resulting traceback contains the absolute path of the file that raised
+it, which on most machines includes your username. Nothing is written anywhere
+and nothing leaves the machine, but if you paste such a traceback into a bug
+report or an issue, that path goes with it. `status` deliberately prints no
+paths for the same reason.
 
 **The risk layer is not implemented.** `risk/limits.py` exists and carries its
 contracts, but both functions are stubs, there is no `configs/risk_limits.yaml`

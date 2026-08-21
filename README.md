@@ -28,8 +28,9 @@ because the backtester, the search, and the validator are not written yet.**
 **154 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, and the cost model. The two CLI commands have no tests,
 and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body: 27 of them, so that
-each later component is built against a fixed interface.
+docstring contract with a `raise NotImplementedError` body — 27 of them across
+13 files (`grep -rc NotImplementedError src/ --include='*.py'`) — so that each
+later component is built against a fixed interface.
 
 Two guarantees this project will rest on are **currently unproven**: that
 strategy evaluation cannot read past the current bar, and that the backtest
@@ -61,10 +62,11 @@ Full version, with every module marked built or stubbed, in
 
 ## Quickstart
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Verified in a fresh
-clone against an empty cache. The clone and the first `uv run` need the network
-to fetch dependencies; **the test suite itself makes no network call**, which is
-the property that matters.
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
+were last run against a fresh clone of `58217b7` with an empty `data/` cache:
+154 passed, and `status` reported `data  not cached`. The clone and the first
+`uv run` need the network to fetch dependencies; **the test suite itself makes
+no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
@@ -161,8 +163,8 @@ What that does and does not mean:
   this README, the command that produces it appears beside it. One measurement
   in `LIMITATIONS.md` — the two fetches ninety minutes apart that returned 4,161
   differing rows out of 5,033 — came from a paired comparison run during the
-  audit and is not reproducible from a single command; it is labelled there as a
-  measurement rather than something you can re-run in one line.
+  audit and is not reproducible from a single command. `LIMITATIONS.md` says so at
+  the point it appears.
 
 The reason to say this plainly is the same reason `LIMITATIONS.md` exists: a
 reviewer who works it out for themselves reads it as concealment, and a reviewer
