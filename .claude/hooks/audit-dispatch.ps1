@@ -4,8 +4,8 @@
 #
 # A Stop hook cannot spawn a subagent itself; exit 2 is the only channel back into the turn.
 # Two things keep that from looping: stop_hook_active short-circuits the immediate re-entry,
-# and the dispatch is recorded against the current HEAD + working-tree state, so any one
-# change-set is dispatched exactly once.
+# and the dispatch is recorded against the state of src/ and tests/, so any one change-set
+# is dispatched exactly once and a documentation edit does not dispatch at all.
 . "$PSScriptRoot/_common.ps1"
 
 $in = Read-HookInput
@@ -17,12 +17,29 @@ Set-Location -LiteralPath $proj
 # Nothing has been built yet - there is nothing for an auditor to read.
 if (-not (Test-Path -LiteralPath (Join-Path $proj 'src'))) { exit 0 }
 
-$head  = (@(& git rev-parse HEAD 2>$null) -join '')
-$dirty = (@(& git status --porcelain 2>$null) -join "`n")
+# The change-set signature covers src/ and tests/ ONLY.
+#
+# It used to cover the commit id and the whole working tree, which meant every
+# documentation edit re-dispatched four auditors over source none of them had
+# read since the last time they passed it. A gate that fires on a reworded
+# sentence is a gate the operator learns to clear without reading.
+#
+# Committed state is taken as the TREE hashes of the two directories rather than
+# the commit id, so a docs-only commit leaves the signature untouched. Uncommitted
+# state is the porcelain status of the same two paths.
+#
+# The cost of this: a change to README.md, LIMITATIONS.md, docs/, protocol.yaml,
+# or configs/ no longer dispatches anyone, and the docs-auditor in particular is
+# now a manual call. Dispatch it by hand when documentation changes on its own.
+$trees = @(
+    (@(& git rev-parse HEAD:src 2>$null) -join ''),
+    (@(& git rev-parse HEAD:tests 2>$null) -join '')
+) -join '/'
+$dirty = (@(& git status --porcelain -- src tests 2>$null) -join "`n")
 $sha   = [BitConverter]::ToString(
              [Security.Cryptography.SHA1]::Create().ComputeHash(
                  [Text.Encoding]::UTF8.GetBytes($dirty))) -replace '-', ''
-$sig   = "$head|$sha"
+$sig   = "$trees|$sha"
 
 $auditDir = Join-Path $proj 'state/audit'
 New-Item -ItemType Directory -Force -Path $auditDir | Out-Null
@@ -33,8 +50,8 @@ if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Ra
 Set-Content -LiteralPath $marker -Value $sig -Encoding ascii
 
 Deny @"
-Audit dispatch: this change-set has not been audited. Before ending the turn, dispatch all four
-auditors in parallel. Each writes its OWN raw reply to state/audit/:
+Audit dispatch: src/ or tests/ changed and this change-set has not been audited. Before ending
+the turn, dispatch all four auditors in parallel. Each writes its OWN raw reply to state/audit/:
 
   contract-auditor    -> state/audit/contract-auditor.txt
   arithmetic-checker  -> state/audit/arithmetic-checker.txt
