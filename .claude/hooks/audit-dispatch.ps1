@@ -17,29 +17,51 @@ Set-Location -LiteralPath $proj
 # Nothing has been built yet - there is nothing for an auditor to read.
 if (-not (Test-Path -LiteralPath (Join-Path $proj 'src'))) { exit 0 }
 
-# The change-set signature covers src/ and tests/ ONLY.
+# The change-set signature covers the code and the inputs the tests read - and
+# nothing else.
 #
 # It used to cover the commit id and the whole working tree, which meant every
 # documentation edit re-dispatched four auditors over source none of them had
 # read since the last time they passed it. A gate that fires on a reworded
 # sentence is a gate the operator learns to clear without reading.
 #
-# Committed state is taken as the TREE hashes of the two directories rather than
-# the commit id, so a docs-only commit leaves the signature untouched. Uncommitted
-# state is the porcelain status of the same two paths.
+# The signature is CONTENT, not commit state: a SHA1 over the hash of every
+# tracked-or-untracked file under $scoped. That matters, because a signature
+# built from HEAD's tree plus `git status` changes when a change-set is
+# committed, so the same content dispatched twice - once dirty, once committed.
 #
-# The cost of this: a change to README.md, LIMITATIONS.md, docs/, protocol.yaml,
-# or configs/ no longer dispatches anyone, and the docs-auditor in particular is
-# now a manual call. Dispatch it by hand when documentation changes on its own.
-$trees = @(
-    (@(& git rev-parse HEAD:src 2>$null) -join ''),
-    (@(& git rev-parse HEAD:tests 2>$null) -join '')
-) -join '/'
-$dirty = (@(& git status --porcelain -- src tests 2>$null) -join "`n")
-$sha   = [BitConverter]::ToString(
-             [Security.Cryptography.SHA1]::Create().ComputeHash(
-                 [Text.Encoding]::UTF8.GetBytes($dirty))) -replace '-', ''
-$sig   = "$trees|$sha"
+# configs/ and protocol.yaml are in scope because they are not documentation:
+# tests/test_strategy_config.py reads configs/ma_crossover.yaml and
+# tests/test_protocol.py reads protocol.yaml, so an edit to either can turn a
+# test red. Note the consequence: incrementing the walk-forward counter rewrites
+# protocol.yaml and will dispatch. That is the right answer - a touch of the
+# held-back window is exactly the event that deserves four auditors.
+#
+# The top-level entry names are folded in as well, so a NEW top-level directory
+# is visible even though its contents are out of scope. Renaming or adding one
+# is the case a path-scoped signature is otherwise blind to.
+#
+# The cost, which is deliberate: a change to README.md, LIMITATIONS.md or docs/
+# dispatches nobody, and the docs-auditor is a manual call. Dispatch it by hand
+# when documentation changes on its own.
+$scoped = @('src', 'tests', 'configs', 'protocol.yaml')
+
+$parts = New-Object System.Collections.Generic.List[string]
+$parts.Add('toplevel:' + ((@(& git ls-tree --name-only HEAD 2>$null) | Sort-Object) -join ','))
+foreach ($f in (@(& git ls-files --cached --others --exclude-standard -- $scoped 2>$null) |
+                Sort-Object)) {
+    if (-not $f) { continue }
+    if (Test-Path -LiteralPath $f -PathType Leaf) {
+        $parts.Add($f + ':' + (Get-FileHash -LiteralPath $f -Algorithm SHA1).Hash)
+    } else {
+        # Tracked but gone from the working tree: a deletion has to move the
+        # signature too, or removing a test would silently clear the gate.
+        $parts.Add($f + ':absent')
+    }
+}
+$sig = [BitConverter]::ToString(
+           [Security.Cryptography.SHA1]::Create().ComputeHash(
+               [Text.Encoding]::UTF8.GetBytes(($parts -join "`n")))) -replace '-', ''
 
 $auditDir = Join-Path $proj 'state/audit'
 New-Item -ItemType Directory -Force -Path $auditDir | Out-Null
@@ -50,8 +72,9 @@ if ((Test-Path -LiteralPath $marker) -and ((Get-Content -LiteralPath $marker -Ra
 Set-Content -LiteralPath $marker -Value $sig -Encoding ascii
 
 Deny @"
-Audit dispatch: src/ or tests/ changed and this change-set has not been audited. Before ending
-the turn, dispatch all four auditors in parallel. Each writes its OWN raw reply to state/audit/:
+Audit dispatch: code or a tested input changed (src/, tests/, configs/, protocol.yaml) and this
+change-set has not been audited. Before ending the turn, dispatch all four auditors in parallel.
+Each writes its OWN raw reply to state/audit/:
 
   contract-auditor    -> state/audit/contract-auditor.txt
   arithmetic-checker  -> state/audit/arithmetic-checker.txt

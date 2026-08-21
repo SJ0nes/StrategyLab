@@ -37,29 +37,70 @@ $scans = [ordered]@{
     'absolute path (unix /Users)'  = ('/' + $U + '/')
     'absolute path (windows)'      = ('C:' + '\\' + $U + '\\')
     'absolute path (unix /home)'   = ('/ho' + 'me/[A-Za-z0-9._-]+')
+    # KNOWN BLIND SPOT, stated because a scanner whose reach is unknown is worse
+    # than one whose reach is small. This needs 9 characters, so a BARE 8-digit
+    # run - which is exactly the length of a UK bank account number - does not
+    # match. Lowering it to 8 was tried and rejected: it produced 166 hits on
+    # this repository, all of them uv.lock file sizes and hand-computed cost
+    # figures, which is the same unusable gate this fix exists to remove. An
+    # 8-digit account number written with a sort code, a space or a hyphen does
+    # match. A bare one does not, and no automated check here will catch it.
     'account-number-shaped string' = '\b\d[\d -]{7,19}\d\b'
     'credential-shaped assignment' = '(?i)\b(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*\S{8,}'
 }
 $exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1')
 
+# Shapes that satisfy a scan pattern and are not the thing it hunts for.
+#
+# This exists because the account-number pattern - a digit, then 7 to 19 of
+# [digit, space, hyphen], then a digit - matches every ISO date in the
+# repository. 2005-01-01 is a digit, eight of that class, a digit. The audit
+# reported 53 hits, every one of them a date or a column of filler inside a
+# binary fixture, and closed with NOT CLEAN. A gate that cannot go clean is not
+# a gate; it is a paragraph the operator scrolls past, and the one real hit it
+# ever produces will be scrolled past with the rest.
+#
+# Every suppression is COUNTED and reported below. A filter nobody can see is
+# how a real hit disappears.
+$benign = @{
+    'account-number-shaped string' = @(
+        '^\d{4}-\d{2}-\d{2}$'   # ISO calendar date
+    )
+}
+
 $lines.Add('=== scan of all tracked files ===')
 $hits = 0
+$suppressed = 0
 foreach ($f in @(& git ls-files 2>$null)) {
     if (-not $f) { continue }
     $n = ($f -replace '\\', '/')
     if ($exempt -contains $n) { $lines.Add("skipped (rulebook, scanned by eye): $n"); continue }
     if (-not (Test-Path -LiteralPath $f)) { continue }
+    # Reading a parquet as text produces byte soup, and the digit runs in that
+    # soup are not strings anybody wrote. .gitattributes already says which
+    # files are binary, so ask it rather than keeping a second list here.
+    if ((@(& git check-attr binary -- $f 2>$null) -join '') -match 'binary:\s*set') {
+        $lines.Add("skipped (binary per .gitattributes): $n"); continue
+    }
     if ((Get-Item -LiteralPath $f).Length -gt 2MB) { $lines.Add("skipped (over 2MB): $n"); continue }
     $text = Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue
     if (-not $text) { continue }
     foreach ($k in $scans.Keys) {
         foreach ($m in [regex]::Matches($text, $scans[$k])) {
+            $isBenign = $false
+            if ($benign.ContainsKey($k)) {
+                foreach ($b in $benign[$k]) {
+                    if ($m.Value -match $b) { $isBenign = $true; break }
+                }
+            }
+            if ($isBenign) { $suppressed++; continue }
             $hits++
             $lines.Add("HIT  $n  [$k]  -> " + $m.Value)
         }
     }
 }
 $lines.Add('')
+$lines.Add("benign shapes suppressed: $suppressed (see the `$benign table in this hook)")
 $lines.Add("total hits: $hits")
 if ($hits -eq 0) {
     $lines.Add('CLEAN - nothing found. Read the log and the diff above, then push by hand.')
