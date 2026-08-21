@@ -28,7 +28,10 @@ strategy — there will never be enough live trades to judge a strategy.
 - **Plateaus over peaks.** Candidates score by neighbourhood median. Edge winners
   rejected. Degenerate plateaus flagged.
 - **Every search reports its noise ceiling.** A winning Sharpe means nothing until
-  compared against the best Sharpe the same grid achieves on shuffled returns.
+  compared against the best Sharpe the same grid achieves on surrogate series
+  with no edge in them. Use BLOCK RESAMPLING, not an i.i.d. shuffle: shuffling
+  destroys the autocorrelation that a trend strategy trades, which makes the
+  surrogate an unfairly weak opponent and sets the bar far too low.
 
 ## Units — the rule that has already caused one bug
 Rates cross a unit boundary exactly once, and the boundary is `load_protocol`.

@@ -70,7 +70,9 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 27 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 61 |
-| `cli.py` | `status` and `fetch`. | — |
+| `core/types.py` | The value types shared by the backtester and the live worker. Complete, but types rather than behaviour. | none |
+| `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
+| `cli.py` | `status` and `fetch`. | none |
 
 **128 tests pass** — 27 + 40 + 61. Run `uv run pytest` to see the count yourself.
 
@@ -114,6 +116,12 @@ these exist:
   yet be compared against simply owning the index.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and
   tested and wired to nothing, because walk-forward validation does not exist.
+- **A strategy-config loader.** The largest hole here, and not even a stub.
+  Nothing can read `configs/ma_crossover.yaml`: every consumer takes a
+  `StrategyDef` and nothing constructs one. `yaml.safe_load` appears once in
+  `src/`, reading `protocol.yaml`. The declarative-config rule rests on a fixed
+  vocabulary that exists only as a docstring example — `Condition.operator` is
+  typed `str` and nothing validates it. Whoever builds `core/` builds this first.
 
 ## The one thing the diagram does not show
 

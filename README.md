@@ -61,12 +61,14 @@ Full version, with every module marked built or stubbed, in
 
 ## Quickstart
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). All three commands
-run offline in a fresh clone.
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Verified in a fresh
+clone against an empty cache. The clone and the first `uv run` need the network
+to fetch dependencies; **the test suite itself makes no network call**, which is
+the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 128 tests, no network
+uv run pytest                   # 128 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -91,24 +93,25 @@ The full argument is in [docs/methodology.md](docs/methodology.md). In short:
 **The split.** Parameter search may look at 2005–2018 and nothing else.
 2019–2024 is held back and used only to test a candidate already chosen. The
 loader refuses a protocol whose windows overlap. Every read of the held-back
-window increments a counter, because the split degrades with use and that
-degradation should be visible rather than forgotten.
+window is meant to increment a counter, because the split degrades with use and
+that degradation should be visible rather than forgotten. *The counter is built
+and tested but nothing calls it yet, because nothing reads that window yet.*
 
-**Plateaus over peaks.** The best single cell in a parameter grid is usually the
-luckiest one. Candidates are scored by the median of their parameter
+**Plateaus over peaks.** *Not yet implemented.* The best single cell in a
+parameter grid is usually the luckiest one. Candidates are scored by the median of their parameter
 neighbourhood; winners sitting on a grid boundary are rejected as walls rather
 than optima; and flatness caused by parameters doing nothing is flagged rather
 than reported as robustness.
 
-**The noise ceiling.** The expected maximum across 90 draws from noise is well
-above zero, so the best of 90 parameter combinations will post a positive Sharpe
-on data with no structure in it at all. Every search therefore reruns its entire
+**The noise ceiling.** *Not yet implemented.* The expected maximum across 90
+draws from noise is well above zero, so the best of 90 parameter combinations
+will post a positive Sharpe on data with no *exploitable* structure in it. Every search therefore reruns its entire
 grid against surrogate series and reports the distribution of best-in-grid
 results. A winning Sharpe means nothing until compared against it.
 *Not yet implemented.*
 
-**Three outcomes, not two.** Validation returns pass, fail, or
-`insufficient_data`. The third is not a soft failure — it means the strategy was
+**Three outcomes, not two.** *Not yet implemented.* Validation returns pass,
+fail, or `insufficient_data`. The third is not a soft failure — it means the strategy was
 never really tested. Conflating it with failure throws away a candidate that was
 never refuted.
 

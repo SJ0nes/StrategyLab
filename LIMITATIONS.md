@@ -8,8 +8,20 @@ produces. Nothing here is a footnote.
 
 Four modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, and the `status` and `fetch` commands in `cli.py`.
-Everything else in `src/` raises `NotImplementedError` — 27 occurrences across
-13 files.
+Twenty-seven `NotImplementedError` bodies remain, across 13 files. Two further
+modules are complete but are types rather than behaviour: `core/types.py` holds
+the shared value types, and `execution/venue.py` holds the venue interface and
+its data classes. Neither has any tests.
+
+**Nothing can read a strategy config.** There is no loader for
+`configs/ma_crossover.yaml` — not an implementation, not even a stub. Every
+component that consumes a strategy takes a `StrategyDef` as a parameter and
+nothing anywhere constructs one. The "fixed vocabulary" of indicators and
+operators that the declarative-config rule depends on exists only as an example
+inside a docstring; `Condition.operator` is typed `str` and nothing validates
+it. `strategylab status` prints `Next: uv run strategylab search
+configs/ma_crossover.yaml`, which a reader will reasonably take as evidence
+that something can parse that file. Nothing can.
 
 **There are no backtest results, no search results, and no validation outcomes**,
 because there is no backtester, no search, and no validator. No cost has ever
@@ -44,7 +56,7 @@ index; they are not the same security, and the gap matters:
 - **Distributing versus accumulating.** SPY pays dividends out; VUAG.L reinvests
   internally. Total-return construction differs between them.
 
-**One instrument, few distinct regimes.** Hundreds of parameter combinations are
+**One instrument, few distinct regimes.** Ninety parameter combinations are
 tested against a handful of macro conditions. A candidate that clears the noise
 ceiling on one instrument has cleared a low bar. It is a reason to keep looking,
 not a finding.
@@ -181,9 +193,22 @@ a human runs `strategylab fetch`.
 `VUAG.L`, so the execution-side price history this project would need to model
 real fills does not exist anywhere in the repository.
 
-**The content hash normalises to ten decimal places.** Two frames differing
-beyond the tenth decimal hash identically. That is far below any revision a
-vendor would make, but the guarantee has a limit and this is it.
+**The content hash changes on almost every re-fetch, so it cannot do the job it
+was designed for.** It was intended as an alarm for vendor revisions. Measured:
+two fetches of the same ticker over the same span, ninety minutes apart on the
+same machine with the same code, produced 5,033 rows each with an identical
+index — and **4,161 of those rows differed**, by up to 2.1e-4. The adjustment
+factor moves continuously, so the hash moves with it.
+
+The consequence is that the hash distinguishes "this is not the snapshot the
+result was computed against" — which is real and useful, and is what
+`cache_read` enforces — but it CANNOT distinguish "the vendor revised history
+in a way that changes a conclusion" from "someone re-ran fetch". Do not read a
+changed hash as evidence of a meaningful revision.
+
+Related and smaller: the hash normalises to ten decimal places, so two frames
+differing below that threshold hash identically. Given the above, that bound is
+about a million times finer than the noise it sits in.
 
 **`fetched_at` is caller-supplied and unverified.** The provenance record is only
 as honest as whatever called `cache_write`.

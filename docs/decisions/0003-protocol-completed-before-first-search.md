@@ -91,11 +91,6 @@ resolve, then `min_trades_pooled: 30` is numerically identical to it and nothing
 tightened at all. No run exists on either version to compare, because
 `walk_forward` is still a stub.
 
-`min_trades_per_fold` moves from 30 to 10, which is a loosening in isolation —
-but it is paired with a pooled floor of 30 that did not exist before, and it
-governs a per-fold advisory rather than the pass decision. The pass decision is
-strictly harder to satisfy than it was.
-
 Expect `insufficient_data` to be a common per-fold outcome regardless. A moving
 average crossover on daily bars with a fast period of 5–30 does not generate ten
 round trips in every twelve-month fold. **If folds routinely return
