@@ -92,6 +92,33 @@ reproducible: the mutation was run from a scratch directory and no harness is
 committed, which is the same defect this file labels on the content-hash
 measurement below and did not label here.
 
+## What this project's own verification is worst at
+
+Worth stating in the document whose purpose is distrust, because it is a
+limitation of the evidence rather than of the code.
+
+**The documentation here was written by the same process that wrote the code,
+and it is the documentation that keeps turning out wrong.** Four read-only
+auditors run against every component this repository has built. The record of
+what they found is in `git log`: each round is followed by a `fix:` commit whose
+message names the defect. Read those.
+
+The pattern across them is one-directional. Independent recomputation of the
+hand-derived numbers in the tests has not yet found a wrong value. Independent
+reading of the prose has found something untrue every single round — a test
+described as covering more than it could, a paragraph left standing beside the
+paragraph that superseded it, a figure quoted from a harness that was never
+committed. The errors are not in the arithmetic. They are in the claims about
+how good the arithmetic is, and they overstate.
+
+So: **trust the numbers in this repository more than the sentences around them**,
+and trust neither more than the command that regenerates them. Where a figure
+appears without a command beside it, that is the shape the mistakes have taken
+here before.
+
+`docs/decisions/0006` records what the audits catch and what they structurally
+cannot.
+
 ## The instrument
 
 **Research and execution are different funds.** The search runs on `SPY`, a

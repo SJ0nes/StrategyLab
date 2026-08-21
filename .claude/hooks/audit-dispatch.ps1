@@ -95,4 +95,10 @@ auditor and the operator, which is exactly what writing the raw file to disk exi
 Confirm the four files were written and changed, then tell the operator what was found in a few
 lines. The files are what they read.
 This dispatch fires once per change-set, so it will not repeat this turn.
+
+Before dispatching all four, read docs/decisions/0006-what-the-audits-actually-catch.md.
+It records which auditor earns its cost on which kind of change, and why a full round on a
+commit that only fixes previous findings has consistently returned wording rather than
+defects. The cadence is a judgement call, not a rule, because it depends on what the
+change-set contains - which this hook cannot see.
 "@
