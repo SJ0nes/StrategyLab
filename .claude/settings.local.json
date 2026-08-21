@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(claude *)",
+      "PowerShell(py *)"
+    ]
+  },
+  "disabledMcpjsonServers": [
+    "tradevision"
+  ]
+}

@@ -1,0 +1,16 @@
+.env
+data/*
+!data/.gitkeep
+state/*
+!state/.gitkeep
+!state/audit/
+state/audit/*
+!state/audit/.gitkeep
+reports/
+*.log
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/

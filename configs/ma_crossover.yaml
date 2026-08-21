@@ -1,0 +1,31 @@
+# STRATEGY DEFINITION
+# Declarative only. Conditions are a FLAT LIST combined with AND, drawn
+# from a fixed vocabulary the engine knows. No nesting, no OR, no
+# expressions. Anything more expressive is a CODE change with a test,
+# never a config feature. See CLAUDE.md.
+name: ma_crossover
+version: 1
+description: >
+  Trend following. Enter long when the fast moving average crosses above
+  the slow one, exit when it crosses back below, filtered to uptrends.
+  Mechanism: price moves tend to persist over medium horizons.
+
+entry:
+  - {indicator: sma, period: "$fast", operator: crosses_above, target: {indicator: sma, period: "$slow"}}
+  - {indicator: close, operator: above, target: {indicator: sma, period: "$trend"}}
+
+exit:
+  - {indicator: sma, period: "$fast", operator: crosses_below, target: {indicator: sma, period: "$slow"}}
+
+# Searched — the grid walks every combination.
+# Keep this SHORT. Every added parameter multiplies the ways to fit
+# noise, and this much data supports 3-4 at most.
+search:
+  fast:  {min: 5,   max: 30,  step: 5}     # 6 values
+  slow:  {min: 40,  max: 120, step: 20}    # 5 values
+  trend: {min: 100, max: 200, step: 50}    # 3 values
+                                           # → 90 combinations
+
+# Fixed — not searched. Set on conventional grounds, not by tuning.
+fixed:
+  position_size_pct: 95.0

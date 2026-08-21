@@ -1,0 +1,44 @@
+# THE PROTOCOL — set once, before any search has run.
+# Editing this after results exist invalidates every comparison made
+# before the edit. If you must, record why in docs/decisions/ and
+# reset walk_forward_touches to 0.
+protocol_version: 1
+created: "2026-08-21"
+
+instruments:
+  research: "SPY"
+  execution: "VUAG.L"
+
+windows:
+  in_sample:    {start: "2005-01-01", end: "2018-12-31"}
+  # fold_months is a fold LENGTH, not a fold count: 12 means each test
+  # fold covers twelve months, so this window yields six folds.
+  walk_forward: {start: "2019-01-01", end: "2024-12-31", fold_months: 12}
+
+costs:
+  # PERCENT, not fractions. 0.05 means 0.05%, which is five basis points.
+  # load_protocol converts these to fractions exactly once, at the file
+  # boundary; CostModel carries fractions and apply_costs never sees a
+  # percent. tests/test_protocol.py asserts that conversion.
+  commission_pct: 0.05
+  spread_pct: 0.03
+  slippage_pct: 0.05
+
+validation:
+  primary_metric: sharpe
+  # Annualised Sharpe floor, before the pass margin is added.
+  min_sharpe: 1.0
+  # Below this many trades, that FOLD reports insufficient_data.
+  min_trades_per_fold: 10
+  # Below this many trades pooled across all folds, the whole
+  # VALIDATION reports insufficient_data. The pooled figure carries the
+  # pass decision, so it needs its own honest floor.
+  min_trades_pooled: 30
+  # Reject regardless of return above this drawdown, in percent.
+  max_drawdown_ceiling_pct: 25.0
+  # ADDITIVE margin on min_sharpe. The effective bar is
+  # min_sharpe + pass_margin = 1.20. A marginal pass is a fail.
+  pass_margin: 0.20
+
+access_log:
+  walk_forward_touches: 0

@@ -1,0 +1,14 @@
+# Normalise text in the repository, and pin the files whose exact bytes matter.
+* text=auto
+
+# protocol.yaml is rewritten in place by increment_walk_forward_touches, which
+# preserves every byte it did not change - including line endings. Pinning LF
+# keeps that behaviour identical on every platform rather than merely correct
+# on each one separately.
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+
+# Recorded market-data fixtures are binary and must never be munged.
+*.parquet binary
