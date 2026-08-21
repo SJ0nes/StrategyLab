@@ -41,6 +41,17 @@ tests. It has never been pointed at `SPY`, because nothing calls it: `cli.search
 still raises before reading its argument, and there is no grid to hand it
 parameters. There is no search and no validator.
 
+**There are two decision-log shapes and the design says there should be one.**
+`docs/architecture.md` states the schema is defined once, in
+`logging/decisions.py`, because a backtest log and a live log have to be
+diffable - that is what makes `strategylab diff` possible at all. But
+`logging/` is a stub, and `run_backtest` needed somewhere to put its per-bar
+records now, so it emits an ad-hoc seven-column frame while `DecisionRecord`
+declares fifteen fields nobody writes. Nothing is wrong today because nothing
+reads either one. The moment `logging/` is built they must converge on its
+schema, and until then the "defined once" rule is aspirational rather than
+enforced.
+
 **The engine's fill convention is a decision, not a detail.** A signal computed
 from bar `t`'s close is filled at bar `t+1`'s OPEN. Filling at the same close
 would transact at a price only known once that bar had closed, which is the

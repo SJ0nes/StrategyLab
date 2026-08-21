@@ -89,6 +89,17 @@ class BacktestResult:
             the entry has been decided and not yet filled. Every row mixes two
             bars in that specific way, and a reader who assumes otherwise will
             misread every entry and exit in the log.
+
+            THIS FRAME IS NOT THE PROJECT'S DECISION-LOG SCHEMA, and the two do
+            not yet agree. ``docs/architecture.md`` says the schema is defined
+            once, in ``logging/decisions.py``, so that a backtest log and a live
+            log can be diffed - which is the whole reason ``strategylab diff``
+            can exist. ``DecisionRecord`` there carries fifteen fields including
+            the ticker, the risk verdict, the protocol version and the indicator
+            values; this frame carries seven and is built ad hoc. Both are
+            stubs of the same idea, and one of them has a body. When
+            ``logging/`` is built these must converge on ITS schema, not on
+            this one.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a
