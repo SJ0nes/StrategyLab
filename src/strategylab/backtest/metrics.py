@@ -15,10 +15,18 @@ implementations silently differ:
   ``sqrt(n / (n - 1))`` - about 0.2% on a year of daily bars, and much more on a
   short fold, which is exactly where a marginal candidate gets decided.
 - Returns are SIMPLE per-period fractions, not log returns and not percentages.
-  A series of percentages passed here yields a Sharpe a hundred times too small
-  in the numerator and a hundred times too large in the denominator, which is to
-  say identical - so the error is invisible in the ratio and shows up only in
-  the equity curve. Nothing here can detect it; the caller has to be right.
+  A series of percentages scales BOTH the mean and the standard deviation by a
+  hundred, so the ratio is unchanged and the Sharpe is identical. That is what
+  makes the mistake dangerous: it is invisible here and surfaces only in the
+  equity curve, as a return a hundred times too large. Nothing in this module
+  can detect it; the caller has to be right.
+
+  (An earlier version of this paragraph said the numerator went a hundred times
+  too small and the denominator a hundred times too large - which would be a
+  ten-thousand-fold error - and then drew the correct conclusion from it anyway.
+  A hundredfold error inside the warning about hundredfold errors. Recorded
+  rather than quietly deleted, because it is the exact failure this project
+  keeps writing rules about.)
 """
 
 from __future__ import annotations

@@ -115,10 +115,10 @@ these exist:
   its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **The report template directory** — `report/render.py` resolves templates
   against the package. There is no template directory and no package data.
-- **The determinism test** — one of the two guarantees the project's correctness
-  rests on. It does not exist because the backtest engine does not. Its sibling,
-  the lookahead test, now does: see `tests/test_strategy.py`, and see
-  `LIMITATIONS.md` for which half of it actually carries weight.
+- **Anything that runs the engine on real data.** `run_backtest` exists and is
+  tested, and has only ever been given the synthetic twelve-bar series in
+  `tests/test_engine.py`. Nothing calls it: `cli.search` raises before reading
+  its argument, and no grid exists to hand it parameters.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
   yet be compared against simply owning the index.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and

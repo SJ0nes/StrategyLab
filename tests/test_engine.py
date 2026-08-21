@@ -86,7 +86,29 @@ def crossover() -> StrategyDef:
         name="crossover",
         version=1,
         description="Test fixture.",
-        entry=(Condition(left=fast, operator="crosses_above", right=slow),),
+        # The second entry condition compares against a LITERAL. An auditor
+        # argued the lookahead test was blind to a peek that rescales the price
+        # column - a crossover is scale-invariant, so `sma_fast > sma_slow`
+        # survives dividing both sides by a whole-column statistic, and the
+        # engine could be reading the future on every bar undetected.
+        #
+        # I CHECKED, AND IT DOES NOT REPRODUCE. Normalising the close column by
+        # its own mean, future included, is caught by both lookahead tests with
+        # or without this condition. The reason is the decision log: it records
+        # rendered VALUES, not just condition names - `close=13 above 0.5` -
+        # and rescaling moves those numbers even when the action is unchanged,
+        # so assert_frame_equal on `decisions` fails. That was a side effect of
+        # wanting readable logs, not a designed defence, and it is worth knowing
+        # it is doing this work.
+        #
+        # The condition stays as defence in depth against a peek that preserves
+        # every rendered value, which this one does not. It is not load-bearing
+        # today and the comment no longer says it is. 0.5 sits below every close
+        # in the series, so it holds on every bar and changes no signal.
+        entry=(
+            Condition(left=fast, operator="crosses_above", right=slow),
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=0.5),
+        ),
         exit=(
             Condition(
                 left=IndicatorRef(indicator="sma", period_param="fast"),
@@ -125,6 +147,15 @@ def test_corrupting_the_future_does_not_change_any_earlier_decision(k: int) -> N
     pd.testing.assert_series_equal(
         peeking.equity.iloc[:rows], reference.equity.iloc[:rows], check_exact=True
     )
+    # At k=4 and k=5 the equity prefix is still flat at starting_equity, because
+    # nothing has been filled yet - so the equity half of this test is satisfied
+    # by two identical constants and proves nothing there. The DECISIONS half
+    # carries those cases, which is why both are asserted and why this note
+    # exists instead of a comfortable assumption that all seven k are equal.
+    if k >= 6:
+        assert reference.equity.iloc[:rows].nunique() > 1, (
+            "the equity prefix is constant, so comparing it proves nothing at this k"
+        )
 
 
 def test_truncating_the_future_does_not_change_any_earlier_decision() -> None:

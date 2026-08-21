@@ -184,7 +184,9 @@ What that does and does not mean:
   in `LIMITATIONS.md` — the two fetches ninety minutes apart that returned 4,161
   differing rows out of 5,033 — came from a paired comparison run during the
   audit and is not reproducible from a single command. `LIMITATIONS.md` says so at
-  the point it appears.
+  the point it appears. A second unreproducible figure was added later and then
+  retracted rather than labelled, because a figure nobody can regenerate earns
+  its place only when the measurement itself is the point.
 
 The reason to say this plainly is the same reason `LIMITATIONS.md` exists: a
 reviewer who works it out for themselves reads it as concealment, and a reviewer

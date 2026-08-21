@@ -20,8 +20,7 @@ strategy — there will never be enough live trades to judge a strategy.
   front of it, is the one that catches a real leak. The guarantee itself rests
   on the ENGINE's slicing, and that now has a test that can fail:
   `tests/test_engine.py` hands `run_backtest` a frame whose future has been
-  corrupted, intact, and asserts no earlier decision moves. Widening the slice
-  by one bar turns seven tests red.
+  corrupted, intact, and asserts no earlier decision moves.
 - **Config stays declarative.** Strategy conditions are a flat list combined with
   AND, from a fixed vocabulary. No nesting, no OR, no expressions in YAML. When a
   proposal needs more, that is a code change with a test. A config format that

@@ -2,6 +2,10 @@
 
 ## Context
 
+*This section describes the repository as it stood when the decision was taken,
+which is what a decision record is for. `run_backtest` was a stub then and is
+built now; the sentence below is dated, not stale.*
+
 `protocol.yaml` set three rates and left two unset. `commission_min_flat` and
 `fx_conversion_pct` therefore defaulted to `0.0` in `load_protocol`, which is the
 same number a deliberate decision would produce and carries none of the meaning.

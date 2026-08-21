@@ -25,9 +25,26 @@ here deliberately and in the open.
 
 WHERE THE LOOKAHEAD GUARANTEE NOW LIVES. ``evaluate`` can only read the window it
 is handed, so it cannot look ahead - which means the entire guarantee rests on
-this module choosing that window correctly. ``bars.iloc[: i + 1]`` is the whole
-of it. That single expression is what the project's central claim reduces to, and
-``tests/test_engine.py`` attacks it directly rather than by construction.
+this module choosing that window correctly, and ``tests/test_engine.py`` attacks
+that choice directly rather than by construction.
+
+An earlier version of this paragraph said ``bars.iloc[: i + 1]`` "is the whole of
+it". It is not, and the overstatement is worth correcting rather than trimming.
+There are THREE reads capable of looking ahead, not one: that slice, and the two
+full-length arrays ``opens`` and ``closes`` hoisted out of the loop below. All
+three are bounded by ``i`` today. Only the slice is bounded STRUCTURALLY - the
+other two are ordinary arrays holding every future price, and nothing but the
+index expression stops them being read. A reader auditing this module has three
+places to look, and saying otherwise sends them to one.
+
+What the tests can and cannot see is stated in ``tests/test_engine.py``. One
+known blind spot is real and is NOT this loop's to fix: the back-adjustment
+already baked into the sliced values, which is a property of the data and is
+recorded in ``LIMITATIONS.md``. A second was proposed - a peek that survives a
+uniform rescale of the price column - and did not reproduce; the decision log
+records rendered indicator VALUES, so a rescale moves them even when the action
+does not, and both lookahead tests fail. Worth knowing, because that defence was
+a side effect of wanting readable logs rather than a designed one.
 """
 
 from __future__ import annotations
@@ -62,6 +79,16 @@ class BacktestResult:
             INCLUDING bars on which nothing traded. The rejections are the part
             worth keeping: a strategy that did not trade for two years is
             telling you something, and a fills-only log cannot say what.
+
+            READ THE COLUMNS AS OF DIFFERENT MOMENTS, because they are. ``action``
+            and the two condition columns are what THIS bar's close decided, and
+            will be acted on at the next bar's open. ``position_units``, ``cash``
+            and ``equity`` are the state AFTER the PREVIOUS bar's decision was
+            executed at this bar's open. So a row reading ``enter_long`` with
+            ``position_units`` of zero is the normal case, not a contradiction:
+            the entry has been decided and not yet filled. Every row mixes two
+            bars in that specific way, and a reader who assumes otherwise will
+            misread every entry and exit in the log.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a
@@ -136,6 +163,14 @@ def run_backtest(
     of 100 percent plus a commission would overdraw - which is why the strategy
     config carries 95.
 
+    AN INTENT THAT DOES NOT APPLY IS DROPPED, SILENTLY AND ON PURPOSE. An
+    ``ENTER_LONG`` while already long does not add to the position, and an
+    ``EXIT_LONG`` while flat does nothing. Both are recorded in ``decisions`` -
+    the log shows what the strategy wanted - and neither produces a fill. This is
+    the long-only, one-position-at-a-time model the rest of the project assumes;
+    it is written down here because "the log says enter_long and there is no
+    fill" is otherwise indistinguishable from a bug.
+
     Args:
         definition: The parsed strategy.
         params: Resolved values for the strategy's ``$placeholder`` parameters,
@@ -148,11 +183,22 @@ def run_backtest(
         The result, including the per-bar decision log.
 
     Raises:
-        ValueError: If ``bars`` is empty, unsorted, carries duplicate
-            timestamps or lacks a required column; if ``starting_equity`` is not
-            positive and finite; if ``bars`` holds fewer rows than the
-            strategy's warm-up needs; or if ``params`` omits a placeholder the
-            definition references.
+        ValueError: This function's own checks reject an empty, unsorted or
+            duplicate-indexed frame, a frame lacking a required column, a
+            ``starting_equity`` that is not positive and finite, and a frame
+            shorter than the strategy's warm-up.
+
+            It also propagates, unchanged, every ValueError raised by the three
+            functions it drives - :func:`strategylab.core.strategy.evaluate`,
+            :func:`strategylab.backtest.costs.apply_costs` and
+            :func:`strategylab.backtest.metrics.max_drawdown`. That is more
+            failure modes than this docstring used to admit: a missing
+            placeholder and a non-finite bar come from ``evaluate``, and an
+            account driven to zero or below reaches ``max_drawdown``, which
+            refuses a non-positive equity because a drawdown is a fraction of a
+            peak. A wiped-out account therefore raises rather than reporting
+            a hundred percent drawdown, which is a real limitation and not a
+            considered decision.
     """
     _validate(bars, starting_equity)
 

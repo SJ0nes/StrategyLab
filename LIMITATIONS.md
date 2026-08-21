@@ -50,8 +50,9 @@ approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
 338 tests pass (`uv run pytest`). They cover the protocol loader, the data
-layer, the cost model, the strategy-config loader, strategy evaluation, and the
-performance metrics. Nothing else has tests because nothing else has code.
+layer, the cost model, the strategy-config loader, strategy evaluation, the
+performance metrics, and the backtest engine. Nothing else has tests because
+nothing else has code.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
@@ -69,13 +70,6 @@ window is quietly an expanding one — a bug that does not read the future, read
 too much of the past, and produces the same symptom, a backtest that cannot be
 reproduced live. Both are in `tests/test_strategy.py`.
 
-**The lookahead risk has moved, not gone.** Because `evaluate` can only see the
-window it is handed, the entire guarantee now rests on whoever chooses that
-window — which will be the backtest engine, which does not exist. When it is
-written, the question "does this read the future" becomes a question about its
-slicing, and no test in this repository addresses that yet. That is the one to
-write alongside the engine, and it is not the test that exists today.
-
 **The determinism guarantee now has its test.** `run_backtest` consults no clock
 and no random source, and `tests/test_engine.py` asserts that the same inputs
 produce an identical equity curve, decision log, fill list and metrics.
@@ -85,9 +79,18 @@ the whole frame and chooses what to hand `evaluate`; that choice is the entire
 guarantee. `test_corrupting_the_future_does_not_change_any_earlier_decision`
 corrupts every bar after `k` and passes the frame in INTACT — nothing is sliced
 away before the call — so an engine that peeked by a single bar produces
-different earlier decisions and the test says so. Verified against a deliberately
-broken engine: widening the slice by one bar turns seven tests red. That is the
-first test in this project to carry the claim the whole design rests on.
+different earlier decisions and the test says so. That is the first test in this
+project to carry the claim the whole design rests on.
+
+An earlier version of this entry added "widening the slice by one bar turns seven
+tests red". That figure is gone for two reasons, and both are worth stating. It
+was WRONG — seven was the count within `tests/test_engine.py` alone and the
+sentence did not say so, and the figure across the whole suite is larger. No
+replacement number is quoted here, because a replacement would have the same
+problem as the original. And it was not
+reproducible: the mutation was run from a scratch directory and no harness is
+committed, which is the same defect this file labels on the content-hash
+measurement below and did not label here.
 
 ## The instrument
 
