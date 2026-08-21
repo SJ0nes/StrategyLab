@@ -17,7 +17,7 @@ been applied to a trade: `apply_costs` works and is heavily tested, but
 `run_backtest` is a stub, so the entire cost section below describes a model
 that has never run on anything.
 
-123 tests pass (`uv run pytest -q`). They cover the protocol loader, the data
+128 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, and the cost model. Nothing else has tests because nothing else has code.
 
 Two guarantees this project rests on are **currently unproven**: that

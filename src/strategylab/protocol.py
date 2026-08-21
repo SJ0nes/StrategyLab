@@ -31,13 +31,28 @@ PERCENT_PER_UNIT = 100.0
 # sits between the digits and the anchor and neither pattern matches at all.
 # This module exists to preserve a file's line endings byte for byte, and
 # without this it would refuse the CRLF file it promises to handle.
-# The trailing context is a LOOKAHEAD, not a match. Consuming it would put the
-# line ending inside the replaced span, and splicing over it would strip the
-# ``\r`` from exactly the one line this function edits.
+# Two things these patterns must tolerate, both learned the hard way.
+#
+# The ``\r?`` is load-bearing: under re.MULTILINE ``$`` matches only before a
+# ``\n``, so on a CRLF file the ``\r`` would defeat the anchor entirely and the
+# counter would be reported missing from a file that plainly contains it.
+#
+# The optional ``#`` comment matters just as much. This module exists BECAUSE
+# the comments in protocol.yaml are the rulebook, and the file itself tells the
+# operator to reset this counter by hand - which is exactly the edit that
+# attracts a trailing note. A pattern that rejects
+# ``walk_forward_touches: 0  # reset 2026-08-21`` would be stricter than the
+# loader that accepts it.
+#
+# _TOUCH_LINE's trailing context is a LOOKAHEAD rather than a match, so the
+# span covers the digits alone and splicing cannot disturb the comment, the
+# trailing whitespace, or the line ending.
+_LINE_TAIL = r"[ \t]*(?:#[^\n\r]*)?\r?$"
 _TOUCH_LINE = re.compile(
-    r"^(?P<indent>[ \t]+)walk_forward_touches:[ \t]*(?P<count>\d+)(?=[ \t]*\r?$)", re.MULTILINE
+    r"^(?P<indent>[ \t]+)walk_forward_touches:[ \t]*(?P<count>\d+)(?=" + _LINE_TAIL + ")",
+    re.MULTILINE,
 )
-_ACCESS_LOG_HEADER = re.compile(r"^access_log:[ \t]*\r?$", re.MULTILINE)
+_ACCESS_LOG_HEADER = re.compile(r"^access_log:" + _LINE_TAIL, re.MULTILINE)
 # A line beginning in column zero with something other than a comment ends the
 # preceding block. Used to bound the search for the counter to its own mapping.
 _NEXT_TOP_LEVEL = re.compile(r"^[^\s#]", re.MULTILINE)

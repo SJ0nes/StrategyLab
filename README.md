@@ -17,16 +17,17 @@ exists to tell that apart from an actual edge.
 **Foundations only. No strategy has been backtested, searched, or validated,
 because the backtester, the search, and the validator are not written yet.**
 
-| Built and tested | Not built |
+| Built | Not built |
 |---|---|
 | Protocol loader and validator | Strategy evaluation (`core/`) |
 | Price data layer — validation, provenance, parquet cache | Backtest engine and metrics |
 | Cost model — hand-verified arithmetic | Grid search, plateau scoring, noise ceiling |
-| `status` and `fetch` commands | Walk-forward validation |
+| `status` and `fetch` commands *(untested)* | Walk-forward validation |
 | | Decision logging, risk limits, venue adapters, HTML reports |
 
-**123 tests pass** — verify with `uv run pytest -q`. They cover the protocol
-loader, the data layer, and the cost model. Everything else is a signature and a
+**128 tests pass** — verify with `uv run pytest`. They cover the protocol
+loader, the data layer, and the cost model. The two CLI commands have no tests,
+and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
 docstring contract with a `raise NotImplementedError` body: 27 of them, so that
 each later component is built against a fixed interface.
 
@@ -65,7 +66,7 @@ run offline in a fresh clone.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest -q                # 123 tests, no network
+uv run pytest                   # 128 tests, no network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -77,7 +78,7 @@ network**, so unlike the three above it can fail for reasons outside this
 repository:
 
 ```bash
-uv run strategylab fetch        # ~5,000 daily SPY bars, cached with provenance
+uv run strategylab fetch        # downloads and caches SPY, with provenance
 ```
 
 Run every command from the repository root — paths in the protocol are relative

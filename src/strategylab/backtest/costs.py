@@ -8,6 +8,7 @@ rather than a code change. See ``docs/decisions/0002-cost-model-shape.md``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from strategylab.core.types import Side
@@ -129,21 +130,30 @@ def apply_costs(price: float, side: Side, costs: CostModel, quantity: float = 1.
     minimum to it would invent a cost for an execution that never happened.
 
     Args:
-        price: The mid price before costs, in price units. Must be positive.
+        price: The mid price before costs, in price units. Must be positive and
+            finite.
         side: Direction of the execution.
         costs: Broker parameters, with every rate a FRACTION, not a percentage.
-        quantity: Number of units transacted. Must be non-negative.
+        quantity: Number of units transacted. Must be non-negative and finite.
 
     Returns:
         The fill, carrying the executed price and the itemised breakdown.
 
     Raises:
-        ValueError: If ``price`` is not positive or ``quantity`` is negative.
+        ValueError: If ``price`` is not positive and finite, or ``quantity`` is
+            negative or not finite. Non-finite inputs are rejected rather than
+            propagated: an infinite or NaN cost is not a cost, and it would
+            reach every downstream metric silently.
     """
-    if not price > 0:
-        raise ValueError(f"price must be positive, got {price}")
-    if quantity < 0:
-        raise ValueError(f"quantity must be non-negative, got {quantity}")
+    # Finiteness is checked explicitly. Comparison alone is not enough in either
+    # direction: `nan < 0` is False, so NaN slips a lower bound, and `inf > 0` is
+    # True, so infinity satisfies one. Either would turn the notional and every
+    # cash charge into a non-finite number - and the flat minimum does not
+    # backstop it, because `max(nan, 3.0)` is nan.
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError(f"price must be positive and finite, got {price}")
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ValueError(f"quantity must be a non-negative finite number, got {quantity}")
 
     # Price impact. Both components are per-unit, in price units, and both are
     # non-negative: which way they move the price is decided by the side, not

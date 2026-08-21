@@ -94,6 +94,7 @@ def status() -> None:
     )
 
     cached = is_cached(protocol.instruments.research, DATA_DIR)
+    unusable = False
     if cached:
         try:
             frame, entry = cache_read(protocol.instruments.research, DATA_DIR)
@@ -104,6 +105,7 @@ def status() -> None:
             )
         except DataQualityError as exc:
             cached = False
+            unusable = True
             table.add_row("data", f"[red]cache is unusable[/red] {exc}")
     else:
         table.add_row("data", "[yellow]not cached[/yellow]")
@@ -126,7 +128,10 @@ def status() -> None:
     console.print()
 
     if not cached:
-        console.print("Next:  [bold]uv run strategylab fetch[/bold]")
+        # A snapshot that exists but will not load needs --force; the bare
+        # command would find the files present and decline to replace them.
+        flag = " --force" if unusable else ""
+        console.print(f"Next:  [bold]uv run strategylab fetch{flag}[/bold]")
         console.print("       Downloads and caches price data. The one command using the network.")
         return
 
@@ -152,7 +157,14 @@ def fetch(
     ticker = protocol.instruments.research
 
     if is_cached(ticker, DATA_DIR) and not force:
-        _, entry = cache_read(ticker, DATA_DIR)
+        try:
+            _, entry = cache_read(ticker, DATA_DIR)
+        except DataQualityError as exc:
+            # An unreadable snapshot is the one case where re-downloading is
+            # obviously right, so say so rather than surfacing a traceback.
+            err_console.print(f"[bold red]the cached snapshot is unusable[/bold red] {exc}")
+            err_console.print("Re-download with [bold]uv run strategylab fetch --force[/bold].")
+            raise typer.Exit(code=1) from exc
         console.print(
             f"[yellow]{ticker} is already cached[/yellow] - {entry.rows} bars, "
             f"{entry.start} to {entry.end}, fetched {entry.fetched_at:%Y-%m-%d %H:%M} UTC"

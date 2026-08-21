@@ -97,9 +97,10 @@ def test_conversion_is_exactly_one_hundredth(tmp_path: Path) -> None:
     costs = load_protocol(write_protocol(tmp_path, BASE)).costs
     assert PERCENT_PER_UNIT == 100.0
     assert costs.commission_frac == pytest.approx(0.05 / 100.0, rel=1e-12)
-    # Excludes multiplication (5.0), the identity (0.05), and /10 (0.005).
-    assert costs.commission_frac < 0.05
-    assert costs.commission_frac > 0.0001
+    # Bounds that actually exclude the near misses. `< 0.05` alone admits
+    # /10 (0.005), so the upper bound has to be tighter than that value.
+    assert costs.commission_frac < 0.001  # excludes 5.0, 0.05, and 0.005
+    assert costs.commission_frac > 0.0001  # excludes 0.00005 and below
 
 
 def test_commission_min_flat_is_cash_and_is_not_converted(tmp_path: Path) -> None:

@@ -27,7 +27,10 @@ from strategylab.data.source import (
     validate_bars,
 )
 
-FIXTURE_DIR = Path("tests/fixtures")
+# Anchored to this file, not to the process working directory. A cwd-relative
+# path plus a skipif marker means these tests - including the one that detects
+# fixture corruption - silently vanish when pytest runs from anywhere else.
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 FIXTURE_TICKER = "SPY"
 
 
@@ -360,9 +363,6 @@ def test_unreadable_provenance_raises() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not is_cached(FIXTURE_TICKER, FIXTURE_DIR), reason="run from the repository root"
-)
 def test_recorded_fixture_loads_and_is_valid() -> None:
     df, entry = cache_read(FIXTURE_TICKER, FIXTURE_DIR)
     validate_bars(df)
@@ -375,9 +375,6 @@ def test_recorded_fixture_loads_and_is_valid() -> None:
     assert 240 <= len(df) <= 260
 
 
-@pytest.mark.skipif(
-    not is_cached(FIXTURE_TICKER, FIXTURE_DIR), reason="run from the repository root"
-)
 def test_recorded_fixture_matches_its_recorded_hash() -> None:
     # If this fails, the committed fixture changed. That is either a deliberate
     # re-record - which must be a commit of its own - or corruption.
@@ -385,9 +382,6 @@ def test_recorded_fixture_matches_its_recorded_hash() -> None:
     assert content_hash(df) == entry.content_hash
 
 
-@pytest.mark.skipif(
-    not is_cached(FIXTURE_TICKER, FIXTURE_DIR), reason="run from the repository root"
-)
 def test_recorded_fixture_sits_inside_the_in_sample_window() -> None:
     # A fixture drawn from the held-back window would leak it into every test
     # run, which is the one thing the split exists to prevent.

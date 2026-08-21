@@ -26,6 +26,10 @@ REALISTIC = CostModel(
     spread_frac=0.0003,  # 0.03%
     slippage_frac=0.0005,  # 0.05%
     commission_frac=0.0005,  # 0.05%
+    # Pinned explicitly rather than left to the dataclass default. The
+    # linearity invariant holds only while this is zero, so a linearity test
+    # relying on an unstated default tests something it has not established.
+    commission_min_flat=0.0,
 )
 
 FREE = CostModel(spread_frac=0.0, slippage_frac=0.0, commission_frac=0.0)
@@ -317,13 +321,28 @@ def test_zero_quantity_costs_nothing_even_with_a_flat_minimum() -> None:
 
 @pytest.mark.parametrize("bad_price", [0.0, -1.0, -100.0])
 def test_non_positive_price_is_rejected(bad_price: float) -> None:
-    with pytest.raises(ValueError, match="price must be positive"):
+    with pytest.raises(ValueError, match="price must be positive and finite"):
         apply_costs(bad_price, Side.BUY, REALISTIC)
 
 
 def test_negative_quantity_is_rejected() -> None:
-    with pytest.raises(ValueError, match="quantity must be non-negative"):
+    with pytest.raises(ValueError, match="quantity must be a non-negative finite number"):
         apply_costs(100.00, Side.BUY, REALISTIC, quantity=-1.0)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_quantity_is_rejected(bad: float) -> None:
+    # `nan < 0` is False, so a naive `quantity < 0` guard lets NaN through. It
+    # then turns the notional, the commission and the FX charge into NaN - and
+    # the flat minimum does not backstop it, because `max(nan, 3.0)` is nan.
+    with pytest.raises(ValueError, match="quantity must be a non-negative finite number"):
+        apply_costs(100.00, Side.BUY, REALISTIC, quantity=bad)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_non_finite_price_is_rejected(bad: float) -> None:
+    with pytest.raises(ValueError, match="price must be positive and finite"):
+        apply_costs(bad, Side.BUY, REALISTIC)
 
 
 def test_fill_records_the_mid_it_started_from() -> None:

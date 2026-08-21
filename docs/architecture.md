@@ -68,11 +68,11 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | Module | What works | Tests |
 |---|---|---|
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 27 |
-| `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 38 |
-| `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 58 |
+| `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
+| `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 61 |
 | `cli.py` | `status` and `fetch`. | — |
 
-**123 tests pass.** Run `uv run pytest -q` to see the count for yourself.
+**128 tests pass** — 27 + 40 + 61. Run `uv run pytest` to see the count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
 normalisation behind it are **written but untested**, because no test may make a
@@ -81,14 +81,20 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. 27
-`NotImplementedError` bodies across 13 files.
+session builds against a fixed interface rather than inventing one. **27
+`NotImplementedError` bodies across 13 files:**
 
-`core/strategy.py` · `backtest/engine.py` · `backtest/metrics.py` ·
-`search/grid.py` · `search/plateau.py` · `search/noise.py` ·
-`search/graveyard.py` · `validate/walkforward.py` · `execution/venue.py` ·
-`execution/t212.py` · `risk/limits.py` · `logging/decisions.py` ·
-`report/render.py` · and five of the seven CLI commands.
+`cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
+`search/plateau.py` (3) · `backtest/metrics.py` (2) · `logging/decisions.py` (2) ·
+`risk/limits.py` (2) · `core/strategy.py` · `backtest/engine.py` ·
+`search/grid.py` · `search/noise.py` · `search/graveyard.py` ·
+`validate/walkforward.py` · `report/render.py`.
+
+`execution/venue.py` is marked STUB in the diagram above but is **not** in that
+list and contains no `NotImplementedError`. It is a `typing.Protocol` — a
+structural interface whose methods have `...` bodies by design, which is what an
+interface looks like rather than an unwritten function. `data/source.py`'s
+`PriceSource` is the same shape inside a module that is otherwise BUILT.
 
 ## What is not even stubbed
 
@@ -98,7 +104,7 @@ these exist:
 - **`configs/risk_limits.yaml`** — `risk/limits.py` names it as its default path.
   The file does not exist, so the risk layer has no configuration to read.
 - **`tests/test_risk.py`** — `CLAUDE.md` says the risk layer has its own file and
-  its own tests. It has neither.
+  its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **The report template directory** — `report/render.py` resolves templates
   against the package. There is no template directory and no package data.
 - **The lookahead test and the determinism test** — the two guarantees the
