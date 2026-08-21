@@ -157,7 +157,9 @@ day is therefore unmodelled.
   crossover. Nothing has been compared across strategy types.
 - **Three searched parameters, 90 grid cells.** The config's own comment notes
   that this much data supports three or four parameters at most.
-- **Integer parameters only.** Lookbacks are whole bars.
+- **Integer parameters only.** Lookbacks are whole bars, and the loader refuses a
+  config where they are not — across a searched range's whole span, not merely at
+  its start, since a fractional step walks off the whole numbers after one cell.
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.

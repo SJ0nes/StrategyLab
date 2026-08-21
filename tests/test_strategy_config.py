@@ -483,6 +483,44 @@ def test_a_placeholder_may_resolve_from_fixed(tmp_path: Path) -> None:
     assert definition.entry[1].right == IndicatorRef(indicator="sma", period_param="trend")
 
 
+@pytest.mark.parametrize(
+    ("bound", "spec"),
+    [
+        ("min", "{min: 5.5, max: 30, step: 5}"),
+        ("min", "{min: 0, max: 30, step: 5}"),
+        ("min", "{min: -50, max: -10, step: 5}"),
+        ("max", "{min: 5, max: 30.5, step: 5}"),
+        ("step", "{min: 5, max: 30, step: 2.5}"),
+        ("step", "{min: 5, max: 30, step: 0.3}"),
+    ],
+)
+def test_a_searched_period_must_be_whole_bars_across_its_whole_range(
+    tmp_path: Path, bound: str, spec: str
+) -> None:
+    # $fast is the left-hand period of an entry and an exit condition, so every
+    # value this range produces is an SMA lookback. Half a bar does not exist and
+    # neither does a lookback of minus ten. A fractional STEP matters as much as a
+    # fractional min: the first cell is whole and every cell after it is not.
+    text = mutate("fast: {min: 5, max: 30, step: 5}", f"fast: {spec}")
+    with pytest.raises(
+        StrategyConfigError,
+        match=rf"'search\.fast\.{bound}' bounds the range for \$fast, .*"
+        r"whole number of bars of at least 1",
+    ):
+        load_strategy(write_config(tmp_path, text))
+
+
+def test_a_searched_range_of_whole_bars_is_accepted(tmp_path: Path) -> None:
+    # The boundary on the accepting side: exactly 1 bar is a legal lookback, and
+    # min == max is a single-cell range rather than an error.
+    text = mutate("fast: {min: 5, max: 30, step: 5}", "fast: {min: 1, max: 1, step: 1}")
+    assert load_strategy(write_config(tmp_path, text)).search["fast"] == {
+        "min": 1.0,
+        "max": 1.0,
+        "step": 1.0,
+    }
+
+
 @pytest.mark.parametrize("value", ["200.5", "0", "-10"])
 def test_a_fixed_period_that_is_not_a_whole_number_of_bars_is_refused(
     tmp_path: Path, value: str

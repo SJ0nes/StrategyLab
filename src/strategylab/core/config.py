@@ -468,6 +468,16 @@ def _conditions(raw: Any, source: str, where: str) -> tuple[Condition, ...]:
 def _search(raw: Any, source: str) -> dict[str, dict[str, float]]:
     """Build the searched-parameter ranges.
 
+    Checks this function does NOT make: that a bound is a whole number, or that
+    it is at least one bar. Whether a parameter is a lookback at all depends on
+    how the conditions reference it, which is not known here.
+    :func:`_check_parameters` applies that rule once the reference walk has run.
+
+    The order matters and is relied on by the failure messages: all three bounds
+    are read and checked for finiteness BEFORE any of them are compared to each
+    other, so ``max: -.inf`` is reported as a non-finite bound rather than as a
+    max below its min.
+
     Args:
         raw: The parsed ``search`` mapping.
         source: Display name of the config file.
@@ -547,6 +557,32 @@ def _referenced_params(definition: StrategyDef) -> dict[str, str]:
     return seen
 
 
+def _whole_bars(value: float, source: str, where: str, because: str) -> None:
+    """Raise unless a value that will become a lookback is a whole count of bars.
+
+    A period is an index offset into a frame of bars. Half a bar does not exist,
+    and neither does a lookback of minus ten, so a value that fails this is not a
+    parameter the grid can walk - it is a config the search would have to round
+    or refuse at some later point, silently and per cell.
+
+    Args:
+        value: The value to check, in bars. Already known to be finite.
+        source: Display name of the config file.
+        where: Dotted path of the field, used in the message.
+        because: Clause naming why this value must be a whole count of bars,
+            interpolated into the message.
+
+    Raises:
+        StrategyConfigError: If ``value`` is below 1 or is not a whole number.
+    """
+    if value < 1 or value != int(value):
+        raise _fail(
+            source,
+            where,
+            f"{because}, so it must be a whole number of bars of at least 1, got {value}",
+        )
+
+
 def _check_parameters(definition: StrategyDef, source: str) -> None:
     """Check that placeholders and declared parameters account for each other.
 
@@ -557,14 +593,20 @@ def _check_parameters(definition: StrategyDef, source: str) -> None:
     result. A name in both blocks is a parameter that is fixed and searched at
     once, and nothing can say which value won.
 
+    This is also where a parameter's value meets what the conditions use it FOR.
+    ``_search`` and ``_fixed`` validate each block in isolation and cannot know
+    that ``fast`` is a lookback; only the reference walk knows that. So the
+    whole-bars rule is enforced here, on both blocks, rather than in either one.
+
     Args:
         definition: The parsed strategy, its ``search`` and ``fixed`` blocks
             already validated in isolation.
         source: Display name of the config file.
 
     Raises:
-        StrategyConfigError: On any of the three, and on a ``fixed`` parameter
-            used as a period whose value is not a whole number of bars.
+        StrategyConfigError: On any of the three, and on a searched or fixed
+            parameter that supplies a period whose value is not a whole number of
+            bars of at least 1.
     """
     both = sorted(set(definition.search) & set(definition.fixed))
     if both:
@@ -573,16 +615,19 @@ def _check_parameters(definition: StrategyDef, source: str) -> None:
     references = _referenced_params(definition)
     for name in sorted(references):
         if name in definition.search:
+            # Every bound of the range, not just its start: a fractional step
+            # walks off the whole numbers after the first cell, and a range
+            # ending below 1 bar is a grid of lookbacks that cannot be taken.
+            because = f"bounds the range for ${name}, which supplies a lookback period"
+            for bound in ("min", "max", "step"):
+                _whole_bars(
+                    definition.search[name][bound], source, f"search.{name}.{bound}", because
+                )
             continue
         if name in definition.fixed:
-            value = definition.fixed[name]
-            if value < 1 or value != int(value):
-                raise _fail(
-                    source,
-                    f"fixed.{name}",
-                    "supplies a lookback period, so it must be a whole number of bars of "
-                    f"at least 1, got {value}",
-                )
+            _whole_bars(
+                definition.fixed[name], source, f"fixed.{name}", "supplies a lookback period"
+            )
             continue
         raise _fail(
             source,
@@ -607,8 +652,9 @@ def load_strategy(path: Path) -> StrategyDef:
     system takes a :class:`StrategyDef`. Validation is complete before this
     returns: the schema is closed, conditions are flat and AND-combined, every
     indicator and operator is in the vocabulary this module declares, every
-    ``$placeholder`` has a parameter behind it, and every searched parameter is
-    used.
+    ``$placeholder`` has a parameter behind it, every searched parameter is used,
+    and every parameter a condition uses as a period is a whole number of bars of
+    at least one - across the whole of its range, not merely at its start.
 
     Periods are counts of bars, both in a condition and in a ``search`` range.
     ``$placeholder`` periods are NOT resolved here - the returned definition
