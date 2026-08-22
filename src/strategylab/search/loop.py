@@ -99,13 +99,18 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: reader meeting an unfamiliar version can say so rather than guess.
 #:
 #: ``1`` was the shape written by commit ``db180ce``. ``2`` added
-#: ``costs_frac`` and ``commission_min_flat``. ``3`` turns ``noise_ceiling``
-#: from a permanent ``null`` into an object when one was computed. Each bump
-#: matters even though no consumer exists yet: two artifacts with different
-#: field sets must not both call themselves version 1, which is exactly the
-#: confusion the field exists to prevent. :func:`write_search_result`
-#: enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 3
+#: ``costs_frac`` and ``commission_min_flat``. ``3`` turned ``noise_ceiling``
+#: from a permanent ``null`` into an object when one was computed. ``4`` adds
+#: ``block_bars`` and ``seed`` to that object, without which a ceiling cannot be
+#: reproduced from the artifact that reports it.
+#:
+#: THE LAST BUMP IS THE INSTRUCTIVE ONE. Those two fields were added under
+#: version 3 rather than bumping, so artifacts written hours apart both claimed
+#: version 3 and carried different shapes - exactly the confusion this field
+#: exists to prevent, made in the same session as the comment saying so. Bump on
+#: every field change, including the ones that feel too small to matter.
+#: :func:`write_search_result` enumerates the current fields.
+SEARCH_SCHEMA_VERSION = 4
 
 #: Where a search artifact is written. ``cli.status`` counts ``search-*.json``
 #: here to report how many searches have been run.

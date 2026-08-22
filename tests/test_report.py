@@ -572,8 +572,12 @@ def test_a_candidate_below_the_median_is_not_rendered_as_the_zeroth_percentile(
     path.write_text(json.dumps(_with_ceiling(0.1)), encoding="utf-8")
     html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
 
-    assert "0th percentile" not in html
+    # Asserted on wording that would actually be wrong, not on a substring:
+    # "0th percentile" also occurs inside "50th percentile", so the obvious
+    # check passes or fails by luck rather than by design.
     assert "BELOW THE MEDIAN" in html
+    assert "around the 0th" not in html
+    assert "percentile but not the next one up" not in html
 
 
 def test_a_surface_renders_to_a_self_contained_page(tmp_path: Path) -> None:

@@ -1279,9 +1279,10 @@ def test_the_artifact_carries_the_whole_surface_and_its_provenance(
 def test_the_artifact_schema_version_matches_the_documented_field_set() -> None:
     # The version exists so a reader meeting an unfamiliar artifact can say so.
     # 2 added `costs_frac` and `commission_min_flat`; 3 turned `noise_ceiling`
-    # from a permanent null into an object when one was computed. Two artifacts
-    # with different field sets must not both call themselves version 1.
-    assert SEARCH_SCHEMA_VERSION == 3
+    # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
+    # briefly two different shapes, because those last fields went in without a
+    # bump - the exact confusion this field exists to prevent.
+    assert SEARCH_SCHEMA_VERSION == 4
 
 
 def test_the_artifact_states_that_no_noise_ceiling_was_computed(
