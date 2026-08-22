@@ -6,12 +6,13 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Eleven modules have working bodies: `protocol.py`, `data/source.py`,
+Fourteen modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
 `core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`,
-`search/graveyard.py`, `search/loop.py`, and the `status`, `fetch` and `search`
-commands in `cli.py`. Seventeen `NotImplementedError` bodies remain,
-across 7 files. Two
+`search/graveyard.py`, `search/loop.py`, `report/render.py`,
+`report/surface.py`, `report/palette.py`, and the `status`, `fetch`, `search`
+and `report` commands in `cli.py`. Fifteen `NotImplementedError` bodies remain,
+across 6 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -76,15 +77,17 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-573 tests pass (`uv run pytest`). They cover the protocol loader, the data
+605 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
-the graveyard and the search loop — eleven areas, one per test file.
+the graveyard, the search loop and the reports — twelve areas, one per test
+file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
-paragraph said it was. Three FINISHED things are untested: the `status`, `fetch`
-and `search` commands in `cli.py`, the venue interface in `execution/venue.py`,
-and `YFinanceSource`'s fetch path, which by policy no test may call. `search` is
+paragraph said it was. Three FINISHED things are untested: the `status`, `fetch`,
+`search` and `report` commands in `cli.py`, the venue interface in
+`execution/venue.py`, and `YFinanceSource`'s fetch path, which by policy no test
+may call. `search` is
 the one that has grown: it is now around a hundred and thirty lines of argument
 handling, error paths and output formatting, and every one of its failure
 branches — a missing config, an unparseable one, an uncached instrument, an
@@ -533,6 +536,37 @@ a NAME-level divergence between check and engine implies a name-level divergence
 between loader and engine — something nothing in this repository detects and no
 test covers. It does not extend beyond names, which is exactly why arity and
 position size needed their own checks rather than following from the vocabulary.
+
+**The report meets two of the five interactions its own standard requires.**
+`report-design` and `render`'s contract both ask for five things. Hovering a
+cell for its metrics works, and every figure carries its protocol version,
+snapshot hash and originating command. The other three cannot exist yet and the
+gap is structural rather than unfinished work:
+
+- **No equity curve on click.** The search artifact stores per-cell metrics and
+  no curves. Ninety curves over 3,523 bars is tens of megabytes of JSON against
+  a 38 KB file, so this needs a decision — downsample, store only the top few,
+  or recompute on demand — and nobody has taken it.
+- **No noise ceiling on the axis.** The standard is emphatic that the ceiling
+  belongs on the SAME axis as the result, so a winner inside the noise
+  distribution is *visible* rather than computed. `search/noise.py` is a stub.
+  Every page states the absence where the band would be, which is the least bad
+  thing available and is not a substitute.
+- **No fold panels and no two-run comparison.** `validate/` is a stub, so no
+  fold exists, and nothing yet loads two result sets. These are roadmap session
+  8, after the components they display.
+
+Reading the figure while three of its five affordances are missing is the risk
+worth naming: it looks finished, and a heatmap of unbenchmarked Sharpes is
+exactly the kind of thing that persuades by being well drawn.
+
+**The colour scale is a sampled approximation of viridis, not viridis.** Ten
+anchor stops with linear interpolation between them, hand-coded so the page
+needs no plotting dependency. The property that matters — lightness rising
+monotonically, no manufactured edges at a colour transition — survives the
+sampling and is asserted by a test. The exact 256-entry table is not
+reproduced, and a reader matching these colours against a matplotlib figure
+will find small differences.
 
 **A full search takes about four minutes, and the noise ceiling multiplies
 that.** Measured: `time uv run strategylab search configs/ma_crossover.yaml`

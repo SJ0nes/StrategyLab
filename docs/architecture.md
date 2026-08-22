@@ -57,13 +57,15 @@ signature and a docstring contract but a `raise NotImplementedError` body.
                             ▼
                    ┌─────────────────┐
                    │     report/     │
-                   │ render.py  STUB │
-                   │ + no templates  │
+                   │ render.py BUILT │
+                   │ surface.py BUILT│
+                   │ palette.py BUILT│
+                   │ + templates/    │
                    └─────────────────┘
 ```
 
 `cli.py` sits across the top of all of it. **BUILT:** `status`, `fetch`,
-`search`. **STUB:** `validate`, `report`, `run`, `diff`.
+`search`, `report`. **STUB:** `validate`, `run`, `diff`.
 
 ## What is built
 
@@ -82,9 +84,12 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation that refuses a searched range for every reason the config loader does, bar three: two cross-block checks it cannot make from the `search` block alone, and a huge integer bound it accepts because it never converts to float. Produces the `params` mapping that makes a `StrategyDef` evaluable. `plateau.is_edge_winner` calls it to build an axis, so the two can never disagree about which values a range generates. Reached by `strategylab search`, through both `cli.search` and `search/loop.py`. | 74 |
 | `search/loop.py` | `run_search` — the caller everything above was waiting for. Cuts the bars to `protocol.windows.in_sample` and to nothing else, walks the grid, fingerprints each cell's trades, scores the surface, and takes the best surviving cell. `select_candidate` ranks by plateau score rather than by Sharpe, rejects an edge winner or a drawdown breach and moves on, and flags a degenerate plateau rather than rejecting it. `write_search_result` persists the whole surface. Refuses a bad input up front with `SearchError`, and refuses a grid in which every cell failed - a fault in the definition or the data would otherwise read as a research finding. Carries the window test, which asserts the bar count as well as the values, because the corruption half alone cannot see a one-bar leak. | 77 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
-| `cli.py` | `status`, `fetch` and `search`. | none |
+| `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 32 |
+| `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. | in the 32 |
+| `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 32 |
+| `cli.py` | `status`, `fetch`, `search` and `report`. | none |
 
-**573 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 77. Run `uv run pytest` to see the
+**605 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 77 + 32. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -94,14 +99,14 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **17
-`NotImplementedError` bodies across 7 files:**
+session builds against a fixed interface rather than inventing one. **15
+`NotImplementedError` bodies across 6 files:**
 
-`cli.py` (4 — four of the seven commands) · `execution/t212.py` (6) ·
+`cli.py` (3 — three of the seven commands) · `execution/t212.py` (6) ·
 `logging/decisions.py` (2) ·
 `risk/limits.py` (2) ·
 `search/noise.py` ·
-`validate/walkforward.py` · `report/render.py`.
+`validate/walkforward.py`.
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
 list and contains no `NotImplementedError`. It is a `typing.Protocol` — a
@@ -118,8 +123,6 @@ these exist:
   The file does not exist, so the risk layer has no configuration to read.
 - **`tests/test_risk.py`** — `CLAUDE.md` says the risk layer has its own file and
   its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
-- **The report template directory** — `report/render.py` resolves templates
-  against the package. There is no template directory and no package data.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
   yet be compared against simply owning the index. This is the largest remaining
   hole in the search output: `search` now prints a Sharpe with no benchmark and
@@ -132,8 +135,13 @@ these exist:
 - **Any noise ceiling.** `search/noise.py` is a stub, so `search` reports
   `"noise_ceiling": null` in every artifact it writes and says so on every run.
   Nothing it prints is yet evidence of an edge.
-- **Any HTML.** `report/render.py` is a stub and there is no template directory,
-  so `search` writes JSON and nothing renders it.
+- **Any equity curve, anywhere.** The report's contract asks for click-a-cell to
+  show one and the search artifact carries none: ninety curves over three and a
+  half thousand bars is tens of megabytes against a thirty-kilobyte file. What
+  to store is undecided, so that interaction does not exist.
+- **Any noise band on a figure.** The report standard requires the ceiling drawn
+  on the same axis as the result. `search/noise.py` is a stub, so every page
+  states the absence where the band would be.
 - **A `StrategyDef` with its placeholders substituted into it.** `expand_grid`
   is built, but it does not rewrite a definition: it produces the `params`
   mapping that `evaluate` resolves each `$placeholder` against, once per bar. So

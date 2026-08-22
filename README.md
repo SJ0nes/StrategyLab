@@ -34,22 +34,23 @@ validated, and no figure from a search appears in this README.**
 | Price data layer — validation, provenance, parquet cache | Walk-forward validation |
 | Cost model — hand-verified arithmetic | Any benchmark — nothing computes buy-and-hold |
 | Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters |
-| Strategy evaluation (`core.evaluate`), with the lookahead test | HTML reports — `search` writes JSON |
+| Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
 | Backtest engine and metrics, with the determinism test | |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | Plateau scoring, the edge check, the degeneracy check | |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
-| `status`, `fetch` and `search` commands *(untested)* | |
+| The surface report — faceted heatmap, self-contained HTML, no build step | |
+| `status`, `fetch`, `search` and `report` commands *(untested)* | |
 
-**573 tests pass** — verify with `uv run pytest`. They cover the protocol
+**605 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
-plateau scoring, the graveyard and the search loop — eleven areas, one per test
-file.
-The three CLI commands have no tests, and neither does the vendor fetch path,
+plateau scoring, the graveyard, the search loop and the reports — twelve areas,
+one per test file.
+The four CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 17 of them across 7
+docstring contract with a `raise NotImplementedError` body — 15 of them across 6
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -102,7 +103,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 573 tests, none touching the network
+uv run pytest                   # 605 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -116,10 +117,13 @@ repository. `search` needs `fetch` to have run:
 ```bash
 uv run strategylab fetch                              # caches SPY, with provenance
 uv run strategylab search configs/ma_crossover.yaml   # ~4 min; writes state/search-*.json
+uv run strategylab report                             # renders those to reports/*.html
 ```
 
-`search` reads only 2005–2018, whatever the cache holds. It reports no noise
-ceiling, because that component is not built.
+`search` reads only 2005–2018, whatever the cache holds. `report` recomputes
+nothing — it re-renders what is already on disk, so changing a template costs no
+protocol access. Both report no noise ceiling, because that component is not
+built.
 
 Run every command from the repository root — paths in the protocol are relative
 to the working directory.
@@ -174,8 +178,11 @@ uv run strategylab search configs/ma_crossover.yaml       # ~4 minutes, 90 cells
 
 That writes every cell to `state/search-<stamp>.json` with the protocol version,
 the in-sample window, the content hash of the snapshot it ran against, the
-winner, and every rejection. `state/` is gitignored, so the file is local to
-whoever ran it.
+winner, and every rejection. `uv run strategylab report` turns each of those
+into a self-contained HTML page: the surface as a heatmap faceted by the third
+parameter, coloured by each cell's own Sharpe so a spike still reads as a spike,
+with failed cells hatched and the winner accented. Both `state/` and `reports/`
+are gitignored, so the files are local to whoever ran them.
 
 Nothing from it appears in this section because a search result without a noise
 ceiling is not a weak finding — it is not a finding. The best of ninety

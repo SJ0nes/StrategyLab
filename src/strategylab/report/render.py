@@ -3,14 +3,47 @@
 These are tools the operator returns to, not documents produced once, so this
 module is mostly about interaction and only briefly about styling. See the
 ``report-design`` skill for the full standard.
+
+SELF-CONTAINED IS A HARD REQUIREMENT, NOT A PREFERENCE. No CDN, no bundler, no
+build step, no external request of any kind. One file that opens instantly from
+disk, works offline, works in five years and can be emailed. Charts are inline
+SVG written into the document and the data is a JSON literal in a ``<script>``
+tag, so the whole thing is one file with no companions.
+:func:`render` refuses a page that reaches outside itself, because "no external
+assets" is the kind of rule that decays silently the first time somebody adds a
+font link.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
+
 DEFAULT_REPORT_DIR = Path("reports")
+
+#: Where the bundled templates live, resolved against this package rather than
+#: the working directory so a report renders identically from anywhere.
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+#: Keys a context must carry before anything is written.
+#:
+#: A figure that cannot say where it came from cannot be used to make a
+#: decision, and cannot be put in front of anyone else. These are refused at
+#: render time rather than left to a template that would quietly emit an empty
+#: span.
+TRACEABILITY_KEYS: tuple[str, ...] = ("protocol_version", "fixture_hash", "command")
+
+#: Patterns that would make a page reach outside itself. Checked against the
+#: rendered output, not the template, so an external reference smuggled in
+#: through the context is caught too.
+_EXTERNAL = re.compile(
+    r"""(?ix)
+    (?: src | href ) \s* = \s* ["']? \s* (?: https? : | // )
+    """
+)
 
 
 def render(template: str, context: dict[str, Any], out: Path) -> Path:
@@ -20,15 +53,24 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
     hand-built inline SVG, which keeps the file small and opens it instantly,
     and speed is most of what makes a tool feel good to use.
 
-    The rendered page must support:
+    WHAT THE RENDERED PAGES SUPPORT TODAY, against what the standard asks for.
+    The full list is five interactions; two of them are met and three cannot be:
 
-    - hovering a grid cell to see its metrics without a page load;
-    - clicking a cell to show that cell's equity curve;
-    - the noise ceiling drawn on the SAME axis as the result rather than in a
-      table below it, so a winner sitting inside the noise distribution is
-      visible rather than computed;
-    - fold results laid out side by side, so inconsistency reads as a shape;
-    - loading two result sets to compare runs.
+    - hovering a grid cell to see its metrics without a page load - MET;
+    - clicking a cell to show that cell's equity curve - NOT MET. The search
+      artifact carries per-cell metrics and no curves; ninety curves over three
+      and a half thousand bars is tens of megabytes against a thirty-kilobyte
+      file, so what to store is a decision nobody has taken yet;
+    - the noise ceiling on the SAME axis as the result - NOT MET, because
+      ``search/noise.py`` is a stub and there is no ceiling to draw. The page
+      says so where the band would be;
+    - fold results side by side - NOT MET, because ``validate/`` is a stub and
+      no fold exists;
+    - loading two result sets to compare runs - NOT MET.
+
+    Three of those wait on components that do not exist. They are listed here
+    rather than quietly dropped, because a contract that describes five
+    interactions and a module that offers two should say which two.
 
     Every number shown is traceable: the protocol version, the fixture hash,
     and the command that produced it appear on the figure itself.
@@ -50,6 +92,44 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
 
     Raises:
         FileNotFoundError: If ``template`` does not exist.
-        ValueError: If ``context`` omits any of the traceability keys.
+        ValueError: If ``context`` omits any of the traceability keys, or if
+            the rendered page references an external URL. The second is not in
+            the contract this function carried as a stub and is added because
+            "self-contained" is the property the whole format rests on: it
+            decays the first time somebody adds a font link, and nothing else
+            in the project would notice.
     """
-    raise NotImplementedError
+    missing = [key for key in TRACEABILITY_KEYS if key not in context]
+    if missing:
+        raise ValueError(
+            f"context omits the traceability key(s) {missing}; a figure that cannot say "
+            "which protocol, which data snapshot and which command produced it cannot be "
+            "used to make a decision"
+        )
+
+    environment = Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        autoescape=select_autoescape(default_for_string=True, default=True),
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    try:
+        loaded = environment.get_template(template)
+    except TemplateNotFound as exc:
+        raise FileNotFoundError(
+            f"no template named '{template}' in {TEMPLATE_DIR.name}/; "
+            f"available: {sorted(path.name for path in TEMPLATE_DIR.glob('*.j2'))}"
+        ) from exc
+
+    html = loaded.render(**context)
+    external = _EXTERNAL.search(html)
+    if external:
+        raise ValueError(
+            f"the rendered page references something outside itself, at "
+            f"{html[max(0, external.start() - 40) : external.end() + 20]!r}; these reports "
+            "must open from disk with no network and no companion files"
+        )
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
+    return out

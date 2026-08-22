@@ -7,6 +7,7 @@ arrives with its own tests rather than as part of a large unreviewable change.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,7 @@ from strategylab.data.source import (
     validate_bars,
 )
 from strategylab.protocol import Protocol, ProtocolError, load_protocol
+from strategylab.report.surface import ReportError, render_surface
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH
 from strategylab.search.grid import expand_grid
 from strategylab.search.loop import SearchError, run_search, write_search_result
@@ -144,13 +146,19 @@ def status() -> None:
         console.print("       Downloads and caches price data. The one command using the network.")
         return
 
-    console.print("Next:  [bold]uv run strategylab search configs/ma_crossover.yaml[/bold]")
+    if searches == 0:
+        console.print("Next:  [bold]uv run strategylab search configs/ma_crossover.yaml[/bold]")
+        console.print("       Walks the grid over the in-sample window, writes every cell to")
+        console.print("       state/. Takes a few minutes.")
+        return
+
+    console.print("Next:  [bold]uv run strategylab report[/bold]")
+    console.print("       Draws each stored search as a self-contained page in reports/.")
+    console.print("       Recomputes nothing and reads no window.")
+    console.print()
     console.print(
-        "       Walks the grid over the in-sample window and writes the whole surface "
-        "to state/.\n"
-        "       Reports no noise ceiling - that component is not built - so nothing it "
-        "prints is\n"
-        "       yet evidence of an edge."
+        "[yellow]No noise ceiling exists[/yellow], so no result so far is evidence of an "
+        "edge.\nThat component is not built, and neither is the validator."
     )
 
 
@@ -420,8 +428,46 @@ def report() -> None:
     Reads results already on disk and re-renders them. Runs no backtest and
     touches no window, so a change to the report template costs nothing in
     protocol access.
+
+    Every search artifact in state/ is re-rendered, not just the newest: a
+    template change should improve every figure you have, and re-rendering one
+    of a set would leave the rest silently on an older design.
     """
-    raise NotImplementedError
+    artifacts = sorted(STATE_DIR.glob("search-*.json")) if STATE_DIR.exists() else []
+    if not artifacts:
+        err_console.print(f"[bold red]no search results in {STATE_DIR.as_posix()}/[/bold red]")
+        err_console.print(
+            "Run [bold]uv run strategylab search configs/ma_crossover.yaml[/bold] first."
+        )
+        raise typer.Exit(code=1)
+
+    console.print(f"Rendering {len(artifacts)} result(s) ...")
+    written: list[Path] = []
+    for artifact in artifacts:
+        try:
+            written.append(render_surface(artifact))
+        except (ReportError, ValueError) as exc:
+            # One unrenderable artifact must not cost the operator the rest of
+            # their reports, so this reports and carries on rather than exiting.
+            err_console.print(f"[yellow]skipped[/yellow] {artifact.name} - {exc}")
+        except json.JSONDecodeError as exc:
+            err_console.print(f"[yellow]skipped[/yellow] {artifact.name} - not JSON: {exc}")
+
+    if not written:
+        err_console.print("[bold red]nothing could be rendered[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print()
+    for path in written:
+        console.print(f"  [green]{path.as_posix()}[/green]")
+    console.print(
+        "\n[dim]Self-contained pages - no network, no companion files. Hover a cell for "
+        "its metrics.[/dim]"
+    )
+    console.print(
+        "[bold yellow]No noise ceiling is drawn[/bold yellow], because search/noise.py is "
+        "not built. Every figure says so on its face."
+    )
 
 
 @app.command()

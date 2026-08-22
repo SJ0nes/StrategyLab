@@ -1,0 +1,252 @@
+{#
+  The search surface.
+
+  One file, no external requests, no build step. The SVG is written inline and
+  the interaction is a few lines of plain JavaScript at the bottom. Every token
+  of styling is a custom property declared once, so every report this project
+  produces reads as the same instrument rather than a folder of one-off figures.
+#}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ strategy }} — search surface</title>
+<style>
+  :root {
+    --font: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --font-text: ui-sans-serif, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    --s1: 4px;  --s2: 8px;  --s3: 16px;  --s4: 24px;  --s5: 40px;
+    --ink: #16181d;
+    --ink-soft: #5c6270;
+    --rule: #d9dce3;
+    --page: #ffffff;
+    --panel: #f6f7f9;
+    --accent: {{ accent }};
+    --warn-bg: #fff6ea;
+    --warn-rule: #e0a558;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e7e9ee; --ink-soft: #99a0ae; --rule: #2c313b;
+      --page: #14161a; --panel: #1b1e24;
+      --warn-bg: #2a2113; --warn-rule: #8a6427;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: var(--s5) var(--s4);
+    background: var(--page); color: var(--ink);
+    font-family: var(--font-text); line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+  }
+  main { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 var(--s1); font-weight: 600; }
+  h2 { font-size: 0.95rem; margin: var(--s5) 0 var(--s2); font-weight: 600; }
+  .sub { color: var(--ink-soft); font-size: 0.85rem; margin: 0 0 var(--s4); }
+  .mono { font-family: var(--font); font-variant-numeric: tabular-nums; }
+
+  .facts { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4);
+           font-family: var(--font); font-size: 0.78rem; color: var(--ink-soft);
+           border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+           padding: var(--s2) 0; margin-bottom: var(--s4); }
+  .facts b { font-weight: 600; color: var(--ink); }
+
+  .banner { background: var(--warn-bg); border-left: 3px solid var(--warn-rule);
+            padding: var(--s3); margin: var(--s4) 0; font-size: 0.85rem; }
+  .banner b { display: block; margin-bottom: var(--s1); }
+
+  .panels { display: flex; flex-wrap: wrap; gap: var(--s4); align-items: flex-start; }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+           padding: var(--s2); margin: 0; }
+  svg { display: block; overflow: visible; }
+  .cellrect { stroke: var(--page); stroke-width: 1; cursor: crosshair; }
+  .cellrect:hover { stroke: var(--ink); stroke-width: 2; }
+  .winner { stroke: var(--accent); stroke-width: 3; fill: none; pointer-events: none; }
+  .rejected { stroke: var(--ink); stroke-width: 1.25; opacity: 0.55; pointer-events: none; }
+  .tick { font-family: var(--font); font-size: 10px; fill: var(--ink-soft); }
+  .axis { font-family: var(--font); font-size: 11px; fill: var(--ink); font-weight: 600; }
+
+  .readout { position: sticky; bottom: 0; margin-top: var(--s4);
+             background: var(--page); border-top: 2px solid var(--rule);
+             padding: var(--s3) 0 var(--s2); font-family: var(--font); font-size: 0.82rem;
+             min-height: 5.4rem; }
+  .readout .none { color: var(--ink-soft); }
+  .readout dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: var(--s1) var(--s3); margin: var(--s2) 0 0; }
+  .readout dt { color: var(--ink-soft); font-size: 0.72rem; }
+  .readout dd { margin: 0; }
+  .flag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.72rem;
+          border: 1px solid currentColor; margin-left: var(--s2); }
+
+  table { border-collapse: collapse; font-family: var(--font); font-size: 0.8rem; }
+  th, td { text-align: left; padding: var(--s1) var(--s3) var(--s1) 0; }
+  th { color: var(--ink-soft); font-weight: 600; }
+  td.num { text-align: right; padding-right: var(--s4); }
+  footer { margin-top: var(--s5); padding-top: var(--s3); border-top: 1px solid var(--rule);
+           color: var(--ink-soft); font-size: 0.75rem; font-family: var(--font);
+           word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>{{ strategy }} — search surface</h1>
+<p class="sub">
+  {{ grid_size }} cells, {{ across }} across{% if down %} × {{ down }} down{% endif %}
+  {%- if panels|length > 1 %}, one panel per facet{% endif %}.
+  Coloured by each cell's own {{ metric }}.
+</p>
+
+<div class="facts">
+  <span><b>protocol</b> v{{ protocol_version }}</span>
+  <span><b>window</b> {{ window.start }} → {{ window.end }} ({{ window.bars }} bars)</span>
+  <span><b>instrument</b> {{ instrument }}</span>
+  <span><b>snapshot</b> {{ fixture_hash[:16] }}</span>
+  <span><b>radius</b> {{ plateau_radius }}</span>
+  <span><b>drawdown ceiling</b> {{ max_drawdown_ceiling_pct }}%</span>
+</div>
+
+<div class="banner">
+  <b>No noise ceiling was computed, so nothing on this page is yet evidence of an edge.</b>
+  {{ noise_ceiling_note }}
+  The design standard for these reports requires the ceiling drawn on the same axis as the
+  result, so a winner sitting inside the noise distribution is visible rather than computed.
+  That band is absent here because there is nothing to draw, not because it was left out.
+</div>
+
+<h2>The surface</h2>
+<div class="panels">
+{% for panel in panels %}
+  {% set pindex = loop.index0 %}
+  <figure class="panel">
+    <svg width="{{ panel_width }}" height="{{ panel_height }}"
+         viewBox="0 0 {{ panel_width }} {{ panel_height }}" role="img"
+         aria-label="Heatmap of {{ metric }} for {{ panel.title }}">
+      <text class="axis" x="{{ pad }}" y="18">{{ panel.title }}</text>
+      <text class="axis" x="{{ pad }}" y="{{ pad - 26 }}">{{ across }} →</text>
+      {% for tick in panel.across_ticks %}
+      <text class="tick" x="{{ tick.x }}" y="{{ pad - 8 }}" text-anchor="middle">{{ tick.label }}</text>
+      {% endfor %}
+      {% for tick in panel.down_ticks %}
+      <text class="tick" x="{{ pad - 8 }}" y="{{ tick.y + 4 }}" text-anchor="end">{{ tick.label }}</text>
+      {% endfor %}
+      {% if down %}
+      <text class="axis" x="4" y="{{ pad - 26 }}">{{ down }} ↓</text>
+      {% endif %}
+      {% for c in panel.cells %}
+      <rect class="cellrect" x="{{ c.x }}" y="{{ c.y }}" width="{{ cell }}" height="{{ cell }}"
+            fill="{{ c.fill }}" data-cell="{{ loop.index0 }}" data-panel="{{ pindex }}"
+            tabindex="0"><title>{{ c.label }}</title></rect>
+      {% if c.failed %}
+      {# A failed cell is hatched as well as darkened, so it survives greyscale
+         and colour blindness. It must never read as "nothing here". #}
+      <path d="M{{ c.x }} {{ c.y + cell }} L{{ c.x + cell }} {{ c.y }}
+               M{{ c.x }} {{ c.y + cell / 2 }} L{{ c.x + cell / 2 }} {{ c.y }}
+               M{{ c.x + cell / 2 }} {{ c.y + cell }} L{{ c.x + cell }} {{ c.y + cell / 2 }}"
+            stroke="#9aa0ad" stroke-width="1.5" fill="none" pointer-events="none"/>
+      {% endif %}
+      {% if c.rejected %}
+      <circle class="rejected" cx="{{ c.x + cell - 9 }}" cy="{{ c.y + 9 }}" r="4" fill="none"/>
+      {% endif %}
+      {% if c.winner %}
+      <rect class="winner" x="{{ c.x + 2 }}" y="{{ c.y + 2 }}"
+            width="{{ cell - 4 }}" height="{{ cell - 4 }}"/>
+      {% endif %}
+      {% endfor %}
+    </svg>
+  </figure>
+{% endfor %}
+</div>
+
+<svg width="320" height="46" style="margin-top:var(--s4)" role="img"
+     aria-label="Colour scale from {{ '%.3f'|format(legend.low) }} to {{ '%.3f'|format(legend.high) }}">
+  <defs>
+    <linearGradient id="ramp" x1="0" x2="1" y1="0" y2="0">
+      {% for stop in legend.stops %}
+      <stop offset="{{ stop.offset }}%" stop-color="{{ stop.colour }}"/>
+      {% endfor %}
+    </linearGradient>
+  </defs>
+  <rect x="0" y="4" width="300" height="12" fill="url(#ramp)"/>
+  <text class="tick" x="0" y="32">{{ '%.3f'|format(legend.low) }}</text>
+  <text class="tick" x="300" y="32" text-anchor="end">{{ '%.3f'|format(legend.high) }}</text>
+  <text class="tick" x="150" y="32" text-anchor="middle">{{ metric }}</text>
+</svg>
+
+<div class="readout" id="readout" aria-live="polite">
+  <span class="none">Hover or focus a cell.</span>
+</div>
+
+<h2>Outcome</h2>
+{% if winner %}
+<p class="mono">
+  Candidate {{ winner.params|dictsort|map('join', '=')|join(', ') }} —
+  plateau {{ '%.3f'|format(winner.plateau_score) }} over {{ winner.neighbour_count }} cells,
+  own {{ metric }} {{ '%.3f'|format(winner[metric]) }},
+  drawdown {{ '%.2f'|format(winner.max_drawdown_pct) }}%
+  {%- if winner.degenerate %}<span class="flag">degenerate plateau</span>{% endif %}
+</p>
+{% else %}
+<p class="mono">No candidate survived. Every scoreable cell was rejected.</p>
+{% endif %}
+
+<table>
+  <tr><th>outcome</th><th>cells</th></tr>
+  <tr><td>failed to backtest</td><td class="num">{{ failed_cells }}</td></tr>
+  {% for entry in rejection_counts %}
+  <tr><td>{{ entry.reason }}</td><td class="num">{{ entry.count }}</td></tr>
+  {% endfor %}
+  <tr><td>grid</td><td class="num">{{ grid_size }}</td></tr>
+</table>
+
+<footer>
+  <div>{{ command }}</div>
+  <div>config {{ config }} · generated {{ generated_at }}</div>
+  <div>snapshot {{ fixture_hash }}</div>
+  <div>costs, fractions — spread {{ costs_frac.spread }} · slippage {{ costs_frac.slippage }}
+       · commission {{ costs_frac.commission }} · fx {{ costs_frac.fx_conversion }}</div>
+</footer>
+
+</main>
+<script id="surface-data" type="application/json">{{ panels|tojson }}</script>
+<script>
+(function () {
+  "use strict";
+  var panels = JSON.parse(document.getElementById("surface-data").textContent);
+  var readout = document.getElementById("readout");
+  var metric = {{ metric|tojson }};
+
+  function num(value, digits) {
+    return value === null || value === undefined ? "—" : value.toFixed(digits);
+  }
+
+  function show(cell) {
+    var rows = [
+      ["cell", cell.label],
+      [metric, cell.failed ? "did not run" : num(cell.value, 4)],
+      ["plateau score", num(cell.plateau_score, 4)],
+      ["neighbours", cell.neighbour_count],
+      ["drawdown %", num(cell.max_drawdown_pct, 2)],
+      ["trades", cell.trade_count],
+      ["traded", cell.traded ? "yes" : "no trades"],
+      ["outcome", cell.failed ? "failed" : (cell.rejected || (cell.winner ? "candidate" : "kept"))]
+    ];
+    var html = "<dl>";
+    for (var i = 0; i < rows.length; i++) {
+      html += "<dt>" + rows[i][0] + "</dt><dd>" + rows[i][1] + "</dd>";
+    }
+    readout.innerHTML = html + "</dl>";
+  }
+
+  function bind(event) {
+    var target = event.target;
+    if (!target || !target.dataset || target.dataset.cell === undefined) { return; }
+    show(panels[+target.dataset.panel].cells[+target.dataset.cell]);
+  }
+
+  document.addEventListener("mouseover", bind);
+  document.addEventListener("focusin", bind);
+}());
+</script>
+</body>
+</html>
