@@ -6,53 +6,56 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Ten modules have working bodies: `protocol.py`, `data/source.py`,
+Eleven modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
 `core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`,
-`search/graveyard.py`, and the `status` and `fetch` commands in `cli.py`. Eighteen `NotImplementedError` bodies remain,
+`search/graveyard.py`, `search/loop.py`, and the `status`, `fetch` and `search`
+commands in `cli.py`. Seventeen `NotImplementedError` bodies remain,
 across 7 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
 `tests/test_strategy_config.py`.
 
-**A strategy config can now be read, expanded and backtested — by a test, not by
-the product.**
+**A strategy config can now be read, expanded, backtested and scored — by the
+product, not only by a test.**
 `core/config.py` parses and validates `configs/ma_crossover.yaml` into a
 `StrategyDef`, and the "fixed vocabulary" the declarative-config rule depends on
 is now a closed set enforced at load time rather than an example in a docstring.
 `core.evaluate` now implements that vocabulary, so the loader is no longer the
-only thing that knows what `crosses_above` means. `search/grid.py` closes the
-seam between the two: `tests/test_grid.py` loads the committed config, expands
-its ninety cells and backtests every one of them over the recorded SPY fixture,
-so the claim that the loader and the engine agree is now exercised rather than
-merely intended. What still does not exist is a way for a *user* to do that —
-`cli.search` raises before reading its argument, so the only caller is a test.
-The vocabulary is also small — two indicators (`close`, `sma`) and three operators (`above`,
+only thing that knows what `crosses_above` means. `search/loop.py` joins the
+whole chain and `strategylab search` runs it.
+The vocabulary is still small — two indicators (`close`, `sma`) and three operators (`above`,
 `crosses_above`, `crosses_below`), which is what the one committed config uses
 and no more. `$placeholder` periods are still not resolved *into* a
 `StrategyDef`, and deliberately so: `expand_grid` produces the `params` mapping
 that `evaluate` looks each placeholder up in, which is what lets one parsed
 definition serve all ninety cells. A reader expecting a definition with numbers
-in it will not find one. `strategylab status` points at
-`uv run strategylab search configs/ma_crossover.yaml` once price data is cached;
-in a clean checkout, where `data/` is empty because it is gitignored, it points at
-`fetch` instead. Either way that config now parses and `search` is still a
-`NotImplementedError`.
+in it will not find one.
 
-**There are no backtest results, no search results, and no validation outcomes.**
-A backtester now exists — `run_backtest` steps `evaluate` bar by bar and charges
-`apply_costs` on every fill — and it has now been run over real recorded `SPY`
-bars, every cell of the committed grid, in `tests/test_grid.py`. That is a
-smaller claim than it sounds. Those bars are the 253-row fixture in
-`tests/fixtures/`, a single year (2010-01-04 to 2011-01-03) chosen as a test
-fixture and not as a research window; the run is a test asserting that the
-pieces fit, and it records no output. Nothing scores the cells against each
-other, nothing takes its window from `protocol.windows`, and `cli.search` still
-raises before reading its argument. There is still no search LOOP, though all
-four of its pieces now exist: grid expansion, plateau scoring, the degeneracy
-check and the graveyard. Nothing joins them, nothing computes a noise ceiling
-(a later component, still a stub), and there is no validator.
+**A search now runs, and no figure from one appears in this repository.**
+`strategylab search configs/ma_crossover.yaml` walks all ninety cells over
+2005-2018, scores the surface by neighbourhood median, rejects edge winners and
+drawdown breaches into the graveyard, and writes every cell to
+`state/search-<stamp>.json`. That is a real result and it is deliberately not
+quoted anywhere, here or in the README, for the reason this project exists to
+state: **no noise ceiling has been computed**, so nothing the search prints has
+been compared against what the same ninety cells achieve on surrogate series
+with no edge in them. The expected best of ninety draws from noise is well above
+zero. A Sharpe without that comparison is not a weak finding, it is not a
+finding. `search/noise.py` is still a stub, the artifact records
+`"noise_ceiling": null` explicitly, and the command says so on every run.
+
+`state/` is gitignored, so no search output is committed and none is
+reproducible from this repository alone — regenerating one needs a `fetch`
+against a vendor that revises history. What IS reproducible is the run against a
+given cached snapshot: the artifact records that snapshot's content hash.
+
+**There is still no validation outcome and no benchmark.** `validate/` is a
+stub, nothing has read the held-back window, and nothing anywhere computes
+buy-and-hold — so no search result can yet be compared against simply owning the
+index, which a long-only trend strategy on the S&P 500 must beat to be worth
+anything.
 
 **There are two decision-log shapes and the design says there should be one.**
 `docs/architecture.md` states the schema is defined once, in
@@ -73,15 +76,20 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-496 tests pass (`uv run pytest`). They cover the protocol loader, the data
+530 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, the backtest engine, grid expansion, plateau scoring and
-the graveyard — ten areas, one per test file.
+performance metrics, the backtest engine, grid expansion, plateau scoring,
+the graveyard and the search loop — eleven areas, one per test file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
-paragraph said it was. Three FINISHED things are untested: the `status` and
-`fetch` commands in `cli.py`, the venue interface in `execution/venue.py`, and
-`YFinanceSource`'s fetch path, which by policy no test may call. So is every type
+paragraph said it was. Three FINISHED things are untested: the `status`, `fetch`
+and `search` commands in `cli.py`, the venue interface in `execution/venue.py`,
+and `YFinanceSource`'s fetch path, which by policy no test may call. `search` is
+the one that has grown: it is now around a hundred and thirty lines of argument
+handling, error paths and output formatting, and every one of its failure
+branches — a missing config, an unparseable one, an uncached instrument, an
+unreadable snapshot — is unexercised. `run_search` beneath it is covered; the
+command wrapping it is not. So is every type
 definition the stub modules carry beside their `NotImplementedError` bodies —
 `DecisionRecord`'s sixteen fields, `RiskLimits`, `PortfolioState`, `FoldResult`,
 `ValidationResult`, the `Verdict` and `Outcome` enums, `T212Error`, and the
@@ -289,15 +297,21 @@ day is therefore unmodelled.
   behaviour in a way the backtester does not model.
 - **One strategy family, one config.** `configs/` holds a single moving-average
   crossover. Nothing has been compared across strategy types.
-- **Nothing produces a `trade_fingerprint`, so `is_degenerate` cannot be used
-  yet.** It compares trade SETS rather than trade counts, and reads a per-cell
-  fingerprint string from the results frame. `search/plateau.py` fixes only the
-  property that string must have — two cells share one exactly when they executed
-  the same trades — and no code anywhere builds one. The degeneracy check is
-  therefore built, tested against hand-made frames, and unusable until the search
-  loop decides what goes in that column. Two cases there need a deliberate
-  answer rather than a default: a cell that took no trades, and a cell whose
-  backtest raised.
+- **`is_degenerate` is now usable, and its fingerprint has one soft edge.**
+  `search/loop.py` builds the `trade_fingerprint` the check reads, and
+  [docs/decisions/0007](docs/decisions/0007-what-goes-in-a-trade-fingerprint.md)
+  records what goes in it and why the two cases `plateau.py` flagged get
+  opposite treatments: cells that took no trades share one value, because they
+  genuinely did the same nothing and a region of them *should* flag; cells whose
+  backtest raised each get a distinct value, because nothing ran and a region of
+  failures must not read as a region of agreement. The soft edge is that the
+  fingerprint hashes the executed FILLS rather than the trade dates, so two
+  cells that traded on different days whose opens are bit-identical floats, in
+  an otherwise identical sequence, would collide. Vanishingly unlikely on price
+  data, not impossible, and nothing detects it. A related trap: because it
+  hashes prices, a fingerprint is only comparable within one search — change the
+  cost model or the fill convention and every fingerprint in the grid changes.
+  Nothing stops someone comparing two runs' fingerprints.
 - **Plateau scoring cannot detect a missing parameter level.** It refuses a
   results frame with rows missing, because a hole makes cells two grid steps
   apart look adjacent. But drop EVERY row at one value of a parameter and what
@@ -369,18 +383,28 @@ half-day session, or a vendor quirk). This is deliberate — the alternative is
 silently repairing data — but it means the tool can decline to ingest history
 that is perfectly real.
 
-**The held-back window is cached in the same file as the in-sample window.**
+**The held-back window is cached in the same file as the in-sample window, and
+exactly one consumer is guarded.**
 `fetch` downloads 2005-01-01 through 2024-12-31 in one request and writes one
-parquet file. Nothing in the code partitions it, and nothing prevents a future
-component from slicing past 2018-12-31. The split is this project's central
-claim, and at present it is enforced by the absence of a consumer rather than by
-any guard.
+parquet file. Nothing partitions it, and the whole 5,033-bar frame is what
+`run_search` is handed. The split is this project's central claim, and it is now
+enforced for the search by `loop._in_sample_window`, which cuts the frame from
+`protocol.windows.in_sample` and from nothing else, with a test that corrupts
+every bar after the window's end and asserts no cell's result moves.
+
+That is one consumer, not a chokepoint. `_in_sample_window` is private to the
+search loop, so the next component that reads bars — the validator, a report, a
+live worker — gets nothing from it and could slice the cached frame itself
+exactly as before. Lifting that function somewhere both can reach is the right
+move when the second consumer arrives, and until then this guarantee protects
+one code path rather than the repository.
 
 **Nothing calls `increment_walk_forward_touches`.** The counter is implemented
 and tested, and no production code path invokes it, because the only thing that
-should — walk-forward validation — does not exist. The counter currently reads
-zero because nothing has ever read the held-back window, not because anything is
-enforcing that.
+should — walk-forward validation — does not exist. The counter reads zero
+because nothing has read the held-back window; for the search that is now
+enforced, and for everything else it remains true only because nothing else
+reads bars at all.
 
 **The fetch path itself has no test.** `YFinanceSource.fetch` and the
 vendor-frame normalisation behind it are the one part of the data layer that
@@ -427,14 +451,35 @@ spread, and slippage before any search runs, which is the important property —
 but it does not record where those three numbers came from, and the project's own
 cost-arithmetic standard asks that it should.
 
-**A stub command prints your home directory.** The five unbuilt CLI commands —
-`search`, `validate`, `report`, `run`, `diff` — raise `NotImplementedError`,
+**A full search takes about four minutes, and the noise ceiling multiplies
+that.** Measured: `time uv run strategylab search configs/ma_crossover.yaml`
+took 4m02s for ninety cells over 3,523 bars on the machine it was run on — the
+engine steps `evaluate` bar by bar in Python and re-derives the moving averages
+on every bar of every cell. That is tolerable for one search and it is a
+problem for the component that comes next: `noise_ceiling` reruns the ENTIRE
+grid once per surrogate series, so a hundred trials is on the order of seven
+hours as things stand. Whoever builds it will have to make the engine faster,
+cut the trial count and say what that costs the ceiling's precision, or accept
+an overnight run. None of those is free, and the choice should be recorded
+rather than made by whichever is easiest at the time.
+
+**A stub command prints your home directory.** The four unbuilt CLI commands —
+`validate`, `report`, `run`, `diff` — raise `NotImplementedError`,
 and the resulting traceback contains the absolute path of the file that raised
 it, which on most machines includes your username. Nothing is written anywhere
 and nothing leaves the machine, but if you paste such a traceback into a bug
 report or an issue, that path goes with it. `status` prints no ABSOLUTE paths
 for that reason — it names `configs/ma_crossover.yaml`, which is a repository
 path and carries nothing about the machine it ran on.
+
+`search` follows the same rule and extends it to a file rather than only to a
+terminal. It catches its own errors and prints a message instead of a traceback,
+prints only repository-relative paths, and reduces the config path to a relative
+one — falling back to the bare filename — before recording it in the artifact,
+because a search result is a file this project's documentation invites people to
+open. What it does NOT do is scrub anything else: if you pass a config from
+outside the repository the artifact records its filename, and a filename can
+carry information too.
 
 **The risk layer is not implemented.** `risk/limits.py` exists and carries its
 contracts, but both functions are stubs, there is no `configs/risk_limits.yaml`

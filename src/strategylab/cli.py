@@ -15,6 +15,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from strategylab.core.config import StrategyConfigError, load_strategy
 from strategylab.data.source import (
     DataQualityError,
     YFinanceSource,
@@ -24,9 +25,17 @@ from strategylab.data.source import (
     validate_bars,
 )
 from strategylab.protocol import Protocol, ProtocolError, load_protocol
+from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH
+from strategylab.search.grid import expand_grid
+from strategylab.search.loop import SearchError, run_search, write_search_result
 
 DATA_DIR = Path("data")
 STATE_DIR = Path("state")
+
+#: How many cells `search` prints. The whole surface goes to the result file;
+#: a ninety-row table in a terminal is unreadable and would bury the caveat
+#: underneath it, which is the one line of that output that must be read.
+TOP_CELLS_SHOWN = 10
 
 console = Console()
 err_console = Console(stderr=True)
@@ -136,7 +145,13 @@ def status() -> None:
         return
 
     console.print("Next:  [bold]uv run strategylab search configs/ma_crossover.yaml[/bold]")
-    console.print("       Not built yet - the search component is a later session.")
+    console.print(
+        "       Walks the grid over the in-sample window and writes the whole surface "
+        "to state/.\n"
+        "       Reports no noise ceiling - that component is not built - so nothing it "
+        "prints is\n"
+        "       yet evidence of an edge."
+    )
 
 
 @app.command()
@@ -211,6 +226,26 @@ def fetch(
     )
 
 
+def _repository_relative(path: Path) -> Path:
+    """Render a path so nothing machine-specific is recorded in a result file.
+
+    An absolute path on most machines contains the user's name, and a search
+    artifact is a file this project's own documentation invites a reader to
+    open. A path inside the working directory is written relative to it;
+    anything else is reduced to its filename.
+
+    Args:
+        path: The path as the user typed it.
+
+    Returns:
+        A relative path carrying nothing about the machine it ran on.
+    """
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        return Path(path.name)
+
+
 @app.command()
 def search(
     config: Annotated[
@@ -218,14 +253,138 @@ def search(
         typer.Argument(help="Strategy config to search, such as configs/ma_crossover.yaml."),
     ],
 ) -> None:
-    """Run the parameter grid over the in-sample window and write an HTML report.
+    """Run the parameter grid over the in-sample window and record the whole surface.
 
     Walks every combination in the config's search block, scores cells by
     neighbourhood median rather than by their own result, rejects winners
-    sitting on a grid boundary, flags degenerate plateaus, and reports the
-    noise ceiling alongside the winner. Never touches the walk-forward window.
+    sitting on a grid boundary or breaching the drawdown ceiling, and flags a
+    degenerate plateau. Writes every cell to state/search-<stamp>.json, appends
+    each rejection to the graveyard, and NEVER reads the walk-forward window.
+
+    Reports no noise ceiling and renders no HTML: both are later components, and
+    the command says so on every run rather than letting a bare Sharpe be read
+    as a finding.
     """
-    raise NotImplementedError
+    protocol = _load_or_exit()
+
+    if not config.is_file():
+        err_console.print(f"[bold red]no such config[/bold red] {config.as_posix()}")
+        raise typer.Exit(code=1)
+
+    try:
+        definition = load_strategy(config)
+    except StrategyConfigError as exc:
+        err_console.print(f"[bold red]config error[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    ticker = protocol.instruments.research
+    if not is_cached(ticker, DATA_DIR):
+        err_console.print(f"[bold red]{ticker} is not cached[/bold red]")
+        err_console.print("Run [bold]uv run strategylab fetch[/bold] first.")
+        raise typer.Exit(code=1)
+    try:
+        bars, entry = cache_read(ticker, DATA_DIR)
+    except DataQualityError as exc:
+        err_console.print(f"[bold red]the cached snapshot is unusable[/bold red] {exc}")
+        err_console.print("Re-download with [bold]uv run strategylab fetch --force[/bold].")
+        raise typer.Exit(code=1) from exc
+
+    cells = len(expand_grid(definition.search))
+    console.print(
+        f"Searching [bold]{definition.name}[/bold] - {cells} cells over "
+        f"{protocol.windows.in_sample.start} to {protocol.windows.in_sample.end} ..."
+    )
+
+    started = datetime.now(UTC)
+    try:
+        result = run_search(
+            definition,
+            bars,
+            protocol,
+            config_path=_repository_relative(config),
+            data_content_hash=entry.content_hash,
+        )
+    except SearchError as exc:
+        err_console.print(f"[bold red]search could not run[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    path = write_search_result(result, started)
+
+    summary = Table(show_header=False, box=None, pad_edge=False)
+    summary.add_column(style="dim", no_wrap=True)
+    summary.add_column()
+    summary.add_row(
+        "window", f"{result.window_start} to {result.window_end}, {result.bars_used} bars"
+    )
+    summary.add_row("snapshot", f"{result.instrument}, hash {result.data_content_hash[:12]}")
+    summary.add_row(
+        "grid",
+        f"{result.grid_size} cells"
+        + (f", [yellow]{result.failed_cells} failed[/yellow]" if result.failed_cells else ""),
+    )
+    console.print()
+    console.print(summary)
+
+    surface = Table(title="Best cells by plateau score", title_justify="left")
+    parameters = [name for name in definition.search]
+    for name in parameters:
+        surface.add_column(name, justify="right")
+    surface.add_column("sharpe", justify="right")
+    surface.add_column("drawdown %", justify="right")
+    surface.add_column("trades", justify="right")
+    surface.add_column("plateau", justify="right")
+    surface.add_column("neighbours", justify="right")
+    ranked = result.results.sort_values("plateau_score", ascending=False).head(TOP_CELLS_SHOWN)
+    for row in ranked.to_dict(orient="records"):
+        surface.add_row(
+            *[str(int(row[name])) for name in parameters],
+            f"{row['sharpe']:.3f}",
+            f"{row['max_drawdown_pct']:.2f}",
+            str(int(row["trade_count"])),
+            f"{row['plateau_score']:.3f}",
+            str(int(row["neighbour_count"])),
+        )
+    console.print()
+    console.print(surface)
+    if len(result.results) > TOP_CELLS_SHOWN:
+        console.print(
+            f"[dim]{len(result.results) - TOP_CELLS_SHOWN} further cells are in the "
+            f"result file. The shape of the whole surface is the output here, "
+            f"not this table.[/dim]"
+        )
+
+    console.print()
+    if result.winner is None:
+        console.print("[yellow]No candidate survived.[/yellow]")
+    else:
+        winner = result.winner
+        cell = ", ".join(f"{name}={winner.cell[name]}" for name in parameters)
+        console.print(f"[bold green]Candidate[/bold green]  {cell}")
+        console.print(
+            f"  plateau score {winner.plateau_score:.3f} over {winner.neighbour_count} "
+            f"cells, own Sharpe {winner.sharpe:.3f}, drawdown {winner.max_drawdown_pct:.2f}%"
+        )
+        if winner.degenerate:
+            console.print(
+                "  [yellow]degenerate plateau[/yellow] - its neighbours executed the same "
+                "trades, so the flat region is insensitivity, not robustness"
+            )
+
+    if result.rejections:
+        counts: dict[str, int] = {}
+        for rejection in result.rejections:
+            counts[rejection.reason] = counts.get(rejection.reason, 0) + 1
+        tally = ", ".join(f"{count} {reason}" for reason, count in sorted(counts.items()))
+        console.print(
+            f"\nRejected: {tally}. All of them are in {DEFAULT_GRAVEYARD_PATH.as_posix()}."
+        )
+
+    console.print(f"\n  result  {path.as_posix()}")
+    console.print(
+        "\n[bold yellow]No noise ceiling was computed[/bold yellow], because search/noise.py "
+        "is not built. The best of this many cells on data with no edge in it is well above "
+        "zero, so nothing above is yet evidence of anything. No HTML report is rendered "
+        "either; report/render.py is a later component."
+    )
 
 
 @app.command()

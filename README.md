@@ -19,44 +19,47 @@ which is the only place that answer is ever current.*
 
 ## Current state
 
-**No strategy has been backtested for a result, searched, or validated.** The
-backtester is written and now runs end to end from a config file — but only in a
-test, over a one-year fixture, reporting nothing. The search's four pieces are
-all built and nothing joins them into a search; the noise ceiling and the
-validator are not written at all.
+**A parameter search now runs end to end, and its output is not yet evidence of
+anything.** `strategylab search` walks all ninety cells of the committed config
+over 2005–2018, scores the surface by neighbourhood median, and records every
+cell. What it cannot do is tell you whether the winner is real, because the
+**noise ceiling is not built** — and until it is, the best of ninety
+combinations posting a positive Sharpe is the expected outcome on data with no
+edge in it. The validator is not built either. **No strategy has been
+validated, and no figure from a search appears in this README.**
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Noise ceiling |
+| Protocol loader and validator | **Noise ceiling** — the one that makes a result mean something |
 | Price data layer — validation, provenance, parquet cache | Walk-forward validation |
-| Cost model — hand-verified arithmetic | Decision logging, risk limits, venue adapters, HTML reports |
-| Strategy-config loader — closed schema, closed vocabulary | A `search` command a user can run |
-| Strategy evaluation (`core.evaluate`), with the lookahead test | |
+| Cost model — hand-verified arithmetic | Any benchmark — nothing computes buy-and-hold |
+| Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters |
+| Strategy evaluation (`core.evaluate`), with the lookahead test | HTML reports — `search` writes JSON |
 | Backtest engine and metrics, with the determinism test | |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | Plateau scoring, the edge check, the degeneracy check | |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
-| `status` and `fetch` commands *(untested)* | |
+| The search loop — grid → engine → scoring → graveyard, with the window test | |
+| `status`, `fetch` and `search` commands *(untested)* | |
 
-**496 tests pass** — verify with `uv run pytest`. They cover the protocol
+**530 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
-plateau scoring and the graveyard — ten areas, one per test file.
-The two CLI commands have no tests, and neither does the vendor fetch path,
+plateau scoring, the graveyard and the search loop — eleven areas, one per test
+file.
+The three CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 18 of them across 7
+docstring contract with a `raise NotImplementedError` body — 17 of them across 7
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
-**The two halves of the system now meet.** `load_strategy` → `expand_grid` →
-`run_backtest` runs end to end: `tests/test_grid.py` loads
-`configs/ma_crossover.yaml`, expands its ninety parameter cells, and backtests
-every one of them over the recorded SPY fixture with the real protocol costs.
-Until this commit the loader and the engine agreed on their shared vocabulary
-because both were written to the same list, not because anything exercised the
-seam. **No result is produced by that run and none is reported here** — it is a
-test asserting the pieces fit, over a one-year fixture, and nothing yet scores
-one cell against another.
+**The split now has a guard, not just an absence.** `fetch` caches 2005–2024 in
+one file and hands all of it to the search; the search cuts it down from
+`protocol.windows.in_sample` and from nothing else.
+`tests/test_search_loop.py` corrupts every bar after the window's end, passes
+the frame in intact, and asserts no cell's result moves. That protects one
+consumer — the next component that reads bars will need the same treatment, and
+`docs/architecture.md` says how.
 
 Both guarantees this project rests on now have tests.
 **Strategy evaluation cannot read past the current bar** — the lookahead
@@ -91,29 +94,30 @@ Full version, with every module marked built or stubbed, in
 
 ## Quickstart
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run against a fresh clone of `63e163e` with an empty `data/` cache:
-**496 passed**, and `status` reported `data  not cached`. The clone and the
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). The clone and the
 first `uv run` need the network to fetch dependencies; **the test suite itself
-makes no network call**, which is the property that matters and which that run
-verified with outbound sockets blocked.
+makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 496 tests, none touching the network
+uv run pytest                   # 530 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
 `status` reads the protocol and reports where the project is. It never changes
 anything, so it is safe to run at any time.
 
-A fourth command downloads price data. **It is the only command that touches the
+Two further commands do the work. `fetch` is **the only command that touches the
 network**, so unlike the three above it can fail for reasons outside this
-repository:
+repository. `search` needs `fetch` to have run:
 
 ```bash
-uv run strategylab fetch        # downloads and caches SPY, with provenance
+uv run strategylab fetch                              # caches SPY, with provenance
+uv run strategylab search configs/ma_crossover.yaml   # ~4 min; writes state/search-*.json
 ```
+
+`search` reads only 2005–2018, whatever the cache holds. It reports no noise
+ceiling, because that component is not built.
 
 Run every command from the repository root — paths in the protocol are relative
 to the working directory.
@@ -129,22 +133,27 @@ window is meant to increment a counter, because the split degrades with use and
 that degradation should be visible rather than forgotten. *The counter is built
 and tested but nothing calls it yet, because nothing reads that window yet.*
 
-**Plateaus over peaks.** *Built and tested; nothing calls it yet, because there
-is no search loop to call it.* The best single cell in a parameter grid is
-usually the luckiest one. Candidates are scored by the median of their parameter
+**Plateaus over peaks.** *Built, tested, and now applied to a decision rather
+than merely computed.* The best single cell in a parameter grid is usually the
+luckiest one. Candidates are scored by the median of their parameter
 neighbourhood; winners sitting on a grid boundary are rejected as walls rather
 than optima — measured against the highest value the grid actually reaches,
 which is not always the declared maximum; and flatness caused by parameters
 doing nothing is flagged rather than reported as robustness, by comparing trade
-sets rather than trade counts.
+sets rather than trade counts. What goes in that trade comparison is
+[docs/decisions/0007](docs/decisions/0007-what-goes-in-a-trade-fingerprint.md).
+`search` ranks by the neighbourhood median, refuses an edge winner and moves to
+the next-best cell, and writes every refusal to `state/graveyard.jsonl`.
 
-**The noise ceiling.** *Not yet implemented.* The expected maximum across 90
-draws from noise is well above zero, so the best of 90 parameter combinations
-(6 x 5 x 3, from the `search` block of `configs/ma_crossover.yaml`)
-will post a positive Sharpe on data with no *exploitable* structure in it. Every search therefore reruns its entire
-grid against surrogate series and reports the distribution of best-in-grid
-results. A winning Sharpe means nothing until compared against it.
-*Not yet implemented.*
+**The noise ceiling.** ***Not implemented, and it is the gap that matters.***
+The expected maximum across 90 draws from noise is well above zero, so the best
+of 90 parameter combinations (6 x 5 x 3, from the `search` block of
+`configs/ma_crossover.yaml`) will post a positive Sharpe on data with no
+*exploitable* structure in it. Every search is meant to rerun its entire grid
+against block-resampled surrogate series and report the distribution of
+best-in-grid results. Until it does, `search` prints a Sharpe with nothing to
+hold it against, records `"noise_ceiling": null` in its output, and says so on
+every run. **Read any number it prints as unbenchmarked.**
 
 **Three outcomes, not two.** *Not yet implemented.* Validation returns pass,
 fail, or `insufficient_data`. The third is not a soft failure — it means the strategy was
@@ -153,9 +162,26 @@ never refuted.
 
 ## Results
 
-**There are none.** No backtest has ever been run. When results exist, they will
-appear here with the command that produced them, the protocol version in force,
-and the fixture hash of the data they used.
+**A search has been run. No figure from it is quoted here, and that is a
+decision rather than an omission.**
+
+```bash
+uv run strategylab fetch                                  # caches SPY 2005-2024
+uv run strategylab search configs/ma_crossover.yaml       # ~4 minutes, 90 cells
+```
+
+That writes every cell to `state/search-<stamp>.json` with the protocol version,
+the in-sample window, the content hash of the snapshot it ran against, the
+winner, and every rejection. `state/` is gitignored, so the file is local to
+whoever ran it.
+
+Nothing from it appears in this section because a search result without a noise
+ceiling is not a weak finding — it is not a finding. The best of ninety
+parameter combinations posting a positive Sharpe is what noise does. Publishing
+that number and captioning it with a caveat is how a reader ends up remembering
+the number, so the number stays out until there is a ceiling beside it. When
+there is, it will appear here with the command that produced it, the protocol
+version in force, and the content hash of the data it used.
 
 ## Limitations
 

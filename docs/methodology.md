@@ -1,20 +1,24 @@
 # Methodology
 
-> **Status: this document describes the intended method. Almost none of it is
-> built, and the split it rests on is not enforced.**
+> **Status: the search half of this document is built and running. The half that
+> decides whether a search result means anything is not.**
 >
-> `load_protocol` refuses a protocol whose two windows overlap *as declared* —
-> that is the only thing any code does about the split. Nothing prevents a
-> component from reading bars outside the in-sample window, and `fetch` caches
-> both windows in a single file, so the separation currently holds because no
-> component exists that could violate it, not because anything guards it.
+> The split is now enforced for the one component that reads bars.
+> `load_protocol` refuses a protocol whose two windows overlap *as declared*,
+> and `search/loop.py` cuts its bars from `protocol.windows.in_sample` and from
+> nothing else, with a test that corrupts the future and asserts no result
+> moves. `fetch` still caches both windows in a single file, so the guarantee
+> protects that one code path rather than the repository: a second component
+> that slices the cached frame itself would break it exactly as before.
 >
-> Plateau scoring and the graveyard are now built and tested; the noise ceiling
-> and walk-forward validation are still stubs, and NOTHING CALLS ANY OF IT,
-> because there is no search loop. Every sentence below written in the present
-> tense describes a design rather than a running system. See
-> [architecture.md](architecture.md) for what exists and
-> [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
+> Grid expansion, plateau scoring, the edge check, the degeneracy check, the
+> graveyard and the loop that joins them are built, tested, and reachable as
+> `strategylab search`. **The noise ceiling and walk-forward validation are
+> still stubs**, so a search nominates a candidate and nothing yet establishes
+> that the candidate beats noise or survives unseen data. Sentences below about
+> the ceiling, validation, the report and live trading describe a design rather
+> than a running system. See [architecture.md](architecture.md) for what exists
+> and [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 
 Why this project is arranged the way it is. Every rule below exists because the
 obvious alternative produces a number that looks good and means nothing.

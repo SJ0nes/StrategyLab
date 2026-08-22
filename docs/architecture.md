@@ -43,6 +43,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
      │plateau.py BUILT│            │ t212.py    STUB │
      │ noise.py  STUB │            └────────┬────────┘
      │graveyard  BUILT│                     │
+     │ loop.py  BUILT │                     │
      └───────┬────────┘                     │
              │                              │
              ▼                              ▼
@@ -61,8 +62,8 @@ signature and a docstring contract but a `raise NotImplementedError` body.
                    └─────────────────┘
 ```
 
-`cli.py` sits across the top of all of it. **BUILT:** `status`, `fetch`.
-**STUB:** `search`, `validate`, `report`, `run`, `diff`.
+`cli.py` sits across the top of all of it. **BUILT:** `status`, `fetch`,
+`search`. **STUB:** `validate`, `report`, `run`, `diff`.
 
 ## What is built
 
@@ -79,10 +80,11 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `search/graveyard.py` | `record_rejection` — append-only JSON Lines, one object per line, closed reason vocabulary, non-finite metric written as JSON null so the file stays parseable by something other than Python. | 33 |
 | `search/plateau.py` | `plateau_score` — neighbourhood median, radius in grid steps, with `neighbour_count` so a thin neighbourhood is visible. `is_edge_winner` — against the highest value the grid REACHES, not the declared `max`. `is_degenerate` — over trade sets, not trade counts. Fixes the results-frame schema the search loop must emit. | 51 |
 | `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation that refuses a searched range for every reason the config loader does, bar three: two cross-block checks it cannot make from the `search` block alone, and a huge integer bound it accepts because it never converts to float. Produces the `params` mapping that makes a `StrategyDef` evaluable. `plateau.is_edge_winner` calls it to build an axis, so the two can never disagree about which values a range generates; **no CLI command reaches it.** | 74 |
+| `search/loop.py` | `run_search` — the caller everything above was waiting for. Cuts the bars to `protocol.windows.in_sample` and to nothing else, walks the grid, fingerprints each cell's trades, scores the surface, and takes the best surviving cell. `select_candidate` ranks by plateau score rather than by Sharpe, rejects an edge winner or a drawdown breach and moves on, and flags a degenerate plateau rather than rejecting it. `write_search_result` persists the whole surface. Carries the window test that can fail. | 34 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
-| `cli.py` | `status` and `fetch`. | none |
+| `cli.py` | `status`, `fetch` and `search`. | none |
 
-**496 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33. Run `uv run pytest` to see the
+**530 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 34. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -92,10 +94,10 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **18
+session builds against a fixed interface rather than inventing one. **17
 `NotImplementedError` bodies across 7 files:**
 
-`cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
+`cli.py` (4 — four of the seven commands) · `execution/t212.py` (6) ·
 `logging/decisions.py` (2) ·
 `risk/limits.py` (2) ·
 `search/noise.py` ·
@@ -118,21 +120,20 @@ these exist:
   its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **The report template directory** — `report/render.py` resolves templates
   against the package. There is no template directory and no package data.
-- **Any run of the engine outside a test.** `run_backtest` has now been driven
-  over recorded SPY bars — all ninety cells of the committed grid, in
-  `tests/test_grid.py` — so it is no longer true that it has only seen a
-  synthetic twelve-bar series. But the caller is a test, not the product:
-  `cli.search` still raises before reading its argument, and the bars are the
-  253-row fixture in `tests/fixtures/`, not a window taken from
-  `protocol.windows`. No result has been recorded or reported anywhere.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
-  yet be compared against simply owning the index.
+  yet be compared against simply owning the index. This is the largest remaining
+  hole in the search output: `search` now prints a Sharpe with no benchmark and
+  no noise ceiling beside it.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and
   tested and wired to nothing, because walk-forward validation does not exist.
-- **Any caller of `load_strategy` in the product.** `tests/test_grid.py` now
-  loads the committed config, expands its grid and backtests every cell, so the
-  loader is exercised. `cli.search` still takes a config path and raises
-  `NotImplementedError` before reading it, so nothing a user can run does this.
+  The counter reads zero because nothing has read the held-back window, and that
+  is now guaranteed by `loop._in_sample_window` rather than by there being no
+  reader at all.
+- **Any noise ceiling.** `search/noise.py` is a stub, so `search` reports
+  `"noise_ceiling": null` in every artifact it writes and says so on every run.
+  Nothing it prints is yet evidence of an edge.
+- **Any HTML.** `report/render.py` is a stub and there is no template directory,
+  so `search` writes JSON and nothing renders it.
 - **A `StrategyDef` with its placeholders substituted into it.** `expand_grid`
   is built, but it does not rewrite a definition: it produces the `params`
   mapping that `evaluate` resolves each `$placeholder` against, once per bar. So
@@ -144,14 +145,23 @@ these exist:
 
 **`fetch` caches the in-sample and the held-back windows in the same file.** It
 requests 2005-01-01 through 2024-12-31 in a single call and writes one parquet
-snapshot. Nothing partitions that frame, and nothing stops a future component
-slicing past 2018-12-31 out of it.
+snapshot. Nothing partitions that frame, and the whole of it — 5,033 bars — is
+handed to `run_search`.
 
 The in-sample/walk-forward split is this project's central methodological claim.
-Right now it is enforced by the absence of anything that could violate it — not
-by a guard. Any component that reads bars must take its window from
-`protocol.windows`, and the first one that does not silently destroys the
-guarantee the whole design exists to provide.
+Until the search loop existed it was enforced by the absence of anything that
+could violate it. It is now enforced by `loop._in_sample_window`, which cuts the
+frame down from `protocol.windows.in_sample` and from nothing else — not from
+the frame it was handed, not from an argument a caller could widen — and by
+`tests/test_search_loop.py`, which corrupts every bar after the window's end,
+passes the frame in intact, and asserts no cell's result moves.
+
+Be precise about the scope of that. It guards ONE consumer. The next component
+that reads bars gets no protection from it, and there is no shared chokepoint
+that would give it any: `_in_sample_window` is private to the search loop. A
+validator, a report or a live worker that slices the cached frame itself would
+destroy the guarantee exactly as before. The right fix when the second consumer
+arrives is to lift that function somewhere both can reach, not to copy it.
 
 ## Design rules the structure encodes
 
