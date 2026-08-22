@@ -192,12 +192,16 @@
 
 <table>
   <tr><th>outcome</th><th>cells</th></tr>
-  <tr><td>failed to backtest</td><td class="num">{{ failed_cells }}</td></tr>
-  {% for entry in rejection_counts %}
-  <tr><td>{{ entry.reason }}</td><td class="num">{{ entry.count }}</td></tr>
+  {% for entry in outcomes %}
+  <tr><td>{{ entry.label }}</td><td class="num">{{ entry.count }}</td></tr>
   {% endfor %}
-  <tr><td>grid</td><td class="num">{{ grid_size }}</td></tr>
+  <tr><td><b>grid</b></td><td class="num"><b>{{ grid_size }}</b></td></tr>
 </table>
+<p class="sub" style="margin-top:var(--s2)">
+  Every cell appears in exactly one row. "Not examined" is not a pass: selection
+  walks the cells best-first and stops at the first survivor, so anything ranked
+  below the candidate was never looked at.
+</p>
 
 <footer>
   <div>{{ command }}</div>
@@ -229,7 +233,9 @@
       ["drawdown %", num(cell.max_drawdown_pct, 2)],
       ["trades", cell.trade_count],
       ["traded", cell.traded ? "yes" : "no trades"],
-      ["outcome", cell.failed ? "failed" : (cell.rejected || (cell.winner ? "candidate" : "kept"))]
+      // "not examined" rather than "kept": selection stops at the first
+      // survivor, so a cell ranked below the candidate faced no checks at all.
+      ["outcome", cell.failed ? "failed" : (cell.rejected || (cell.winner ? "candidate" : "not examined"))]
     ];
     var html = "<dl>";
     for (var i = 0; i < rows.length; i++) {

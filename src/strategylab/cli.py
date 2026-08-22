@@ -268,9 +268,10 @@ def search(
     degenerate plateau. Writes every cell to state/search-<stamp>.json, appends
     each rejection to the graveyard, and NEVER reads the walk-forward window.
 
-    Reports no noise ceiling and renders no HTML: both are later components, and
-    the command says so on every run rather than letting a bare Sharpe be read
-    as a finding.
+    Reports no noise ceiling: that is a later component, and the command says so
+    on every run rather than letting a bare Sharpe be read as a finding. It
+    renders no HTML either - `strategylab report` does that, from the file this
+    writes, so a template change costs no recomputation.
     """
     protocol = _load_or_exit()
 
@@ -398,8 +399,7 @@ def search(
     console.print(
         "\n[bold yellow]No noise ceiling was computed[/bold yellow], because search/noise.py "
         "is not built. The best of this many cells on data with no edge in it is well above "
-        "zero, so nothing above is yet evidence of anything. No HTML report is rendered "
-        "either; report/render.py is a later component."
+        "zero, so nothing above is yet evidence of anything."
     )
 
 

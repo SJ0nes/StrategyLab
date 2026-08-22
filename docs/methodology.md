@@ -12,11 +12,12 @@
 > that slices the cached frame itself would break it exactly as before.
 >
 > Grid expansion, plateau scoring, the edge check, the degeneracy check, the
-> graveyard and the loop that joins them are built, tested, and reachable as
-> `strategylab search`. **The noise ceiling and walk-forward validation are
-> still stubs**, so a search nominates a candidate and nothing yet establishes
-> that the candidate beats noise or survives unseen data. Sentences below about
-> the ceiling, validation, the report and live trading describe a design rather
+> graveyard, the loop that joins them and the surface report are built, tested,
+> and reachable as `strategylab search` and `strategylab report`. **The noise
+> ceiling and walk-forward validation are still stubs**, so a search nominates a
+> candidate, a report draws the surface it came from, and nothing yet
+> establishes that the candidate beats noise or survives unseen data. Sentences
+> below about the ceiling, validation and live trading describe a design rather
 > than a running system. See [architecture.md](architecture.md) for what exists
 > and [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 

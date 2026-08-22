@@ -203,7 +203,7 @@ def build_context(artifact: dict[str, Any], command: str) -> dict[str, Any]:
         "panels": panels,
         "legend": _legend(low, high),
         "winner": artifact["winner"],
-        "rejection_counts": _tally(artifact["rejections"]),
+        "outcomes": _outcomes(artifact),
         "grid_size": artifact["grid_size"],
         "failed_cells": artifact["failed_cells"],
         "costs_frac": artifact["costs_frac"],
@@ -343,23 +343,45 @@ def _legend(low: float, high: float) -> dict[str, Any]:
     }
 
 
-def _tally(rejections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Count rejections by reason, most common first.
+def _outcomes(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    """Partition the grid by what became of each cell.
+
+    A PARTITION, SUMMING TO THE GRID, and that is the whole point. An earlier
+    version listed ``failed_cells`` and then every rejection reason beneath it -
+    but a failed cell IS a rejection, recorded under ``backtest_failed``, so it
+    appeared twice in a table that ends with the grid total and therefore reads
+    as a partition. A reader adding the rows got more cells than the search ran.
+
+    "Not examined" is the row that makes it add up, and it is honest rather than
+    residual: :func:`~strategylab.search.loop.select_candidate` walks the ranked
+    cells and STOPS at the first survivor, so every cell below the winner was
+    never looked at. Calling those "kept" would say they passed checks they
+    never faced.
 
     Args:
-        rejections: The artifact's rejection list.
+        artifact: The parsed search artifact.
 
     Returns:
-        One entry per reason present, each with its count, ordered by count
-        descending then reason ascending so the order is deterministic.
+        One entry per outcome, each with a ``label`` and a ``count``, ordered
+        failures first, then rejections by count descending and reason
+        ascending, then the candidate, then whatever was never reached. Every
+        cell of the grid appears in exactly one row.
     """
     counts: dict[str, int] = {}
-    for rejection in rejections:
+    for rejection in artifact["rejections"]:
         counts[rejection["reason"]] = counts.get(rejection["reason"], 0) + 1
-    return [
-        {"reason": reason, "count": count}
+
+    failed = counts.pop("backtest_failed", 0)
+    rows = [{"label": "failed to backtest", "count": failed}]
+    rows += [
+        {"label": f"rejected: {reason}", "count": count}
         for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
+    chosen = 1 if artifact["winner"] else 0
+    rows.append({"label": "candidate", "count": chosen})
+    accounted = failed + sum(counts.values()) + chosen
+    rows.append({"label": "not examined", "count": artifact["grid_size"] - accounted})
+    return [row for row in rows if row["count"]]
 
 
 def render_surface(

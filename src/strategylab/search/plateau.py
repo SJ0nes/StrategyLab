@@ -5,9 +5,11 @@ worth trading is surrounded by other settings that also work, because that is
 what it means for an edge to be insensitive to a number nobody can know
 precisely in advance.
 
-THE SHAPE OF A RESULTS FRAME IS FIXED HERE, because nothing produces one yet.
-``cli.search`` is a stub, so this module defines the interface its loop will have
-to meet rather than describing one that exists. A results frame carries:
+THE SHAPE OF A RESULTS FRAME IS FIXED HERE. It was written before anything
+produced one, to define the interface the search loop would have to meet;
+:mod:`strategylab.search.loop` now produces exactly this shape and
+``strategylab search`` runs it, so what follows describes a frame that exists
+rather than one that is intended. A results frame carries:
 
 - one column per searched parameter, named as the config's ``search`` block names
   it, holding that cell's value in bars;

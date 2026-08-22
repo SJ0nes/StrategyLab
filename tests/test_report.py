@@ -92,22 +92,67 @@ def test_a_midpoint_between_two_stops_is_their_average() -> None:
     assert sample(halfway) == "#461466"
 
 
-def test_the_ramp_rises_monotonically_in_lightness() -> None:
+def _luma(colour: str) -> float:
+    """Approximate luminance of a `#rrggbb` colour, ITU-R BT.601 coefficients.
+
+    The weights are 0.299, 0.587, 0.114 and sum to exactly 1, so the result is
+    on the same 0-255 scale as a channel.
+    """
+    red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
+    return 0.299 * red + 0.587 * green + 0.114 * blue
+
+
+def test_the_declared_stops_rise_strictly_in_lightness() -> None:
+    # The exact property, on the exact values: no rounding is involved in the
+    # stops themselves, so this admits no tolerance at all. It is what makes
+    # the interpolated ramp monotone in the first place.
+    lumas = [_luma("#" + "".join(f"{c:02x}" for c in stop)) for stop in VIRIDIS]
+    assert all(later > earlier for earlier, later in zip(lumas, lumas[1:], strict=False))
+
+
+def test_the_interpolated_ramp_rises_monotonically_in_lightness() -> None:
     # The property that makes it safe for this figure: no manufactured edges.
-    # Approximate luminance, ITU-R BT.601 coefficients.
-    def luma(colour: str) -> float:
-        red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
-        return 0.299 * red + 0.587 * green + 0.114 * blue
+    #
+    # THE TOLERANCE IS DERIVED, not picked. Each channel is rounded to an
+    # integer, so a sampled colour sits within 0.5 of its true interpolated
+    # value per channel; the BT.601 weights sum to 1, so luma is within 0.5 of
+    # true. Two adjacent samples can therefore show a dip of up to 1.0 purely
+    # from rounding, and asserting anything tighter would be asserting that the
+    # rounding happened to be kind. An earlier version used 1e-9, which passed
+    # only by luck of this particular sampling.
+    rounding_slack = 1.0
+    steps = [_luma(sample(index / 40)) for index in range(41)]
+    assert all(
+        later >= earlier - rounding_slack for earlier, later in zip(steps, steps[1:], strict=False)
+    )
+    # And over the whole ramp the rise must be unmistakable, not merely
+    # non-decreasing within slack.
+    assert steps[-1] - steps[0] > 100.0
 
-    steps = [luma(sample(index / 40)) for index in range(41)]
-    assert all(later >= earlier - 1e-9 for earlier, later in zip(steps, steps[1:], strict=False))
 
-
-@pytest.mark.parametrize("position", [-0.5, 1.5, -1e9, 1e9])
-def test_a_position_outside_the_range_is_clamped(position: float) -> None:
+@pytest.mark.parametrize(
+    ("position", "end"),
+    [(-0.5, 0.0), (-1e9, 0.0), (1.5, 1.0), (1e9, 1.0)],
+)
+def test_a_position_outside_the_range_is_clamped_to_the_near_end(
+    position: float, end: float
+) -> None:
     # A caller normalising against a min and max can land a hair outside through
     # floating point, and that is not worth an exception.
-    assert sample(position) in {sample(0.0), sample(1.0)}
+    #
+    # Asserted DIRECTIONALLY, AND AGAINST THE STOPS RATHER THAN AGAINST
+    # `sample` ITSELF. Two earlier versions were too weak, and the second is the
+    # instructive one: `sample(position) == sample(end)` puts both sides through
+    # the same code, so an implementation that clamped the wrong way round
+    # inverted both and still compared equal. Mutation showed it. The expected
+    # colour is now built straight from `VIRIDIS`, which the clamp cannot touch.
+    #
+    # It matters because a ramp with its ends swapped paints the worst cell as
+    # the best, and this figure exists to be read at a glance.
+    expected = VIRIDIS[0] if end == 0.0 else VIRIDIS[-1]
+    opposite = VIRIDIS[-1] if end == 0.0 else VIRIDIS[0]
+    assert sample(position) == "#" + "".join(f"{channel:02x}" for channel in expected)
+    assert sample(position) != "#" + "".join(f"{channel:02x}" for channel in opposite)
 
 
 def test_a_nan_position_is_refused_rather_than_coloured() -> None:
@@ -389,10 +434,37 @@ def test_the_winner_and_the_rejections_are_marked() -> None:
         "edge_winner",
         "drawdown_ceiling",
     }
-    assert context["rejection_counts"] == [
-        {"reason": "drawdown_ceiling", "count": 1},
-        {"reason": "edge_winner", "count": 1},
+    # The outcome tally is a PARTITION of the grid: six cells, two rejected,
+    # one chosen, three never reached by selection.
+    assert context["outcomes"] == [
+        {"label": "rejected: drawdown_ceiling", "count": 1},
+        {"label": "rejected: edge_winner", "count": 1},
+        {"label": "candidate", "count": 1},
+        {"label": "not examined", "count": 3},
     ]
+    assert sum(row["count"] for row in context["outcomes"]) == context["grid_size"]
+
+
+def test_the_outcome_tally_does_not_count_a_failed_cell_twice() -> None:
+    # A failed cell IS a rejection, recorded under `backtest_failed`. Listing
+    # `failed_cells` separately AND leaving that reason in the rejection tally
+    # put the same cell in two rows of a table that ends with the grid total,
+    # so a reader summing it got more cells than the search ran.
+    cells = [_cell({"a": 1, "b": 1}, 1.0), _cell({"a": 2, "b": 1}, None)]
+    artifact = _artifact(
+        cells,
+        rejections=[
+            {"params": {"a": 2, "b": 1}, "reason": "backtest_failed", "detail": "d"},
+            {"params": {"a": 1, "b": 1}, "reason": "edge_winner", "detail": "d"},
+        ],
+    )
+    context = build_context(artifact, "cmd")
+
+    assert context["outcomes"] == [
+        {"label": "failed to backtest", "count": 1},
+        {"label": "rejected: edge_winner", "count": 1},
+    ]
+    assert sum(row["count"] for row in context["outcomes"]) == context["grid_size"] == 2
 
 
 def test_a_one_parameter_grid_draws_as_a_single_row() -> None:
@@ -407,6 +479,15 @@ def test_a_one_parameter_grid_draws_as_a_single_row() -> None:
 def test_an_artifact_with_no_cells_is_refused() -> None:
     with pytest.raises(ReportError, match="no cells"):
         build_context(_artifact([]), "cmd")
+
+
+def test_a_grid_at_exactly_the_panel_cap_is_accepted() -> None:
+    # The boundary from the accepting side. Tested only from the rejecting side,
+    # an off-by-one in the cap would refuse a grid it was meant to draw and
+    # nothing would notice.
+    cells = [_cell({"a": 1, "b": 1, "c": c}, 1.0) for c in range(MAX_PANELS)]
+    context = build_context(_artifact(cells), "cmd")
+    assert len(context["panels"]) == MAX_PANELS
 
 
 def test_a_grid_facetting_into_too_many_panels_is_refused() -> None:

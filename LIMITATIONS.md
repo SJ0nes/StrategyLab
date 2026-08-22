@@ -77,7 +77,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-612 tests pass (`uv run pytest`). They cover the protocol loader, the data
+615 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop and the reports — twelve areas, one per test
@@ -580,8 +580,8 @@ cut the trial count and say what that costs the ceiling's precision, or accept
 an overnight run. None of those is free, and the choice should be recorded
 rather than made by whichever is easiest at the time.
 
-**A stub command prints your home directory.** The four unbuilt CLI commands —
-`validate`, `report`, `run`, `diff` — raise `NotImplementedError`,
+**A stub command prints your home directory.** The three unbuilt CLI commands —
+`validate`, `run`, `diff` — raise `NotImplementedError`,
 and the resulting traceback contains the absolute path of the file that raised
 it, which on most machines includes your username. Nothing is written anywhere
 and nothing leaves the machine, but if you paste such a traceback into a bug

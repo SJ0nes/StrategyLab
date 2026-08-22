@@ -43,7 +43,7 @@ validated, and no figure from a search appears in this README.**
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | `status`, `fetch`, `search` and `report` commands *(untested)* | |
 
-**612 tests pass** — verify with `uv run pytest`. They cover the protocol
+**615 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop and the reports — twelve areas,
@@ -103,16 +103,16 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 612 tests, none touching the network
+uv run pytest                   # 615 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
 `status` reads the protocol and reports where the project is. It never changes
 anything, so it is safe to run at any time.
 
-Two further commands do the work. `fetch` is **the only command that touches the
-network**, so unlike the three above it can fail for reasons outside this
-repository. `search` needs `fetch` to have run:
+Three further commands do the work. `fetch` is **the only command that touches
+the network**, so unlike the others it can fail for reasons outside this
+repository. `search` needs `fetch` to have run, and `report` needs `search`:
 
 ```bash
 uv run strategylab fetch                              # caches SPY, with provenance
