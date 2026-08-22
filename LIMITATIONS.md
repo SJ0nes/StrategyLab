@@ -76,7 +76,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-565 tests pass (`uv run pytest`). They cover the protocol loader, the data
+568 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard and the search loop — eleven areas, one per test file.

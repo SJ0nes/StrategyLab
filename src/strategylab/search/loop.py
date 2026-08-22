@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 from strategylab.backtest.costs import CostModel, Fill
 from strategylab.backtest.engine import run_backtest
@@ -168,13 +169,15 @@ class SearchError(Exception):
     a ``NaN`` metric and a graveyard entry - whereas this means the search
     produced no surface at all.
 
-    Raised from two places, and both are needed. :func:`_check_inputs` raises
-    before the first cell runs, naming the fault precisely. :func:`run_search`
-    raises after the loop when EVERY cell failed, which catches the causes
-    ``_check_inputs`` does not know about - and, unlike a list of checks, cannot
-    fall behind the engine. Without the second, a fault in the definition or the
-    data returns ninety ordinary-looking failures and reads as a research
-    outcome.
+    Raised from THREE places, and each covers what the others cannot.
+    :func:`_check_inputs` refuses a bad definition or an unslicable frame before
+    the first cell runs. :func:`_check_window` refuses a window whose values the
+    engine cannot use, and :func:`_in_sample_window` a frame with no bar inside
+    the window at all. :func:`run_search` raises after the loop when EVERY cell
+    failed, which catches the causes the checks do not know about and, unlike a
+    list of checks, cannot fall behind the engine. Without that last one, a
+    fault in the definition or the data returns ninety ordinary-looking failures
+    and reads as a research outcome.
     """
 
 
@@ -415,8 +418,9 @@ def _check_inputs(
     :func:`~strategylab.core.strategy.evaluate` and
     :func:`~strategylab.backtest.costs.apply_costs` rather than from
     :func:`~strategylab.backtest.engine.run_backtest`'s own frame validation.
-    Mirroring six more of the engine's internal checks here would have produced
-    the same drift one layer deeper.
+    All six are checked now, here or in :func:`_check_window` - but that is a
+    list catching up with one audit, not a guarantee, and the next such cause
+    will be absent from it too. The backstop is what does not go stale.
 
     The guarantee is structural and lives in :func:`run_search`: if EVERY cell
     fails, there is no surface, and that is a :class:`SearchError` whatever
@@ -518,6 +522,17 @@ def _check_inputs(
             unknown_operators.add(condition.operator)
         for side in (condition.left, condition.right):
             if not isinstance(side, IndicatorRef):
+                # `condition.right` may be a bare float literal. A non-finite
+                # one is not caught anywhere below - it reaches `evaluate`,
+                # which refuses it only on the cells that actually get that far,
+                # so it fails SOME cells and not all. Same shape as a bad price,
+                # and it would otherwise slip through both this gate and the
+                # every-cell-failed backstop.
+                if isinstance(side, float) and not math.isfinite(side):
+                    raise SearchError(
+                        f"strategy '{definition.name}' compares against the non-finite "
+                        f"literal {side}; no comparison against it is meaningful"
+                    )
                 continue
             if side.indicator not in INDICATORS:
                 unknown_indicators.add(side.indicator)
@@ -657,14 +672,23 @@ def _check_window(window: pd.DataFrame) -> None:
             "the in-sample window carries duplicate timestamps; the bar order is ambiguous"
         )
 
-    prices = ["open", "high", "low", "close"]
+    # ONLY THE COLUMNS ANYTHING ACTUALLY READS. The engine takes `open` (the
+    # fill price) and `close` (the mark and every indicator's input);
+    # `high` and `low` are required to be PRESENT, because a bar without them is
+    # not an OHLCV bar, but nothing downstream ever reads their values. Checking
+    # them here would refuse a search over data that would have run perfectly -
+    # the same over-strictness this project already documents in its ingest
+    # gate, and there is no reason to repeat it in a second place.
+    prices = ["open", "close"]
+    for name in prices:
+        column = window[name]
+        if is_bool_dtype(column) or not is_numeric_dtype(column):
+            raise SearchError(
+                f"the in-sample window's '{name}' column has dtype {column.dtype}, which is "
+                "not a numeric price; the engine converts it to floats and would fail on "
+                "whichever cells reach that bar"
+            )
     values = window[prices]
-    if not bool(values.map(lambda value: isinstance(value, (int, float))).all().all()):
-        raise SearchError(
-            f"the in-sample window has a non-numeric value in one of {prices}; the engine "
-            "converts these columns to floats and would fail on whichever cells reach "
-            "that bar"
-        )
     numeric = values.astype("float64")
     # `math.isfinite` rather than `notna`, because an infinity is neither NaN
     # nor caught by `> 0` - `inf > 0` is true. A test for this passed against
@@ -974,10 +998,13 @@ def run_search(
         every rejection made.
 
     Raises:
-        SearchError: Raised from two places. :func:`_check_inputs` refuses a bad
-            input BEFORE any cell runs - see its docstring for the list. This
-            function raises again AFTER the loop if every cell failed, which is
-            the guarantee proper: it catches the causes ``_check_inputs`` does
+        SearchError: Raised from three places. :func:`_check_inputs` refuses a
+            bad definition or an unslicable frame BEFORE any cell runs, and
+            :func:`_check_window` refuses a window whose values the engine
+            cannot use - see their docstrings for the lists.
+            :func:`_in_sample_window` refuses a frame with no bar in the window.
+            This function raises again AFTER the loop if every cell failed,
+            which is the guarantee proper: it catches the causes the checks do
             not know about, at the cost of a less specific message.
         ValueError: Propagated unchanged from
             :func:`~strategylab.search.grid.expand_grid` for a malformed search

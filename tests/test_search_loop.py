@@ -664,11 +664,56 @@ def test_a_bad_price_anywhere_in_the_window_is_refused(
     _bad_input_is_refused(bars, tmp_path, "non-finite or non-positive price")
 
 
+def test_a_non_finite_literal_on_the_right_of_a_condition_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `condition.right` may be a bare float rather than an IndicatorRef, and the
+    # arity walk skips those. A non-finite literal reaches `evaluate` and fails
+    # only the cells that get that far - the same most-but-not-all shape the
+    # price and position-size checks exist for.
+    entry = (Condition(IndicatorRef("close"), "above", float("nan")),)
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "non-finite literal", definition=_definition(entry=entry)
+    )
+
+
+@pytest.mark.parametrize("column", ["high", "low"])
+def test_a_bad_value_in_a_column_nothing_reads_does_not_block_the_search(
+    fixture_bars: pd.DataFrame, tmp_path: Path, column: str
+) -> None:
+    # The engine reads `open` (the fill price) and `close` (the mark and every
+    # indicator's input). `high` and `low` must be PRESENT - a bar without them
+    # is not an OHLCV bar - but nothing downstream reads their values, so
+    # refusing a search over them would decline work that would have run
+    # perfectly. That over-strictness is a documented complaint about this
+    # project's ingest gate and there is no reason to repeat it here.
+    bars = fixture_bars.copy()
+    bars.loc[bars.index[10], column] = float("nan")
+
+    result = run_search(
+        _small_strategy(),
+        bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    clean = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "clean.jsonl",
+    )
+    pd.testing.assert_frame_equal(result.results, clean.results)
+
+
 def test_a_non_numeric_price_column_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
     bars = fixture_bars.copy()
     bars["close"] = bars["close"].astype(object)
     bars.loc[bars.index[10], "close"] = "not-a-price"
-    _bad_input_is_refused(bars, tmp_path, "non-numeric value")
+    _bad_input_is_refused(bars, tmp_path, "not a numeric price")
 
 
 def test_an_absolute_config_path_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
