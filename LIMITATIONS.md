@@ -76,7 +76,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-550 tests pass (`uv run pytest`). They cover the protocol loader, the data
+561 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard and the search loop — eleven areas, one per test file.
@@ -497,12 +497,30 @@ first failure's own message so the fault is named. The graveyard is written once
 at the end, so a run that produces no result records nothing.
 `loop._check_inputs` remains, for the diagnosis rather than the guarantee.
 
-Its two kinds of check rot differently, which is the honest caveat here. The
-frame checks mirror the engine's private validation and CAN fall behind it —
-when they do, the structural guarantee still fires and only the error message
-degrades. The definition checks read the config vocabulary, the same source the
-engine's own vocabulary must match, so they cannot drift from the engine without
-the engine having already drifted from the loader.
+**The structural guarantee has a hole, and it is the shape of fault it cannot
+see.** "Every cell failed" catches a uniformly fatal problem. A fault that fails
+MOST cells and not all slips straight through it, arriving as a scattering of
+failed cells across the surface — which is indistinguishable from a legitimate
+result where some parameter combinations simply could not warm up. Three such
+faults are known and now checked up front: a non-positive or non-finite price
+(fails only the cells that read that bar), a missing or out-of-range
+`fixed.position_size_pct` (fails only the cells that reach an entry), and an
+indicator whose arity is wrong (which escaped as an `AssertionError`, a type the
+contract did not admit at all, and under `python -O` would have silently used a
+nonsense rolling window). What is NOT covered is any future fault of the same
+shape that nothing anticipates. The backstop cannot see it and the input gate
+only looks for what it has been told to look for.
+
+The two kinds of check in that gate rot differently. The frame checks mirror the
+engine's private validation and CAN fall behind it — when they do, the
+structural guarantee still fires and only the error message degrades. The
+definition checks read the config vocabulary. An earlier version of this
+paragraph said they therefore "cannot drift from the engine without the engine
+having already drifted from the loader", which overstates it: what holds is that
+a NAME-level divergence between check and engine implies a name-level divergence
+between loader and engine — something nothing in this repository detects and no
+test covers. It does not extend beyond names, which is exactly why arity and
+position size needed their own checks rather than following from the vocabulary.
 
 **A full search takes about four minutes, and the noise ceiling multiplies
 that.** Measured: `time uv run strategylab search configs/ma_crossover.yaml`

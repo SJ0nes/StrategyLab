@@ -105,6 +105,16 @@ SEARCH_SCHEMA_VERSION = 2
 #: here to report how many searches have been run.
 DEFAULT_RESULTS_DIR = Path("state")
 
+#: The ``fixed`` key naming position size, checked before a search starts.
+#:
+#: A DUPLICATED STRING, and the alternative was worse. The name is owned by
+#: :mod:`strategylab.core.strategy`, which keeps it private, and reaching into
+#: another module's privates to avoid a literal trades one coupling for a worse
+#: one. If the two ever disagree this check stops finding anything and the fault
+#: it guards reappears as a scattering of failed cells - so it is named here
+#: rather than left as a bare literal inside the function.
+_SIZE_PARAM = "position_size_pct"
+
 #: Opening account equity for every cell, in account currency units.
 #:
 #: A reporting choice, not a protocol one, and deliberately not in
@@ -421,9 +431,27 @@ def _check_inputs(
       the message degrades.
     - The definition checks read the CONFIG vocabulary
       (:data:`~strategylab.core.config.INDICATORS`,
-      :data:`~strategylab.core.config.OPERATORS`), which is the same source the
-      engine's own vocabulary is required to match, so they cannot drift from
-      the engine without the engine already having drifted from the loader.
+      :data:`~strategylab.core.config.OPERATORS`). An earlier version of this
+      paragraph said they therefore "cannot drift from the engine without the
+      engine already having drifted from the loader", which overstates it. What
+      holds is narrower: a NAME-level divergence between this check and the
+      engine implies a name-level divergence between the loader and the engine,
+      which nothing in this repository detects and no test covers. It does not
+      extend beyond names, which is why indicator ARITY and
+      ``fixed.position_size_pct`` are checked explicitly here rather than
+      assumed to follow from the vocabulary.
+
+    THE STRUCTURAL GUARANTEE HAS A HOLE THIS FUNCTION IS FILLING, and it is
+    worth naming because it is the reason several of these checks exist at all.
+    "Every cell failed" catches a fault that is uniformly fatal. A fault that
+    fails MOST cells and not all slips through it: a bad price fails only the
+    cells that read that bar, and a missing ``position_size_pct`` fails only the
+    cells that reach an entry. Those arrive as a scattering of failed cells
+    across the surface, which looks exactly like a legitimate result. The value
+    and size checks below exist for that class specifically. What remains
+    uncovered is any future fault of the same shape that nothing here
+    anticipates - the structural check cannot see it, and this function only
+    sees what it has been told to look for.
 
     Args:
         definition: The parsed strategy, checked for a searchable ``search``
@@ -479,15 +507,32 @@ def _check_inputs(
     referenced: set[str] = set()
     unknown_indicators: set[str] = set()
     unknown_operators: set[str] = set()
+    wrong_arity: list[str] = []
     for condition in (*definition.entry, *definition.exit):
         if condition.operator not in OPERATORS:
             unknown_operators.add(condition.operator)
         for side in (condition.left, condition.right):
-            if isinstance(side, IndicatorRef):
-                if side.indicator not in INDICATORS:
-                    unknown_indicators.add(side.indicator)
-                if side.period_param is not None:
-                    referenced.add(side.period_param)
+            if not isinstance(side, IndicatorRef):
+                continue
+            if side.indicator not in INDICATORS:
+                unknown_indicators.add(side.indicator)
+                continue
+            # INDICATORS maps a name to its ARITY - whether it takes a lookback.
+            # `IndicatorRef` alone cannot enforce this: it rejects a reference
+            # carrying BOTH a period and a placeholder and permits one carrying
+            # neither. `sma` with neither reaches an `assert period is not None`
+            # in the engine, which is an AssertionError rather than a
+            # ValueError, so it is not caught as a failed cell and escapes
+            # `run_search` as a type its contract does not admit - and under
+            # `python -O` the assert vanishes and a nonsense rolling window is
+            # used instead.
+            has_period = side.period is not None or side.period_param is not None
+            if INDICATORS[side.indicator] and not has_period:
+                wrong_arity.append(f"'{side.indicator}' needs a period and has none")
+            elif not INDICATORS[side.indicator] and has_period:
+                wrong_arity.append(f"'{side.indicator}' takes no period and was given one")
+            if side.period_param is not None:
+                referenced.add(side.period_param)
 
     if unknown_indicators:
         raise SearchError(
@@ -499,12 +544,34 @@ def _check_inputs(
             f"strategy '{definition.name}' uses operator(s) {sorted(unknown_operators)} "
             f"that are not in the vocabulary {sorted(OPERATORS)}"
         )
+    if wrong_arity:
+        raise SearchError(
+            f"strategy '{definition.name}' uses an indicator with the wrong arity: "
+            + "; ".join(sorted(set(wrong_arity)))
+        )
     unsupplied = sorted(referenced - supplied)
     if unsupplied:
         raise SearchError(
             f"strategy '{definition.name}' references placeholder(s) {unsupplied} that "
             "neither its 'search' nor its 'fixed' block supplies, so no cell could resolve "
             "them and every one would fail identically"
+        )
+
+    # Position size is read only when a cell actually reaches an ENTER_LONG, so a
+    # definition that omits it fails SOME cells and not others - which the
+    # all-cells-failed guarantee cannot see. Checked here for that reason: this
+    # is one of the faults that would otherwise reach the operator as an
+    # ordinary scattering of failed cells across the surface.
+    size = definition.fixed.get(_SIZE_PARAM)
+    if size is None:
+        raise SearchError(
+            f"strategy '{definition.name}' can enter a position but its 'fixed' block "
+            f"omits '{_SIZE_PARAM}', so it never says how much to buy"
+        )
+    if not 0.0 < size <= 100.0:
+        raise SearchError(
+            f"'{_SIZE_PARAM}' is a percentage of equity and must be above 0 and at most "
+            f"100, got {size}"
         )
 
     colliding = sorted(set(definition.search) & _NON_PARAMETER_COLUMNS)
@@ -545,6 +612,30 @@ def _check_inputs(
         raise SearchError("bars is not sorted ascending by its index")
     if bars.index.has_duplicates:
         raise SearchError("bars carries duplicate timestamps; the bar order is ambiguous")
+
+    # THE VALUES, not only the shape. A non-finite close reaches `evaluate` and
+    # a non-positive open reaches `apply_costs`, and both raise ValueError - but
+    # only for the cells that actually read that bar. A bar early in the window
+    # is inside some cells' warm-up and traded by others, so one bad price fails
+    # SOME cells and not others, which the all-cells-failed guarantee cannot
+    # see. That is the class of fault this block exists for.
+    prices = ["open", "high", "low", "close"]
+    values = bars[prices]
+    if not bool(values.map(lambda value: isinstance(value, (int, float))).all().all()):
+        raise SearchError(
+            f"bars has a non-numeric value in one of {prices}; the engine converts these "
+            "columns to floats and would fail on whichever cells reach that bar"
+        )
+    numeric = values.astype("float64")
+    # `math.isfinite` rather than `notna`, because an infinity is neither NaN
+    # nor caught by `> 0` - `inf > 0` is true. A test for this passed against
+    # the weaker check and is the reason the stronger one is here.
+    if not bool(numeric.map(math.isfinite).all().all()) or not bool((numeric > 0).all().all()):
+        raise SearchError(
+            f"bars carries a non-finite or non-positive price in one of {prices}; a price "
+            "must be a positive real number, and a bad one fails only the cells that read "
+            "that bar rather than the whole search"
+        )
 
 
 def _in_sample_window(bars: pd.DataFrame, protocol: Protocol) -> pd.DataFrame:
@@ -764,8 +855,8 @@ def run_search(
     The whole loop, in order: cut the bars to
     ``protocol.windows.in_sample``; expand the grid; backtest every cell;
     fingerprint each cell's trades; score the surface by neighbourhood median;
-    take the best surviving cell. Every rejection is appended to the graveyard
-    as it is made.
+    take the best surviving cell. Every rejection is accumulated and written to
+    the graveyard in one pass at the end, once the surface is known to exist.
 
     THE RETURN VALUE is deterministic: nothing computing it consults a clock or
     a random source, and ``tests/test_search_loop.py`` asserts that two runs
@@ -809,10 +900,17 @@ def run_search(
         definition: The parsed strategy, with its ``$placeholder`` periods
             unresolved. One parsed definition serves every cell;
             :func:`~strategylab.core.strategy.evaluate` resolves the
-            placeholders against each cell's ``params`` mapping.
-        bars: OHLCV bars indexed by ascending timestamp. May span any range,
-            including the held-back window - what is read is decided here, not
-            by what is passed.
+            placeholders against each cell's ``params`` mapping. Checked by
+            :func:`_check_inputs` for a searchable ``search`` block, parameter
+            names that do not collide with result columns, non-empty condition
+            lists, a known indicator and operator vocabulary, correct indicator
+            arity, placeholders something supplies, and a usable
+            ``fixed.position_size_pct``.
+        bars: OHLCV bars indexed by an ascending, timezone-naive
+            :class:`pandas.DatetimeIndex`, carrying the required OHLCV columns
+            with positive finite prices. May span any range, including the
+            held-back window - what is read is decided here, not by what is
+            passed.
         protocol: The protocol in force. Read for the in-sample window, the cost
             model - whose every rate is a FRACTION, never a percentage - the
             primary metric, the drawdown ceiling, the research instrument and
@@ -837,17 +935,23 @@ def run_search(
         every rejection made.
 
     Raises:
-        SearchError: Every input this loop refuses, all of them checked before
-            any cell runs. See :func:`_check_inputs` for the list, and for why
-            they are not left to surface as ninety failed cells.
+        SearchError: Raised from two places. :func:`_check_inputs` refuses a bad
+            input BEFORE any cell runs - see its docstring for the list. This
+            function raises again AFTER the loop if every cell failed, which is
+            the guarantee proper: it catches the causes ``_check_inputs`` does
+            not know about, at the cost of a less specific message.
         ValueError: Propagated unchanged from
             :func:`~strategylab.search.grid.expand_grid` for a malformed search
             range - which is bad user YAML, not an internal fault - and from
             the scoring functions for a frame this module built wrongly. A
             ``ValueError`` from
             :func:`~strategylab.backtest.engine.run_backtest` is NOT propagated:
-            after :func:`_check_inputs` such an error is cell-specific, so it is
-            caught and recorded as a failed cell.
+            it is caught and recorded as a failed cell. Do NOT read that as
+            "such an error is cell-specific" - an earlier version of this clause
+            said so and it is false. Some are properties of the definition or
+            the data; what makes them safe is that a fault failing EVERY cell
+            raises after the loop, not that only cell-level faults arrive
+            here.
         MemoryError: Propagated unchanged from
             :func:`~strategylab.search.grid.expand_grid`, which builds both the
             axes and their product eagerly and caps neither. A search block

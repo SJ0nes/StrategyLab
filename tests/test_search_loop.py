@@ -383,9 +383,19 @@ def test_a_timezone_aware_index_is_refused(tmp_path: Path) -> None:
 
 
 def _bad_input_is_refused(bars: pd.DataFrame, tmp_path: Path, match: str, **kwargs: Any) -> None:
-    """Assert the loop refuses these inputs outright and writes no graveyard."""
+    """Assert the loop refuses these inputs UP FRONT and writes no graveyard.
+
+    "Up front" is asserted explicitly, and that is not pedantry. There are two
+    ways a bad input can produce a SearchError: `_check_inputs` refusing it
+    before any cell runs, and the structural backstop firing because every cell
+    then failed. The second quotes the first cell's own message, which for
+    several of these faults is nearly identical to the up-front wording - so a
+    test matching only on the message passes whether or not the check it is
+    testing exists. One of these tests did exactly that until a mutation showed
+    it. The backstop's message is the discriminator.
+    """
     graveyard = tmp_path / "graveyard.jsonl"
-    with pytest.raises(SearchError, match=match):
+    with pytest.raises(SearchError, match=match) as excinfo:
         run_search(
             kwargs.pop("definition", _small_strategy()),
             bars,
@@ -395,6 +405,10 @@ def _bad_input_is_refused(bars: pd.DataFrame, tmp_path: Path, match: str, **kwar
             graveyard_path=graveyard,
             **kwargs,
         )
+    assert "cells failed to backtest" not in str(excinfo.value), (
+        "this input should be refused before any cell runs, not caught by the "
+        "every-cell-failed backstop"
+    )
     assert not graveyard.exists(), "a refused search must leave no graveyard record"
 
 
@@ -554,6 +568,73 @@ def test_a_placeholder_nothing_supplies_is_refused(
         r"placeholder\(s\) \['trend'\]",
         definition=_definition(entry=entry),
     )
+
+
+def test_an_indicator_with_no_period_where_one_is_required_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `IndicatorRef` rejects a reference carrying BOTH a period and a
+    # placeholder, and permits one carrying neither. `sma` with neither reaches
+    # an `assert period is not None` in the engine - an AssertionError, not a
+    # ValueError, so it is not caught as a failed cell and escapes `run_search`
+    # as a type its contract does not admit. Under `python -O` the assert
+    # vanishes and a nonsense rolling window is used instead.
+    entry = (
+        Condition(IndicatorRef("sma"), "crosses_above", IndicatorRef("sma", period_param="slow")),
+    )
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "wrong arity", definition=_definition(entry=entry)
+    )
+
+
+def test_an_indicator_given_a_period_it_does_not_take_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `close` takes no lookback. `INDICATORS` maps a name to that arity, and
+    # reading only its keys would let this through.
+    entry = (
+        Condition(
+            IndicatorRef("close", period_param="fast"),
+            "above",
+            IndicatorRef("sma", period_param="slow"),
+        ),
+    )
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "wrong arity", definition=_definition(entry=entry)
+    )
+
+
+@pytest.mark.parametrize("size", [None, 0.0, -5.0, 100.5])
+def test_an_unusable_position_size_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path, size: float | None
+) -> None:
+    # Position size is read only when a cell reaches an ENTER_LONG, so a bad one
+    # fails SOME cells and not others - which the all-cells-failed guarantee
+    # cannot see. It arrives as a scattering of failures across the surface,
+    # which looks like a legitimate result.
+    fixed: dict[str, float] = {} if size is None else {"position_size_pct": size}
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "position_size_pct", definition=_definition(fixed=fixed)
+    )
+
+
+@pytest.mark.parametrize("bad", [float("nan"), 0.0, -1.0, float("inf")])
+def test_a_bad_price_anywhere_in_the_window_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path, bad: float
+) -> None:
+    # Same class as the position size: a bad bar fails only the cells that read
+    # it. Placed early in the window, where it sits inside some cells' warm-up
+    # and is traded by others.
+    bars = fixture_bars.copy()
+    bars.loc[bars.index[10], "open"] = bad
+    _bad_input_is_refused(bars, tmp_path, "non-finite or non-positive price")
+
+
+def test_a_non_numeric_price_column_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
+    bars = fixture_bars.copy()
+    bars["close"] = bars["close"].astype(object)
+    bars.loc[bars.index[10], "close"] = "not-a-price"
+    _bad_input_is_refused(bars, tmp_path, "non-numeric value")
 
 
 def test_an_absolute_config_path_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
