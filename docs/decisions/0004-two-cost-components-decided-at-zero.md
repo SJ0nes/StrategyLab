@@ -22,6 +22,16 @@ editing it after results exist invalidates every comparison made before the edit
 can be set without costing anything, and the first at which anyone has actually
 been asked what they are.
 
+> **Update, 2026-08-22.** The sentence above is left as written, because a
+> decision record states what was true when the decision was made and editing
+> that would misrepresent it. Two of its facts have since changed and one has
+> not. `run_backtest` is no longer a stub — it was built, and has since been run
+> over the recorded SPY fixture in `tests/test_grid.py`. A backtest has therefore
+> run, though only in a test and only on a one-year fixture. What has NOT changed
+> is the part the decision rests on: no *result* exists, nothing has been scored,
+> and `access_log.walk_forward_touches` is still `0`. The two rates recorded here
+> are still costless to have set.
+
 ## Decision
 
 **Both are zero, deliberately, for the account and instrument this project

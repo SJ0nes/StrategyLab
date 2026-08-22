@@ -87,3 +87,51 @@ not audit the summary of their findings that reaches the operator, and at least
 once in this project an auditor's claim was relayed as established and turned out
 not to reproduce when tested. The weakest link is the layer between the reports
 and the reader. The reports on disk are the record; a summary of them is not.
+
+---
+
+## Evidence from the `search/` sessions (added 2026-08-22)
+
+The Decision above is unchanged. What follows is data it did not have, recorded
+because the next session faces the same cadence choice and this record is what it
+will read. Whether the Decision should change is not settled here.
+
+**The claim "the arithmetic survives, the prose does not" is now half wrong.**
+Across `expand_grid`, `plateau.py` and `graveyard.py` the arithmetic half held
+perfectly: every hand-derived number the `arithmetic-checker` recomputed was
+correct, again, including four axis enumerations, a four-value warm-up set and
+two threshold brackets. But the audits also found real DEFECTS IN CODE, which
+this record said they had not:
+
+- lookbacks of `0` and `-10` expanded silently, because a documented at-least-one-bar
+  floor was claimed and not implemented;
+- a `TypeError` escaped a contract admitting only `ValueError`, twice, in two
+  different modules;
+- an error message replaced itself with one about integer digit limits;
+- `is_edge_winner` skipped its own documented refusal for every parameter after
+  the first one found on an edge, so the same malformed cell raised or did not
+  according to parameter order;
+- a graveyard refusal created the file, then raised, leaving a zero-byte file
+  that a reader counts as a search with no rejections in it;
+- a `NaN` fingerprint inverted `is_degenerate`'s answer for a one-cell
+  neighbourhood.
+
+**The failure mode that actually recurred was counting and claiming**, not
+arithmetic: stale test counts in four documents, a miscounted dataclass, a wrong
+span in a paragraph about checkable timestamps, two false statements about what
+is untested, and a scope claim that put a later roadmap item inside an earlier
+one. These are prose failures, as the record predicted — but they are prose
+ABOUT COUNTS, and the cheapest guard against them is `drift-checker`, which
+recomputes rather than reads.
+
+**The convergence signal is real and worth naming.** Four rounds on `expand_grid`
+went: silent wrong behaviour, silent wrong behaviour, docstring precision,
+docstring precision. Rounds three and four found nothing that produced a wrong
+grid. That shape — behavioural findings first, precision findings after — is a
+better stopping rule than a fixed number of rounds.
+
+**Two findings did not reproduce.** One compared a claim against `.claude/setup.md`,
+which is the prompt that generated a stub rather than the stub itself; `git show`
+settled it. Both were recorded as not-reproduced rather than fixed. This is the
+"one thing no auditor can check" above, arriving exactly as described, and the
+only defence that worked was checking before relaying.

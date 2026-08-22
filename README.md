@@ -186,10 +186,11 @@ What that does and does not mean:
   came before every implementation except `protocol.py`, which was already
   written by then — so that one module was reviewed as code rather than as a
   contract. Be precise about what that means: the session prompt in
-  `.claude/setup.md` is tracked in this repository, and its suggested defaults
-  are verbatim the values that ended up in `protocol.yaml`. So the instrument,
-  the windows, and the cost rates were *chosen from* proposed defaults rather
-  than originated. The amendments at the second gate were not — those came from
+  `.claude/setup.md` is tracked in this repository, and for the instrument, the
+  windows and the cost rates its suggested defaults are verbatim the values that
+  ended up in `protocol.yaml`. Those were *chosen from* proposed defaults rather
+  than originated. Not all of it was: `min_trades_per_fold` is 10 where the
+  prompt proposed 30, and `min_sharpe` appears in no default at all. The amendments at the second gate were not — those came from
   reviewing the contracts, and they are recorded in `docs/decisions/0003`,
   including the one that is not a uniform tightening.
 - **Every change-set was reviewed by read-only audit agents** — one checking
