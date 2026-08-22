@@ -241,8 +241,8 @@ def test_every_value_of_every_cell_is_an_int_and_not_a_float() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_a_search_spec_that_is_not_a_mapping_is_refused() -> None:
-    with pytest.raises(ValueError, match="not a mapping"):
+def test_a_search_spec_that_is_not_a_dict_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a dict"):
         expand_grid([("fast", {"min": 1.0, "max": 10.0, "step": 1.0})])  # type: ignore[arg-type]
 
 
@@ -267,11 +267,11 @@ def test_a_parameter_name_that_is_not_a_string_is_refused(name: object) -> None:
 
 
 @pytest.mark.parametrize("spec", [5, None, "minmaxstep", {"min", "max", "step"}])
-def test_a_range_that_is_not_a_mapping_is_refused(spec: object) -> None:
+def test_a_range_that_is_not_a_dict_is_refused(spec: object) -> None:
     # Without this, an int range raises TypeError on iteration and a str range
     # is reported as carrying the unknown keys 'a', 'e', 'i' - neither of which
     # is a failure mode this function's contract admits.
-    with pytest.raises(ValueError, match="is not a mapping"):
+    with pytest.raises(ValueError, match="is not a dict"):
         expand_grid({"p": spec})  # type: ignore[dict-item]
 
 
@@ -383,6 +383,22 @@ def test_a_key_whose_rendering_raises_does_not_replace_the_message() -> None:
 
     spec: dict[Any, Any] = {"min": 1.0, "max": 10.0, "step": 1.0, Unrenderable(): 1}
     with pytest.raises(ValueError, match="unknown keys"):
+        expand_grid({"p": spec})
+
+
+def test_a_bound_whose_rendering_raises_does_not_replace_the_message() -> None:
+    # The same hazard as the unrenderable KEY above, but on a BOUND, and reached
+    # through the non-whole branch. A float subclass is explicitly admitted -
+    # `numpy.float64` is the case the contract names - and its `__format__` is
+    # arbitrary code. `__format__` and not `__str__`, because an empty format
+    # spec on a float subclass goes to `float.__format__`, which never consults
+    # `__str__`.
+    class Unrenderable(float):
+        def __format__(self, spec: str) -> str:
+            raise RuntimeError("this bound refuses to render")
+
+    spec: dict[str, Any] = {"min": Unrenderable(2.5), "max": 10.0, "step": 1.0}
+    with pytest.raises(ValueError, match="not a finite whole"):
         expand_grid({"p": spec})
 
 

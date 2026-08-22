@@ -75,8 +75,17 @@ def _show(value: object) -> str:
 
     The guard is broad on purpose. ``f"{value}"`` dispatches to the value's own
     ``__format__`` and ``__str__``, which for a caller-built spec is arbitrary
-    code that may raise anything at all. An error message is the one place where
-    losing the original failure to a secondary one is never the better outcome.
+    code that may raise any ``Exception``. An error message is the one place
+    where losing the original failure to a secondary one is never the better
+    outcome. ``BaseException`` is deliberately NOT caught: a ``KeyboardInterrupt``
+    arriving mid-render is not a rendering failure and must not be turned into
+    one.
+
+    ONE ESCAPE THIS DOES NOT CLOSE. Testing a range key against the allowed set
+    hashes and compares it before any message is built, so a key whose
+    ``__hash__`` or ``__eq__`` raises escapes as whatever it raised. Guarding
+    that would mean guarding the lookup rather than the rendering, and a dict
+    whose own keys cannot be hashed is already broken before it arrives.
 
     Args:
         value: Any value bound for an error message.
@@ -128,7 +137,7 @@ def _whole_bars(value: Any, param: str, key: str) -> int:
         )
     if not math.isfinite(value) or value != int(value):
         raise ValueError(
-            f"range for '{param}' has a '{key}' of {value}, which is not a finite whole "
+            f"range for '{param}' has a '{key}' of {_show(value)}, which is not a finite whole "
             "number of bars; a grid cell is a lookback and cannot be a fraction of a bar"
         )
     return int(value)
@@ -153,7 +162,7 @@ def _bounds(param: str, spec: Any) -> tuple[int, int, int]:
     """
     if not isinstance(spec, dict):
         raise ValueError(
-            f"range for '{param}' is not a mapping: {type(spec).__name__}. "
+            f"range for '{param}' is not a dict: {type(spec).__name__}. "
             "A range is written {min: ..., max: ..., step: ...}"
         )
     unknown = sorted(_show(key) for key in spec if key not in _RANGE_KEYS)
@@ -249,8 +258,9 @@ def expand_grid(search_spec: dict[str, dict[str, float]]) -> list[dict[str, int]
             2. A key that is not a string. Reported separately from, and before,
                the charset check below, so the message names the fault that
                fired.
-            3. A key that is not made only of letters, digits, underscores and
-               hyphens - the rule ``load_strategy`` applies to the same names,
+            3. A key that is empty, or that is not made only of letters,
+               digits, underscores and hyphens - the rule ``load_strategy``
+               applies to the same names,
                and the one that refuses the leading ``$`` this function's
                ``Args`` says to strip.
             4. A range that is not a ``dict``, by type as in item 1.
@@ -298,7 +308,7 @@ def expand_grid(search_spec: dict[str, dict[str, float]]) -> list[dict[str, int]
     """
     if not isinstance(search_spec, dict):
         raise ValueError(
-            f"search_spec is not a mapping: {type(search_spec).__name__}. "
+            f"search_spec is not a dict: {type(search_spec).__name__}. "
             "It maps each parameter name to its range"
         )
 
