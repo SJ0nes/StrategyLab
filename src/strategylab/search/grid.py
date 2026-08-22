@@ -62,22 +62,33 @@ _RANGE_KEYS = frozenset({"min", "max", "step"})
 def _show(value: object) -> str:
     """Render a value for an error message without the rendering itself raising.
 
-    CPython refuses to convert an integer of more than 4300 digits to a string,
-    as a ``ValueError``. An int of any magnitude reaches this module through
-    :func:`_whole_bars`'s fast path, so interpolating one directly into a message
-    would replace the message this module meant to raise with one about digit
-    limits - the right exception type carrying none of the information.
+    The case this was written for: CPython refuses to convert an integer of more
+    than 4300 digits to a string, raising ``ValueError``. That threshold is the
+    DEFAULT of a process-global limit, not a fixed property of the interpreter -
+    ``sys.set_int_max_str_digits``, ``-X int_max_str_digits`` and
+    ``PYTHONINTMAXSTRDIGITS`` all move it - so the guard is written to catch the
+    failure rather than to predict the number.
+
+    An oversized value reaches a message by three routes, not one: as a bound,
+    through :func:`_whole_bars`'s int fast path; as a key inside a range; and as
+    a parameter name. Only the first passes through ``_whole_bars``.
+
+    The guard is broad on purpose. ``f"{value}"`` dispatches to the value's own
+    ``__format__`` and ``__str__``, which for a caller-built spec is arbitrary
+    code that may raise anything at all. An error message is the one place where
+    losing the original failure to a secondary one is never the better outcome.
 
     Args:
         value: Any value bound for an error message.
 
     Returns:
-        The value rendered, or a placeholder naming its type when it cannot be.
+        The value rendered, or a placeholder naming its type when rendering it
+        raises.
     """
     try:
         return f"{value}"
-    except ValueError:
-        return f"<{type(value).__name__} too large to display>"
+    except Exception:  # noqa: BLE001 - see the docstring; the alternative is losing the real error
+        return f"<unrenderable {type(value).__name__}>"
 
 
 def _whole_bars(value: Any, param: str, key: str) -> int:
@@ -233,38 +244,56 @@ def expand_grid(search_spec: dict[str, dict[str, float]]) -> list[dict[str, int]
             reported. ``search_spec`` is checked first, then each parameter in
             the order given, and within a parameter the checks run as listed.
 
-            1. ``search_spec`` is not a mapping.
-            2. A key that is not a string, or that is not made only of letters,
-               digits, underscores and hyphens - which is the rule
-               ``load_strategy`` applies to the same names, and which refuses
-               the leading ``$`` this function's ``Args`` says to strip.
-            3. A range that is not a mapping.
-            4. A range carrying a key other than ``min``, ``max`` and ``step``.
+            1. ``search_spec`` is not a ``dict``. A ``Mapping`` that is not a
+               ``dict`` is refused too; the check is by type, not by protocol.
+            2. A key that is not a string. Reported separately from, and before,
+               the charset check below, so the message names the fault that
+               fired.
+            3. A key that is not made only of letters, digits, underscores and
+               hyphens - the rule ``load_strategy`` applies to the same names,
+               and the one that refuses the leading ``$`` this function's
+               ``Args`` says to strip.
+            4. A range that is not a ``dict``, by type as in item 1.
+            5. A range carrying a key other than ``min``, ``max`` and ``step``.
                Unknown keys are reported BEFORE missing ones, so a range with a
                misspelled ``stp`` is named for the misspelling rather than for
                the ``step`` it thereby omits.
-            5. A range omitting ``min``, ``max`` or ``step``.
-            6. A bound that is a ``bool``, or is neither an ``int`` nor a
+            6. A range omitting ``min``, ``max`` or ``step``.
+            7. A bound that is a ``bool``, or is neither an ``int`` nor a
                ``float``, or is not a finite whole number. All three bounds are
                converted, in the order ``min``, ``max``, ``step``, BEFORE any
-               two of them are compared - so ``{"min": 5, "max": 1.5}`` is
-               reported as a non-whole ``max``, not as a max below its min.
-            7. A ``step`` below 1.
-            8. A ``max`` below its ``min``.
-            9. A ``min`` below 1, which with the two checks above is what makes
-               every cell at least a one-bar lookback.
+               two of them are compared - so
+               ``{"min": 5, "max": 1.5, "step": 1}`` is reported as a non-whole
+               ``max``, not as a max below its min. The ``step`` is present in
+               that example on purpose: without it item 6 fires first and the
+               example never reaches the behaviour it is meant to show.
+            8. A ``step`` below 1.
+            9. A ``max`` below its ``min``.
+            10. A ``min`` below 1, which with the two checks above is what makes
+                every cell at least a one-bar lookback.
 
-            Conditions 1 to 6 and 9 are additions to the contract this function
+            Conditions 1 to 7 and 10 are additions to the contract this function
             carried as a stub, which named only a missing key, a non-positive
             step, and a max below min. Each closes a case where the alternative
             was a silently wrong grid, or an exception of a type this contract
             does not admit, rather than a refused one.
 
-            WITH ONE DOCUMENTED EXCEPTION, a hand-built spec is now refused for
-            the same reasons a config file would be. The exception runs the other
-            way: an integer bound too large to hold as a float is accepted here
-            and refused by ``load_strategy``, because that converts every bound
-            to a float and this function never does.
+            THREE DIFFERENCES REMAIN between what this refuses and what
+            ``load_strategy`` refuses, and all three run the same way - accepted
+            here, refused there. Every other reason either module rejects a
+            searched range is now shared.
+
+            - An integer bound too large to hold as a float. ``load_strategy``
+              converts every bound to a float and refuses what will not fit;
+              this function never converts, so it accepts one.
+            - A searched parameter no condition references. That check needs the
+              condition list.
+            - A name appearing in both ``search`` and ``fixed``. That check needs
+              the ``fixed`` block.
+
+            The last two are not oversights and cannot be closed here: this
+            function receives the ``search`` block alone and has nothing to
+            cross-check it against.
     """
     if not isinstance(search_spec, dict):
         raise ValueError(
@@ -274,15 +303,24 @@ def expand_grid(search_spec: dict[str, dict[str, float]]) -> list[dict[str, int]
 
     # Every parameter is validated before any axis is allocated, so a refusal
     # never arrives after a large earlier range has already been materialised.
+    names = list(search_spec)
     bounds: list[tuple[int, int, int]] = []
-    for param, spec in search_spec.items():
-        if not isinstance(param, str) or not _NAME_PATTERN.match(param):
+    for param in names:
+        spec = search_spec[param]
+        if not isinstance(param, str):
             raise ValueError(
-                f"grid parameter {_show(param)!r} must be letters, digits, underscores or "
+                f"grid parameter is not a string: {type(param).__name__} "
+                f"({_show(param)}); a parameter name becomes part of a result key"
+            )
+        if not _NAME_PATTERN.match(param):
+            raise ValueError(
+                f"grid parameter {param!r} must be letters, digits, underscores or "
                 "hyphens, without the leading '$'; it becomes part of a result key"
             )
         bounds.append(_bounds(param, spec))
 
     axes = [[low + k * step for k in range((high - low) // step + 1)] for low, high, step in bounds]
     combinations = itertools.product(*axes)
-    return [dict(zip(search_spec, values, strict=True)) for values in combinations]
+    # Paired against `names`, the same list the axes were built from, so the
+    # pairing does not rest on `search_spec` being iterated twice in one order.
+    return [dict(zip(names, values, strict=True)) for values in combinations]

@@ -35,7 +35,7 @@ the validator is not written at all.
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | `status` and `fetch` commands *(untested)* | |
 
-**409 tests pass** — verify with `uv run pytest`. They cover the protocol
+**411 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, and grid expansion.
 The two CLI commands have no tests, and neither does the vendor fetch path,
@@ -90,14 +90,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 409 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 411 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 409 tests, none touching the network
+uv run pytest                   # 411 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

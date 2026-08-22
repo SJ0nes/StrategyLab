@@ -40,10 +40,22 @@ for every cell in the grid, and `fast` never decides it.
 WHAT THIS FILE DOES NOT CLAIM. The end-to-end tests run the REAL committed config
 against the REAL recorded price fixture and the REAL protocol costs - nothing is
 stubbed, because the claim they carry is precisely that the pieces fit each other
-rather than fitting a mock. But the fixture is one year of bars against warm-ups
-of 100 to 200, so most cells get a few dozen evaluable bars and the whole grid
-completes only a handful of round trips. Nothing here is evidence about the
-strategy. No assertion in this file is a figure the implementation printed.
+rather than fitting a mock. But the fixture is one year of bars against longest
+lookbacks of 100 to 200 - a warm-up of `L + 1`, so 101 to 201 bars, and the two
+are not the same number. What each cell has left to trade on is `253 - L`:
+
+    L = 100 -> 153 bars, 24 cells   (trend = 100 with slow <= 100: 4 x 6)
+    L = 120 -> 133 bars,  6 cells   (trend = 100 with slow = 120:  1 x 6)
+    L = 150 -> 103 bars, 30 cells   (trend = 150, any slow:        5 x 6)
+    L = 200 ->  53 bars, 30 cells   (trend = 200, any slow:        5 x 6)
+
+So a third of the grid gets 53 bars and the rest gets 103 or more. How many
+round trips that produces is not stated here, because no assertion in this file
+establishes it and an unmeasured count does not belong in a docstring. What the
+file does assert is that at least one cell traded at all.
+
+Nothing here is evidence about the strategy. No assertion in this file is a
+figure the implementation printed.
 """
 
 from __future__ import annotations
@@ -206,11 +218,22 @@ def test_every_value_of_every_cell_is_an_int_and_not_a_float() -> None:
 # --------------------------------------------------------------------------
 # Refusals
 #
-# Nine conditions, checked in the order `expand_grid` documents. Seven of them
-# are additions to the contract the stub carried, which named only a missing
-# key, a non-positive step and a max below min. Each closes a case whose
-# alternative was a silently wrong grid, or an exception of a type the contract
-# does not admit, rather than a refused one.
+# Ten conditions. Seven are additions to the contract the stub carried, which
+# named only a missing key, a non-positive step and a max below min. Each closes
+# a case whose alternative was a silently wrong grid, or an exception of a type
+# the contract does not admit, rather than a refused one.
+#
+# THE ORDER IS RESTATED HERE rather than pointed at, because two conditions can
+# hold at once and only the first is reported, and a reader checking these tests
+# should not have to open `src/` to know which. `search_spec` is checked first,
+# then each parameter in the order given, and within a parameter:
+#
+#   1. search_spec is a dict          6. all three bounds convert, min then max
+#   2. the key is a string               then step: not bool, int or float,
+#   3. the key's charset                 finite, whole
+#   4. the range is a dict            7. step >= 1
+#   5. no unknown key, THEN no        8. max >= min
+#      missing key                    9. min >= 1
 # --------------------------------------------------------------------------
 
 
@@ -219,16 +242,23 @@ def test_a_search_spec_that_is_not_a_mapping_is_refused() -> None:
         expand_grid([("fast", {"min": 1.0, "max": 10.0, "step": 1.0})])  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["$fast", "fast$", "fa$st", "", "my param", "a/b", "fast\n", 5, None],
-)
-def test_a_malformed_parameter_name_is_refused(name: object) -> None:
+@pytest.mark.parametrize("name", ["$fast", "fast$", "fa$st", "", "my param", "a/b", "fast\n"])
+def test_a_parameter_name_outside_the_allowed_charset_is_refused(name: str) -> None:
     # The same charset `load_strategy` holds these names to, for the same
     # reason - the name becomes part of a result key. A `$fast` key here would
     # otherwise surface as a missing-parameter error from a different module,
     # and a trailing newline is what a YAML block scalar produces by accident.
     with pytest.raises(ValueError, match="letters, digits, underscores or hyphens"):
+        expand_grid({name: {"min": 1.0, "max": 10.0, "step": 1.0}})
+
+
+@pytest.mark.parametrize("name", [5, None, (1, 2)])
+def test_a_parameter_name_that_is_not_a_string_is_refused(name: object) -> None:
+    # Reported separately from the charset check, and before it, so the message
+    # names the fault that fired rather than the one that did not. A non-string
+    # key reported as failing a charset rule sends the reader looking for a
+    # character that is not there.
+    with pytest.raises(ValueError, match="is not a string"):
         expand_grid({name: {"min": 1.0, "max": 10.0, "step": 1.0}})  # type: ignore[dict-item]
 
 
@@ -334,6 +364,21 @@ def test_the_bounds_are_converted_in_the_order_min_max_step(
 ) -> None:
     # Two bounds are malformed in each case; the contract fixes which is named.
     with pytest.raises(ValueError, match=f"'{reported}' of"):
+        expand_grid({"p": spec})
+
+
+def test_a_key_whose_rendering_raises_does_not_replace_the_message() -> None:
+    # An unknown key is rendered into the message, and for a hand-built spec a
+    # key is an arbitrary object whose `__str__` is arbitrary code. If that code
+    # raises anything, the refusal this function meant to report is replaced by
+    # an unrelated failure. The digit-limit case raises ValueError and so would
+    # survive a narrow guard; this one raises RuntimeError and would not.
+    class Unrenderable:
+        def __str__(self) -> str:
+            raise RuntimeError("this object refuses to render")
+
+    spec: dict[Any, Any] = {"min": 1.0, "max": 10.0, "step": 1.0, Unrenderable(): 1}
+    with pytest.raises(ValueError, match="unknown keys"):
         expand_grid({"p": spec})
 
 
@@ -490,8 +535,8 @@ def test_at_least_one_cell_actually_traded(
 ) -> None:
     # Without this, every assertion above is satisfied by a grid that entered no
     # position at all - the curve would be flat at the starting equity and still
-    # the right length. The fixture is one year against warm-ups of 100 to 200
-    # bars, so this is deliberately a floor of one and not a count.
+    # the right length. Deliberately a floor of one rather than a count: how many
+    # cells trade is a property of the fixture, not of any rule stated here.
     assert any(result.fills for _, result in whole_grid_run)
 
 
@@ -514,7 +559,8 @@ def test_the_fast_parameter_reaches_the_result(
 
     # Also a precondition. If neither cell ever traded, both finals would be the
     # starting equity and the assertion below would go red for a reason that has
-    # nothing to do with whether `fast` reached anything.
+    # nothing to do with whether `fast` reached anything. The fixture gives this
+    # cell 153 bars to trade on: 253 - max(40, 100).
     assert short.fills or long.fills
 
     assert float(short.equity.iloc[-1]) != float(long.equity.iloc[-1])
