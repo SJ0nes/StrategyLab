@@ -48,12 +48,13 @@ writes. Both absences are deliberate and both are stated here so that a reader
 counting rejection categories against the vocabulary does not read a gap as a
 missing branch.
 
-**It writes no candidate file.** ``strategylab validate``'s help text names
-``state/candidate.json`` as its argument. That schema belongs to the validator,
-which does not exist, and guessing it here is how a project ends up with two
-shapes of the same record - which has already happened once, with the decision
-log. The winner is in the search artifact; the validator will decide what it
-wants to be handed.
+**It writes no candidate file, and now never will.** This module declined to
+invent a ``state/candidate.json`` schema on the grounds that the validator owns
+it. The validator has since settled the question the other way:
+``strategylab validate`` takes a SEARCH ARTIFACT, because that file already
+carries the winner together with the protocol version, snapshot hash, costs and
+ceiling that make a verdict interpretable. A second file would duplicate those
+or drop them, and this project has already paid for one duplicated schema.
 """
 
 from __future__ import annotations

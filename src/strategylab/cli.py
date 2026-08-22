@@ -491,17 +491,48 @@ def search(
 
 @app.command()
 def validate(
-    candidate: Annotated[
+    result: Annotated[
         Path,
-        typer.Argument(help="Candidate produced by a search, such as state/candidate.json."),
+        typer.Argument(
+            help="Search result whose candidate to validate, such as "
+            "state/search-20260822T202249Z.json."
+        ),
     ],
 ) -> None:
-    """Walk a chosen candidate forward through the held-back window.
+    """Walk a search's candidate forward through the held-back window.
 
     Rolls through the walk-forward window in folds, pools the results, and
     returns pass, fail, or insufficient_data. Increments the protocol's access
     counter on every run, including runs that end in insufficient_data: looking
     at held-back data costs a touch whether or not the look produced a verdict.
+
+    THE ARGUMENT IS A SEARCH ARTIFACT, NOT A SEPARATE CANDIDATE FILE. This
+    command's help text used to name ``state/candidate.json``, and nothing has
+    ever written one: the search loop deliberately declined to invent that
+    schema, on the grounds that the validator owns it. Choosing the artifact
+    instead settles it the other way, for three reasons.
+
+    The artifact already carries everything a validation needs to be
+    interpretable - the winning parameters, the protocol version in force, the
+    content hash of the price snapshot, the costs charged, and the noise ceiling
+    if one was computed. A candidate file would either duplicate those or drop
+    them, and a verdict recorded without them cannot be traced to what produced
+    it.
+
+    A second file is a second thing to drift. This repository already carries
+    one instance of that mistake - two decision-log shapes where the design says
+    one - and it is documented in ``LIMITATIONS.md`` as a cost still being paid.
+
+    And it keeps the chain honest end to end: a verdict points at a search,
+    which points at a snapshot hash and a config. Nothing in between can be
+    edited by hand without the trail showing it.
+
+    THE COST OF THIS CHOICE, stated because it is real: a human cannot easily
+    hand-write a candidate to validate. Testing an arbitrary parameter set means
+    running a search that nominates it, which is minutes of work rather than
+    seconds. That is a deliberate friction rather than an oversight - a
+    parameter set nobody's search chose is not a candidate, it is a guess, and
+    the held-back window is too expensive to spend on guesses.
     """
     raise NotImplementedError
 
