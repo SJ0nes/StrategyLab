@@ -228,12 +228,16 @@ def test_every_value_of_every_cell_is_an_int_and_not_a_float() -> None:
 # should not have to open `src/` to know which. `search_spec` is checked first,
 # then each parameter in the order given, and within a parameter:
 #
-#   1. search_spec is a dict          6. all three bounds convert, min then max
-#   2. the key is a string               then step: not bool, int or float,
-#   3. the key's charset                 finite, whole
-#   4. the range is a dict            7. step >= 1
-#   5. no unknown key, THEN no        8. max >= min
-#      missing key                    9. min >= 1
+#   1. search_spec is a dict          6. no missing key
+#   2. the key is a string            7. each bound converts, min then max then
+#   3. the key's charset                 step: not bool, int or float, finite,
+#   4. the range is a dict               whole
+#   5. no unknown key                 8. step >= 1
+#                                     9. max >= min
+#                                    10. min >= 1
+#
+# The numbering matches `expand_grid`'s own Raises block item for item, so a
+# reader can move between the two without re-deriving the correspondence.
 # --------------------------------------------------------------------------
 
 

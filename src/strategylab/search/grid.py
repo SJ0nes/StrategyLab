@@ -272,9 +272,10 @@ def expand_grid(search_spec: dict[str, dict[str, float]]) -> list[dict[str, int]
             10. A ``min`` below 1, which with the two checks above is what makes
                 every cell at least a one-bar lookback.
 
-            Conditions 1 to 7 and 10 are additions to the contract this function
-            carried as a stub, which named only a missing key, a non-positive
-            step, and a max below min. Each closes a case where the alternative
+            Conditions 1 to 5, 7 and 10 are additions to the contract this
+            function carried as a stub. The other three are the whole of what it
+            named: 6 is its missing key, 8 its non-positive step, and 9 its max
+            below min. Each closes a case where the alternative
             was a silently wrong grid, or an exception of a type this contract
             does not admit, rather than a refused one.
 
