@@ -26,7 +26,7 @@ the validator is not written at all.
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Noise ceiling, the graveyard |
+| Protocol loader and validator | Noise ceiling |
 | Price data layer — validation, provenance, parquet cache | Walk-forward validation |
 | Cost model — hand-verified arithmetic | Decision logging, risk limits, venue adapters, HTML reports |
 | Strategy-config loader — closed schema, closed vocabulary | A `search` command a user can run |
@@ -34,14 +34,15 @@ the validator is not written at all.
 | Backtest engine and metrics, with the determinism test | |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | Plateau scoring, the edge check, the degeneracy check | |
+| The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | `status` and `fetch` commands *(untested)* | |
 
-**462 tests pass** — verify with `uv run pytest`. They cover the protocol
+**491 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, and grid expansion.
 The two CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 19 of them across 8
+docstring contract with a `raise NotImplementedError` body — 18 of them across 7
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -91,14 +92,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 462 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 491 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 462 tests, none touching the network
+uv run pytest                   # 491 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

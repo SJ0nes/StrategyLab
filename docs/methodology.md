@@ -9,9 +9,10 @@
 > both windows in a single file, so the separation currently holds because no
 > component exists that could violate it, not because anything guards it.
 >
-> Plateau scoring, the graveyard, the noise ceiling and walk-forward validation
-> are all stubs. Every sentence below written in the present tense describes a
-> design rather than a running system. See
+> Plateau scoring and the graveyard are now built and tested; the noise ceiling
+> and walk-forward validation are still stubs, and NOTHING CALLS ANY OF IT,
+> because there is no search loop. Every sentence below written in the present
+> tense describes a design rather than a running system. See
 > [architecture.md](architecture.md) for what exists and
 > [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 

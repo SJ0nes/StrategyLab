@@ -42,7 +42,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
      │ grid.py  BUILT │            │ venue.py   STUB │
      │plateau.py BUILT│            │ t212.py    STUB │
      │ noise.py  STUB │            └────────┬────────┘
-     │ graveyard  STUB│                     │
+     │graveyard  BUILT│                     │
      └───────┬────────┘                     │
              │                              │
              ▼                              ▼
@@ -76,12 +76,13 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
-| `search/plateau.py` | `plateau_score` — neighbourhood median, radius in grid steps, with `neighbour_count` so a thin neighbourhood is visible. `is_edge_winner` — against the highest value the grid REACHES, not the declared `max`. `is_degenerate` — over trade sets, not trade counts. Fixes the results-frame schema the search loop must emit. | 47 |
+| `search/graveyard.py` | `record_rejection` — append-only JSON Lines, one object per line, closed reason vocabulary, non-finite metric written as JSON null so the file stays parseable by something other than Python. | 29 |
+| `search/plateau.py` | `plateau_score` — neighbourhood median, radius in grid steps, with `neighbour_count` so a thin neighbourhood is visible. `is_edge_winner` — against the highest value the grid REACHES, not the declared `max`. `is_degenerate` — over trade sets, not trade counts. Fixes the results-frame schema the search loop must emit. | 50 |
 | `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation that refuses a searched range for every reason the config loader does, bar three: two cross-block checks it cannot make from the `search` block alone, and a huge integer bound it accepts because it never converts to float. Produces the `params` mapping that makes a `StrategyDef` evaluable; **nothing under `src/` calls it yet.** | 74 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**462 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 50. Run `uv run pytest` to see the
+**491 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 50 + 29. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -91,13 +92,13 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **19
-`NotImplementedError` bodies across 8 files:**
+session builds against a fixed interface rather than inventing one. **18
+`NotImplementedError` bodies across 7 files:**
 
 `cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
 `logging/decisions.py` (2) ·
 `risk/limits.py` (2) ·
-`search/noise.py` · `search/graveyard.py` ·
+`search/noise.py` ·
 `validate/walkforward.py` · `report/render.py`.
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that

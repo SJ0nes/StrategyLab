@@ -8,9 +8,9 @@ produces. Nothing here is a footnote.
 
 Ten modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
-`core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`, and
-the `status` and `fetch` commands in `cli.py`. Nineteen `NotImplementedError` bodies remain,
-across 8 files. Two
+`core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`,
+`search/graveyard.py`, and the `status` and `fetch` commands in `cli.py`. Eighteen `NotImplementedError` bodies remain,
+across 7 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -50,8 +50,8 @@ fixture and not as a research window; the run is a test asserting that the
 pieces fit, and it records no output. Nothing scores the cells against each
 other, nothing takes its window from `protocol.windows`, and `cli.search` still
 raises before reading its argument. There is still no search — grid expansion is
-one of its four parts, and plateau scoring, the noise ceiling and the graveyard
-are stubs — and no validator.
+three of its four parts - grid expansion, plateau scoring and the graveyard -
+and the noise ceiling is still a stub — and no validator.
 
 **There are two decision-log shapes and the design says there should be one.**
 `docs/architecture.md` states the schema is defined once, in
@@ -72,7 +72,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-462 tests pass (`uv run pytest`). They cover the protocol loader, the data
+491 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, and grid expansion.
 
@@ -298,8 +298,11 @@ day is therefore unmodelled.
   account driven to zero or below propagates a `ValueError` out of `run_backtest`
   rather than reporting a hundred percent drawdown. The engine's own docstring
   calls this a real limitation and not a considered decision, and it matters for
-  the search: a cell that blows up does not score badly, it fails, and nothing yet
-  decides what a search should do with one.
+  the search: a cell that blows up does not score badly, it fails. What to do
+  with one is now decided, though nothing executes the decision yet:
+  `search/plateau.py` requires the row to be kept with a `NaN` metric, so the
+  grid stays complete and the failure is visible in `neighbour_count`, and
+  `search/graveyard.py` carries a `backtest_failed` reason to record it under.
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.
