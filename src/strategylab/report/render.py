@@ -39,9 +39,23 @@ TRACEABILITY_KEYS: tuple[str, ...] = ("protocol_version", "fixture_hash", "comma
 #: Patterns that would make a page reach outside itself. Checked against the
 #: rendered output, not the template, so an external reference smuggled in
 #: through the context is caught too.
+#:
+#: EVERY FETCH VECTOR, NOT JUST ``src`` AND ``href``. An earlier version matched
+#: only those two attributes, which an audit showed leaves the three ways a
+#: stylesheet or font realistically arrives - a CSS ``url()``, an ``@import``,
+#: and a meta refresh - completely unguarded. A check that catches the obvious
+#: case and misses the likely ones is worse than none, because it is believed.
+#:
+#: What is deliberately NOT matched: a ``data:`` URI, which is self-contained by
+#: definition; a fragment link; and a bare URL in prose, which is text rather
+#: than a request. The pattern requires a scheme in a position that actually
+#: fetches.
 _EXTERNAL = re.compile(
     r"""(?ix)
-    (?: src | href ) \s* = \s* ["']? \s* (?: https? : | // )
+      (?: src | href | xlink:href ) \s* = \s* ["']? \s* (?: https? : | // )
+    | url \s* \( \s* ["']? \s* (?: https? : | // )
+    | @import \s+ ["']? \s* (?: https? : | // )
+    | http-equiv \s* = \s* ["']? \s* refresh
     """
 )
 

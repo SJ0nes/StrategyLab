@@ -181,6 +181,14 @@ def test_a_missing_template_raises_file_not_found(tmp_path: Path) -> None:
         '<link rel="stylesheet" href="https://cdn.example.com/x.css">',
         '<script src="http://cdn.example.com/x.js"></script>',
         '<img src="//cdn.example.com/x.png">',
+        # The three an audit found unguarded when the check matched only `src`
+        # and `href`. These are how a font or a stylesheet realistically
+        # arrives, so missing them made the check worse than none - it was
+        # believed.
+        "<style>body { background: url(https://cdn.example.com/a.png); }</style>",
+        '<style>@import "https://cdn.example.com/a.css";</style>',
+        '<meta http-equiv="refresh" content="0;url=https://cdn.example.com/">',
+        '<use xlink:href="https://cdn.example.com/a.svg#icon"/>',
     ],
 )
 def test_a_page_reaching_outside_itself_is_refused(tmp_path: Path, body: str) -> None:
@@ -193,12 +201,26 @@ def test_a_page_reaching_outside_itself_is_refused(tmp_path: Path, body: str) ->
     assert not (tmp_path / "page.html").exists()
 
 
-def test_a_relative_reference_is_not_mistaken_for_an_external_one(tmp_path: Path) -> None:
-    # An anchor to a fragment is not a network request, and refusing one would
-    # be the check overreaching.
-    name = _template(tmp_path, '<a href="#surface">jump</a>')
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A fragment link is not a network request.
+        '<a href="#surface">jump</a>',
+        # A data: URI is self-contained by definition - that is the point of it.
+        '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">',
+        "<style>body { background: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=); }</style>",
+        # A URL in prose is text, not a request.
+        "<p>See https://example.com/docs for the method.</p>",
+    ],
+)
+def test_a_self_contained_construct_is_not_mistaken_for_an_external_one(
+    tmp_path: Path, body: str
+) -> None:
+    # The check must not overreach. Refusing a data: URI would forbid the one
+    # legitimate way to embed an image in a single-file page.
+    name = _template(tmp_path, body)
     written = render(name, TRACEABLE, tmp_path / "page.html")
-    assert "#surface" in written.read_text(encoding="utf-8")
+    assert written.exists()
 
 
 # --------------------------------------------------------------------------

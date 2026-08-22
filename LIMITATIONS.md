@@ -77,22 +77,22 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-605 tests pass (`uv run pytest`). They cover the protocol loader, the data
+612 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop and the reports — twelve areas, one per test
 file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
-paragraph said it was. Three FINISHED things are untested: the `status`, `fetch`,
-`search` and `report` commands in `cli.py`, the venue interface in
-`execution/venue.py`, and `YFinanceSource`'s fetch path, which by policy no test
-may call. `search` is
-the one that has grown: it is now around a hundred and thirty lines of argument
-handling, error paths and output formatting, and every one of its failure
-branches — a missing config, an unparseable one, an uncached instrument, an
-unreadable snapshot — is unexercised. `run_search` beneath it is covered; the
-command wrapping it is not. So is every type
+paragraph said it was. Three FINISHED areas are untested: **the CLI**, all four
+of `status`, `fetch`, `search` and `report`; the venue interface in
+`execution/venue.py`; and `YFinanceSource`'s fetch path, which by policy no test
+may call. The CLI is the one that keeps growing — `search` and `report` together
+are a few hundred lines of argument handling, error paths and output formatting,
+and every failure branch in them is unexercised: a missing config, an
+unparseable one, an uncached instrument, an unreadable snapshot, an artifact
+that will not render. The functions beneath are covered; the commands wrapping
+them are not. Untested too is every type
 definition the stub modules carry beside their `NotImplementedError` bodies —
 `DecisionRecord`'s sixteen fields, `RiskLimits`, `PortfolioState`, `FoldResult`,
 `ValidationResult`, the `Verdict` and `Outcome` enums, `T212Error`, and the

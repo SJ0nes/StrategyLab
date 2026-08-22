@@ -7,7 +7,6 @@ arrives with its own tests rather than as part of a large unreviewable change.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -449,9 +448,11 @@ def report() -> None:
         except (ReportError, ValueError) as exc:
             # One unrenderable artifact must not cost the operator the rest of
             # their reports, so this reports and carries on rather than exiting.
+            #
+            # ValueError covers malformed JSON too: `json.JSONDecodeError`
+            # subclasses it, so a separate clause for that was unreachable and
+            # has been removed rather than left looking like coverage.
             err_console.print(f"[yellow]skipped[/yellow] {artifact.name} - {exc}")
-        except json.JSONDecodeError as exc:
-            err_console.print(f"[yellow]skipped[/yellow] {artifact.name} - not JSON: {exc}")
 
     if not written:
         err_console.print("[bold red]nothing could be rendered[/bold red]")
