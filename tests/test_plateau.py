@@ -23,6 +23,8 @@ medians to 0.5. A NaN metric contributes to no median and is not counted;
 `neighbour_count` reports how many cells actually contributed, so [1, NaN, 3]
 over three cells gives median 2 and count 2.
 
+Where a test does not pass `radius`, the default is 1.
+
 **Rule 3 - what degenerate means.** At least 0.8 of a neighbourhood carries the
 same `trade_fingerprint` as the cell being judged. The cell counts itself. So 4
 of 5 is degenerate (0.8 >= 0.8) and 3 of 5 is not (0.6 < 0.8).
@@ -80,6 +82,9 @@ def test_an_isolated_spike_loses_to_a_broad_region() -> None:
     spike = plateau_score(one_axis([1, 2, 3, 4, 5], [0.0, 0.0, 9.0, 0.0, 0.0]))
     broad = plateau_score(one_axis([1, 2, 3, 4, 5], [0.0, 1.0, 1.0, 1.0, 0.0]))
 
+    # The two lines below restate the inputs and cannot fail. They are here as
+    # preconditions, so a reader can see the spike really is the higher peak
+    # before the scores are compared - not as coverage.
     assert spike["sharpe"].max() == 9.0
     assert broad["sharpe"].max() == 1.0
     assert spike.loc[spike["p"] == 3, "plateau_score"].item() == 0.0
@@ -189,6 +194,23 @@ def test_a_two_dimensional_neighbourhood_is_bounded_on_every_axis_at_once() -> N
     assert counts[(2, 20)] == 9
 
 
+def test_the_axis_is_sorted_rather_than_taken_in_row_order() -> None:
+    # Every other frame in this file is supplied already ascending, so an
+    # implementation that used row order instead of sorting would stay green.
+    # Here the rows arrive 3, 1, 2 with sharpe 30, 10, 20 - so row order and
+    # ascending order disagree. By ascending value the neighbourhoods are:
+    #   p=1 {1,2}   -> [10,20]    -> 15
+    #   p=2 {1,2,3} -> [10,20,30] -> 20
+    #   p=3 {2,3}   -> [20,30]    -> 25
+    # and the frame keeps its original row order, so the scores come back in
+    # the order 3, 1, 2 -> 25, 15, 20. Row-order positions would instead make
+    # p=3 and p=1 adjacent, giving p=3 a neighbourhood of [30,10] -> 20.
+    frame = pd.DataFrame({"p": [3, 1, 2], "sharpe": [30.0, 10.0, 20.0]})
+    scored = plateau_score(frame)
+    assert scored["plateau_score"].tolist() == [25.0, 15.0, 20.0]
+    assert scored["neighbour_count"].tolist() == [2, 2, 3]
+
+
 def test_the_input_frame_is_not_modified() -> None:
     frame = one_axis([1, 2, 3], [1.0, 2.0, 3.0])
     plateau_score(frame)
@@ -197,10 +219,10 @@ def test_the_input_frame_is_not_modified() -> None:
 
 def test_the_added_columns_are_not_mistaken_for_parameters_on_a_second_pass() -> None:
     # Scoring an already-scored frame must treat `plateau_score` and
-    # `neighbour_count` as output, not as two more axes. With p = 1..3 and
-    # radius 1 the counts are 2, 3, 2 whether or not the frame has been
-    # scored before; if the added columns became axes, the neighbourhoods
-    # would narrow and the counts would drop.
+    # `neighbour_count` as output, not as two more axes. If they became axes,
+    # the frame would look like a 3-axis grid holding 3 rows where its own
+    # values span 3 x 3 x 3 = 27 cells, and the completeness check would refuse
+    # it - so the failure is a raised ValueError, not a quietly wrong count.
     once = plateau_score(one_axis([1, 2, 3], [1.0, 2.0, 3.0]))
     twice = plateau_score(once)
     assert twice["neighbour_count"].tolist() == [2, 3, 2]
@@ -334,6 +356,23 @@ def test_a_value_that_is_not_on_the_axis_is_refused(value: int) -> None:
         is_edge_winner({"fast": value}, SPEC)
 
 
+def test_an_off_axis_value_is_refused_even_when_an_earlier_parameter_is_on_an_edge() -> None:
+    # THE ORDER-DEPENDENCE BUG. `fast=5` sits on its lower edge, so an
+    # implementation that reports an edge as soon as it finds one never looks
+    # at `slow` and returns True for a cell carrying a value no range
+    # generates. The same malformed cell then raises or does not depending on
+    # which parameter happens to come first, which is not a contract at all.
+    spec: dict[str, dict[str, float]] = {
+        "fast": {"min": 5, "max": 30, "step": 5},
+        "slow": {"min": 40, "max": 120, "step": 20},
+    }
+    with pytest.raises(ValueError, match="not a value that range generates"):
+        is_edge_winner({"fast": 5, "slow": 999}, spec)
+    # And with the parameters the other way round, which already worked.
+    with pytest.raises(ValueError, match="not a value that range generates"):
+        is_edge_winner({"fast": 10, "slow": 999}, spec)
+
+
 def test_a_malformed_range_propagates_the_grid_refusal_unchanged() -> None:
     # The axis is built by calling expand_grid, so its refusals are this
     # function's too.
@@ -374,6 +413,15 @@ def test_three_of_five_is_below_the_threshold() -> None:
     # Same neighbourhood of five. X,X,X,Y,Z: 3 of 5 match, 3/5 = 0.6 < 0.8.
     frame = fingerprinted([1, 2, 3, 4, 5], ["X", "X", "X", "Y", "Z"])
     assert is_degenerate(frame, {"p": 3}, radius=2) is False
+
+
+def test_three_of_four_is_below_the_threshold() -> None:
+    # Brackets the threshold from above more tightly than 3-of-5 does. A 4-cell
+    # axis at radius 3 is one neighbourhood of all four; X,X,X,Y gives 3/4 =
+    # 0.75, which must NOT be degenerate. Together with the 4-of-5 case at
+    # exactly 0.8 this pins the threshold to (0.75, 0.8] rather than (0.6, 0.8].
+    frame = fingerprinted([1, 2, 3, 4], ["X", "X", "X", "Y"])
+    assert is_degenerate(frame, {"p": 2}, radius=3) is False
 
 
 def test_a_neighbourhood_of_cells_that_never_traded_is_degenerate() -> None:

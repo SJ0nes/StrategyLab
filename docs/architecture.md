@@ -81,7 +81,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**459 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 47. Run `uv run pytest` to see the
+**462 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 50. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

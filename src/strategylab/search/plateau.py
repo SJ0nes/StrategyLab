@@ -14,12 +14,25 @@ to meet rather than describing one that exists. A results frame carries:
 - ``sharpe`` and ``max_drawdown_pct`` and ``trade_count``, as
   :class:`~strategylab.backtest.engine.BacktestResult` reports them;
 - ``trade_fingerprint``, a string standing for the cell's trade SET rather than
-  its count - see :func:`is_degenerate`.
+  its count - see :func:`is_degenerate`. This module fixes only the PROPERTY the
+  string must have: two cells share one exactly when they executed the same
+  trades. What goes in it is the search loop's choice, and two cases need a
+  deliberate answer there rather than a default - a cell that took no trades,
+  and a cell whose backtest raised. Giving both the empty string would make a
+  region of failures look like a region of agreement.
 
-Every other column name is taken to be a parameter. That is a closed schema in
-the same sense as the strategy config's: a name this module does not know is a
-parameter, and a misspelled ``sharp`` would be silently scored as one, which is
-why :data:`RESULT_COLUMNS` is checked for completeness rather than assumed.
+Every other column name is taken to be a parameter, and NOTHING CHECKS THAT THE
+RESULT COLUMNS ARE ALL PRESENT. Only the two columns actually read are required:
+``sharpe`` by :func:`plateau_score` and ``trade_fingerprint` by
+:func:`is_degenerate`. A frame without ``max_drawdown_pct`` scores fine.
+
+The consequence is worth stating because it is not obvious: a misspelled
+``sharp`` is not a missing metric, it is an extra PARAMETER. The frame then
+looks like a grid with one more axis than it has, and the error a caller sees is
+about the grid being incomplete or carrying duplicate rows - a true statement
+about a frame whose real fault is a typo. That is a closed schema without a
+closed check, and closing it needs the caller to declare its parameters, which
+this signature does not take.
 
 ONE ROW PER CELL, ALWAYS, INCLUDING THE CELLS THAT FAILED. A backtest can raise
 - an account driven to zero reaches ``max_drawdown``, which refuses a
@@ -111,13 +124,13 @@ def _validate_grid(results: pd.DataFrame, parameters: list[str]) -> None:
     around it are scored over a region that was never searched.
 
     WHAT THIS CANNOT CATCH, and the caller must therefore not do: dropping every
-    row at one value of a parameter. Remove all six rows with ``fast=15`` and
-    what remains is a complete 5x5x3 grid, indistinguishable from a search that
-    only ever declared five ``fast`` values - and the positions of ``10`` and
-    ``20`` become adjacent, so cells two grid steps apart are scored as
-    neighbours. Detecting that needs the declared ``search_spec``, which this
-    function does not receive. A partial row drop is refused; a whole level
-    silently is not.
+    row at one value of a parameter. In the committed 6x5x3 grid, fifteen rows
+    carry ``fast=15``; remove them all and what remains is a complete 5x5x3 grid,
+    indistinguishable from a search that only ever declared five ``fast``
+    values - and the positions of ``10`` and ``20`` become adjacent, so cells
+    two grid steps apart are scored as neighbours. Detecting that needs the
+    declared ``search_spec``, which this function does not receive. A partial
+    row drop is refused; a whole level silently is not.
 
     Args:
         results: The results frame.
@@ -308,15 +321,18 @@ def is_edge_winner(cell: dict[str, int], search_spec: dict[str, dict[str, float]
             "for every searched parameter"
         )
 
+    # Every value is validated BEFORE any edge is reported. Interleaving the two
+    # made the off-axis refusal depend on parameter order: a cell whose first
+    # parameter sat on an edge returned True without the rest ever being looked
+    # at, so the same malformed cell raised or did not according to which
+    # parameter happened to come first.
     for name, values in axes.items():
         if cell[name] not in values:
             raise ValueError(
                 f"cell has '{name}' = {cell[name]}, which is not a value that range "
                 f"generates; it generates {values[0]} to {values[-1]}"
             )
-        if cell[name] in (values[0], values[-1]):
-            return True
-    return False
+    return any(cell[name] in (values[0], values[-1]) for name, values in axes.items())
 
 
 def is_degenerate(results: pd.DataFrame, cell: dict[str, int], radius: int = 1) -> bool:
