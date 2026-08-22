@@ -76,7 +76,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-561 tests pass (`uv run pytest`). They cover the protocol loader, the data
+565 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard and the search loop — eleven areas, one per test file.
@@ -396,6 +396,18 @@ parquet file. Nothing partitions it, and the whole 5,033-bar frame is what
 enforced for the search by `loop._in_sample_window`, which cuts the frame from
 `protocol.windows.in_sample` and from nothing else, with a test that corrupts
 every bar after the window's end and asserts no cell's result moves.
+
+**The guard leaked once, through its own input checks, and that is worth
+recording.** Validating the bars is not the same as reading them for a result,
+and it is easy to feel exempt. It is not: a version of the loop's price checks
+ran over the frame as handed in rather than over the slice, so a single bad bar
+anywhere in 2019–2024 refused a search of 2005–2018. No held-back value reached
+a result, but whether a result existed at all depended on them. Fixed by
+splitting the checks — only what is needed to CUT the window runs before the
+cut, and everything that reads a value runs after it — with a test asserting
+that a corrupted held-back bar produces a byte-identical surface. The general
+lesson is the one this file keeps relearning: the leak arrived in code written
+to make the system safer.
 
 That is one consumer, not a chokepoint. `_in_sample_window` is private to the
 search loop, so the next component that reads bars — the validator, a report, a

@@ -42,7 +42,7 @@ validated, and no figure from a search appears in this README.**
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | `status`, `fetch` and `search` commands *(untested)* | |
 
-**561 tests pass** — verify with `uv run pytest`. They cover the protocol
+**565 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard and the search loop — eleven areas, one per test
@@ -102,7 +102,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 561 tests, none touching the network
+uv run pytest                   # 565 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

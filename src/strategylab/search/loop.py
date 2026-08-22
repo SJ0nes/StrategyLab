@@ -441,24 +441,29 @@ def _check_inputs(
       ``fixed.position_size_pct`` are checked explicitly here rather than
       assumed to follow from the vocabulary.
 
-    THE STRUCTURAL GUARANTEE HAS A HOLE THIS FUNCTION IS FILLING, and it is
+    THE STRUCTURAL GUARANTEE HAS A HOLE THIS FUNCTION HELPS FILL, and it is
     worth naming because it is the reason several of these checks exist at all.
     "Every cell failed" catches a fault that is uniformly fatal. A fault that
-    fails MOST cells and not all slips through it: a bad price fails only the
-    cells that read that bar, and a missing ``position_size_pct`` fails only the
-    cells that reach an entry. Those arrive as a scattering of failed cells
-    across the surface, which looks exactly like a legitimate result. The value
-    and size checks below exist for that class specifically. What remains
-    uncovered is any future fault of the same shape that nothing here
-    anticipates - the structural check cannot see it, and this function only
-    sees what it has been told to look for.
+    fails MOST cells and not all slips through it: a missing
+    ``position_size_pct`` fails only the cells that reach an entry, and a bad
+    price fails only the cells that read that bar. Those arrive as a scattering
+    of failed cells across the surface, which looks exactly like a legitimate
+    result. The position-size check below exists for that class; the price
+    checks do too, and live in :func:`_check_window` because they read values
+    and must therefore see the in-sample slice and nothing else. What remains
+    uncovered is any future fault of the same shape that nothing anticipates -
+    the structural check cannot see it, and these functions only see what they
+    have been told to look for.
 
     Args:
         definition: The parsed strategy, checked for a searchable ``search``
             block whose parameter names do not collide with result columns.
-        bars: The bars as handed in, before any window is cut. Checked for a
-            timezone-naive :class:`pandas.DatetimeIndex`, ascending order,
-            unique timestamps and the required OHLCV columns.
+        bars: The bars as handed in, before any window is cut. ONLY what is
+            needed to cut the window is checked here - that the index is a
+            timezone-naive :class:`pandas.DatetimeIndex`. Everything that reads
+            a bar's contents belongs in :func:`_check_window`, after the slice,
+            so the held-back window cannot decide whether an in-sample search
+            runs.
         protocol: The protocol in force, checked for a primary metric matching
             the one the scoring reads.
         config_path: Checked to be relative, so no username can reach the
@@ -605,26 +610,60 @@ def _check_inputs(
             "window is a plain date, so which bars fall inside it depends on a conversion "
             "nobody has chosen. Localise to naive before searching"
         )
-    missing = [column for column in REQUIRED_COLUMNS if column not in bars.columns]
-    if missing:
-        raise SearchError(f"bars lacks required column(s) {missing}; got {list(bars.columns)}")
-    if not bars.index.is_monotonic_increasing:
-        raise SearchError("bars is not sorted ascending by its index")
-    if bars.index.has_duplicates:
-        raise SearchError("bars carries duplicate timestamps; the bar order is ambiguous")
 
-    # THE VALUES, not only the shape. A non-finite close reaches `evaluate` and
-    # a non-positive open reaches `apply_costs`, and both raise ValueError - but
-    # only for the cells that actually read that bar. A bar early in the window
-    # is inside some cells' warm-up and traded by others, so one bad price fails
-    # SOME cells and not others, which the all-cells-failed guarantee cannot
-    # see. That is the class of fault this block exists for.
+
+def _check_window(window: pd.DataFrame) -> None:
+    """Refuse an in-sample window this loop cannot honestly search.
+
+    SEPARATE FROM :func:`_check_inputs`, AND THE SEPARATION IS THE POINT. These
+    checks read bar VALUES, so running them over the frame as handed in would
+    make a search's success depend on the held-back window - a bad price in 2019
+    would refuse a search of 2005-2018. That is the coupling this whole module
+    exists to prevent, and an earlier version of these checks had it: they ran
+    over ``bars`` rather than over the slice.
+
+    Only what is needed to CUT the window is checked before the cut. Everything
+    that reads a value is checked after it, here, so the held-back window can
+    neither contribute to a result nor decide whether one is produced.
+
+    The faults below all share a shape: each fails only the cells that actually
+    read the offending bar, so each arrives as a scattering of failed cells
+    across the surface rather than as a uniform failure. The
+    every-cell-failed backstop in :func:`run_search` cannot see that, which is
+    why they are caught here instead.
+
+    Args:
+        window: The bars inside ``protocol.windows.in_sample``, as
+            :func:`_in_sample_window` returns them.
+
+    Returns:
+        None.
+
+    Raises:
+        SearchError: If a required OHLCV column is absent, if the window is
+            unsorted or carries duplicate timestamps, or if any of ``open``,
+            ``high``, ``low`` or ``close`` holds a non-numeric, non-finite or
+            non-positive value.
+    """
+    missing = [column for column in REQUIRED_COLUMNS if column not in window.columns]
+    if missing:
+        raise SearchError(
+            f"the in-sample window lacks required column(s) {missing}; got {list(window.columns)}"
+        )
+    if not window.index.is_monotonic_increasing:
+        raise SearchError("the in-sample window is not sorted ascending by its index")
+    if window.index.has_duplicates:
+        raise SearchError(
+            "the in-sample window carries duplicate timestamps; the bar order is ambiguous"
+        )
+
     prices = ["open", "high", "low", "close"]
-    values = bars[prices]
+    values = window[prices]
     if not bool(values.map(lambda value: isinstance(value, (int, float))).all().all()):
         raise SearchError(
-            f"bars has a non-numeric value in one of {prices}; the engine converts these "
-            "columns to floats and would fail on whichever cells reach that bar"
+            f"the in-sample window has a non-numeric value in one of {prices}; the engine "
+            "converts these columns to floats and would fail on whichever cells reach "
+            "that bar"
         )
     numeric = values.astype("float64")
     # `math.isfinite` rather than `notna`, because an infinity is neither NaN
@@ -632,9 +671,9 @@ def _check_inputs(
     # the weaker check and is the reason the stronger one is here.
     if not bool(numeric.map(math.isfinite).all().all()) or not bool((numeric > 0).all().all()):
         raise SearchError(
-            f"bars carries a non-finite or non-positive price in one of {prices}; a price "
-            "must be a positive real number, and a bad one fails only the cells that read "
-            "that bar rather than the whole search"
+            f"the in-sample window carries a non-finite or non-positive price in one of "
+            f"{prices}; a price must be a positive real number, and a bad one fails only "
+            "the cells that read that bar rather than the whole search"
         )
 
 
@@ -969,6 +1008,7 @@ def run_search(
     """
     _check_inputs(definition, bars, protocol, config_path, starting_equity)
     window = _in_sample_window(bars, protocol)
+    _check_window(window)
     grid = expand_grid(definition.search)
 
     rows: list[dict[str, Any]] = []

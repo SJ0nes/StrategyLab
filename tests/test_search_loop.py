@@ -619,6 +619,40 @@ def test_an_unusable_position_size_is_refused(
 
 
 @pytest.mark.parametrize("bad", [float("nan"), 0.0, -1.0, float("inf")])
+def test_a_bad_price_in_the_held_back_window_does_not_block_the_search(
+    fixture_bars: pd.DataFrame, tmp_path: Path, bad: float
+) -> None:
+    # THE INPUT CHECKS MUST NOT READ THE HELD-BACK WINDOW EITHER. An earlier
+    # version of the price check ran over the frame as handed in rather than
+    # over the slice, so a bad bar in 2019 refused a search of 2005-2018 - the
+    # search's success depended on data it is not allowed to read. That is the
+    # coupling this whole module exists to prevent, introduced while fixing
+    # something else.
+    bars = fixture_bars.copy()
+    after = pd.DatetimeIndex(bars.index).normalize() > pd.Timestamp(WINDOW_END)
+    bars.loc[bars.index[after][0], "open"] = bad
+
+    result = run_search(
+        _small_strategy(),
+        bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    # And it produces the same surface as the untouched frame.
+    clean = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "clean.jsonl",
+    )
+    pd.testing.assert_frame_equal(result.results, clean.results)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), 0.0, -1.0, float("inf")])
 def test_a_bad_price_anywhere_in_the_window_is_refused(
     fixture_bars: pd.DataFrame, tmp_path: Path, bad: float
 ) -> None:
