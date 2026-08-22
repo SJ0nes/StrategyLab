@@ -74,11 +74,17 @@ hidden. The last bar's signal is recorded and never filled.
 
 412 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, the backtest engine, and grid expansion. Three things have
-code and no tests, and none of them is a stub: the `status` and `fetch` commands
-in `cli.py`, the venue interface in `execution/venue.py`, and `YFinanceSource`'s
-fetch path, which by policy no test may call. Everything else without tests is a
-`NotImplementedError`.
+performance metrics, the backtest engine, and grid expansion.
+
+What has no tests is not only the stub bodies, and an earlier version of this
+paragraph said it was. Three FINISHED things are untested: the `status` and
+`fetch` commands in `cli.py`, the venue interface in `execution/venue.py`, and
+`YFinanceSource`'s fetch path, which by policy no test may call. So is every type
+definition the stub modules carry beside their `NotImplementedError` bodies —
+`DecisionRecord`'s sixteen fields, `RiskLimits`, `PortfolioState`, `FoldResult`,
+`ValidationResult`, the `Verdict` and `Outcome` enums, `T212Error`, and the
+default paths. Those are real code, some of it load-bearing for a later
+component's schema, and nothing exercises any of it.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
