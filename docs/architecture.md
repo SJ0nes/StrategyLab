@@ -39,7 +39,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
               ▼                             ▼
      ┌────────────────┐            ┌─────────────────┐
      │    search/     │            │   execution/    │
-     │ grid.py   STUB │            │ venue.py   STUB │
+     │ grid.py  BUILT │            │ venue.py   STUB │
      │ plateau.py STUB│            │ t212.py    STUB │
      │ noise.py  STUB │            └────────┬────────┘
      │ graveyard  STUB│                     │
@@ -76,11 +76,12 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
+| `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation as total as the config loader's. Produces the `params` mapping that makes a `StrategyDef` evaluable; **nothing under `src/` calls it yet.** | 53 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**338 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33. Run `uv run pytest` to see the count
-yourself.
+**391 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 53. Run `uv run pytest` to see the
+count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
 normalisation behind it are **written but untested**, because no test may make a
@@ -89,13 +90,13 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **23
-`NotImplementedError` bodies across 10 files:**
+session builds against a fixed interface rather than inventing one. **22
+`NotImplementedError` bodies across 9 files:**
 
 `cli.py` (5 — five of the seven commands) · `execution/t212.py` (6) ·
 `search/plateau.py` (3) · `logging/decisions.py` (2) ·
 `risk/limits.py` (2) ·
-`search/grid.py` · `search/noise.py` · `search/graveyard.py` ·
+`search/noise.py` · `search/graveyard.py` ·
 `validate/walkforward.py` · `report/render.py`.
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
@@ -115,26 +116,27 @@ these exist:
   its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **The report template directory** — `report/render.py` resolves templates
   against the package. There is no template directory and no package data.
-- **Anything that runs the engine on real data.** `run_backtest` exists and is
-  tested, and has only ever been given the synthetic twelve-bar series in
-  `tests/test_engine.py`. Nothing calls it: `cli.search` raises before reading
-  its argument, and no grid exists to hand it parameters.
+- **Any run of the engine outside a test.** `run_backtest` has now been driven
+  over recorded SPY bars — all ninety cells of the committed grid, in
+  `tests/test_grid.py` — so it is no longer true that it has only seen a
+  synthetic twelve-bar series. But the caller is a test, not the product:
+  `cli.search` still raises before reading its argument, and the bars are the
+  253-row fixture in `tests/fixtures/`, not a window taken from
+  `protocol.windows`. No result has been recorded or reported anywhere.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
   yet be compared against simply owning the index.
 - **Any caller of `increment_walk_forward_touches`** — the counter is built and
   tested and wired to nothing, because walk-forward validation does not exist.
-- **Any caller of `load_strategy`.** The loader is built and tested; nothing
-  calls it. `cli.search` takes a config path and raises `NotImplementedError`
-  before reading it.
-- **Placeholder resolution.** `load_strategy` returns a `StrategyDef` whose
-  periods may still be `$fast` rather than a number. Substituting the grid's
-  values belongs with `expand_grid`, which is a stub, so no `StrategyDef` in this
-  repository has ever been made evaluable.
-- **Anything that puts the two halves of `core/` together.** `config.py` parses
-  a strategy and `strategy.py` evaluates one, and no code path in this
-  repository does both: `cli.search` still raises before reading its argument.
-  The loader and the engine agree on the vocabulary because they were written to,
-  not because anything exercises the seam.
+- **Any caller of `load_strategy` in the product.** `tests/test_grid.py` now
+  loads the committed config, expands its grid and backtests every cell, so the
+  loader is exercised. `cli.search` still takes a config path and raises
+  `NotImplementedError` before reading it, so nothing a user can run does this.
+- **A `StrategyDef` with its placeholders substituted into it.** `expand_grid`
+  is built, but it does not rewrite a definition: it produces the `params`
+  mapping that `evaluate` resolves each `$placeholder` against, once per bar. So
+  the periods in a `StrategyDef` are still `$fast`, by design — one parsed
+  definition serves all ninety cells — and any future reader expecting a
+  resolved definition will not find one.
 
 ## The one thing the diagram does not show
 

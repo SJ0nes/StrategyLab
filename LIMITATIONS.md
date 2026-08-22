@@ -6,28 +6,35 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Eight modules have working bodies: `protocol.py`, `data/source.py`,
+Nine modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
-`core/config.py`, `core/strategy.py`, and the `status` and `fetch` commands in
-`cli.py`. Twenty-three `NotImplementedError` bodies remain, across 10 files. Two
+`core/config.py`, `core/strategy.py`, `search/grid.py`, and the `status` and
+`fetch` commands in `cli.py`. Twenty-two `NotImplementedError` bodies remain,
+across 9 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
 `tests/test_strategy_config.py`.
 
-**A strategy config can be read and evaluated, and nothing joins the two.**
+**A strategy config can now be read, expanded and backtested — by a test, not by
+the product.**
 `core/config.py` parses and validates `configs/ma_crossover.yaml` into a
 `StrategyDef`, and the "fixed vocabulary" the declarative-config rule depends on
 is now a closed set enforced at load time rather than an example in a docstring.
 `core.evaluate` now implements that vocabulary, so the loader is no longer the
-only thing that knows what `crosses_above` means. But no code path does both:
-`cli.search` still raises before reading its argument, so nothing in this
-repository has ever loaded a config and evaluated it. The vocabulary is also
-small — two indicators (`close`, `sma`) and three operators (`above`,
+only thing that knows what `crosses_above` means. `search/grid.py` closes the
+seam between the two: `tests/test_grid.py` loads the committed config, expands
+its ninety cells and backtests every one of them over the recorded SPY fixture,
+so the claim that the loader and the engine agree is now exercised rather than
+merely intended. What still does not exist is a way for a *user* to do that —
+`cli.search` raises before reading its argument, so the only caller is a test.
+The vocabulary is also small — two indicators (`close`, `sma`) and three operators (`above`,
 `crosses_above`, `crosses_below`), which is what the one committed config uses
-and no more. Nor are `$placeholder` periods
-resolved: the loader checks that each has a parameter behind it and leaves the
-substitution to a grid that does not exist. `strategylab status` points at
+and no more. `$placeholder` periods are still not resolved *into* a
+`StrategyDef`, and deliberately so: `expand_grid` produces the `params` mapping
+that `evaluate` looks each placeholder up in, which is what lets one parsed
+definition serve all ninety cells. A reader expecting a definition with numbers
+in it will not find one. `strategylab status` points at
 `uv run strategylab search configs/ma_crossover.yaml` once price data is cached;
 in a clean checkout, where `data/` is empty because it is gitignored, it points at
 `fetch` instead. Either way that config now parses and `search` is still a
@@ -35,11 +42,16 @@ in a clean checkout, where `data/` is empty because it is gitignored, it points 
 
 **There are no backtest results, no search results, and no validation outcomes.**
 A backtester now exists — `run_backtest` steps `evaluate` bar by bar and charges
-`apply_costs` on every fill, so the cost model below has finally been applied to
-a trade. But it has only ever run on the synthetic twelve-bar series in its own
-tests. It has never been pointed at `SPY`, because nothing calls it: `cli.search`
-still raises before reading its argument, and there is no grid to hand it
-parameters. There is no search and no validator.
+`apply_costs` on every fill — and it has now been run over real recorded `SPY`
+bars, every cell of the committed grid, in `tests/test_grid.py`. That is a
+smaller claim than it sounds. Those bars are the 253-row fixture in
+`tests/fixtures/`, a single year (2010-01-04 to 2011-01-03) chosen as a test
+fixture and not as a research window; the run is a test asserting that the
+pieces fit, and it records no output. Nothing scores the cells against each
+other, nothing takes its window from `protocol.windows`, and `cli.search` still
+raises before reading its argument. There is still no search — grid expansion is
+one of its four parts, and plateau scoring, the noise ceiling and the graveyard
+are stubs — and no validator.
 
 **There are two decision-log shapes and the design says there should be one.**
 `docs/architecture.md` states the schema is defined once, in
@@ -60,10 +72,10 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-338 tests pass (`uv run pytest`). They cover the protocol loader, the data
+391 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, and the backtest engine. Nothing else has tests because
-nothing else has code.
+performance metrics, the backtest engine, and grid expansion. Nothing else has
+tests because nothing else has code.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
@@ -259,7 +271,8 @@ day is therefore unmodelled.
 - **One strategy family, one config.** `configs/` holds a single moving-average
   crossover. Nothing has been compared across strategy types.
 - **Three searched parameters, 90 grid cells.** The config's own comment notes
-  that this much data supports three or four parameters at most.
+  that this much data supports three or four parameters at most. `expand_grid`
+  confirms the count is 90; nothing yet decides which of the 90 to believe.
 - **Integer parameters only.** Lookbacks are whole bars, and the loader refuses a
   config where they are not — every bound of a searched range, not merely its
   start, because a fractional step puts some of the cells it generates off the

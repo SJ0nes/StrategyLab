@@ -19,27 +19,40 @@ which is the only place that answer is ever current.*
 
 ## Current state
 
-**Foundations only. No strategy has been backtested, searched, or validated,
-because the backtester, the search, and the validator are not written yet.**
+**No strategy has been backtested for a result, searched, or validated.** The
+backtester is written and now runs end to end from a config file — but only in a
+test, over a one-year fixture, reporting nothing. The search is one part of four;
+the validator is not written at all.
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Grid search, plateau scoring, noise ceiling |
+| Protocol loader and validator | Plateau scoring, noise ceiling, the graveyard |
 | Price data layer — validation, provenance, parquet cache | Walk-forward validation |
 | Cost model — hand-verified arithmetic | Decision logging, risk limits, venue adapters, HTML reports |
-| Strategy-config loader — closed schema, closed vocabulary | |
+| Strategy-config loader — closed schema, closed vocabulary | A `search` command a user can run |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | |
 | Backtest engine and metrics, with the determinism test | |
+| Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | `status` and `fetch` commands *(untested)* | |
 
-**338 tests pass** — verify with `uv run pytest`. They cover the protocol
+**391 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
-evaluation, the performance metrics, and the backtest engine. The two CLI
-commands have no tests,
-and neither does the vendor fetch path, which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 23 of them across 10
+evaluation, the performance metrics, the backtest engine, and grid expansion.
+The two CLI commands have no tests, and neither does the vendor fetch path,
+which by policy no test may call. Everything else is a signature and a
+docstring contract with a `raise NotImplementedError` body — 22 of them across 9
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
+
+**The two halves of the system now meet.** `load_strategy` → `expand_grid` →
+`run_backtest` runs end to end: `tests/test_grid.py` loads
+`configs/ma_crossover.yaml`, expands its ninety parameter cells, and backtests
+every one of them over the recorded SPY fixture with the real protocol costs.
+Until this commit the loader and the engine agreed on their shared vocabulary
+because both were written to the same list, not because anything exercised the
+seam. **No result is produced by that run and none is reported here** — it is a
+test asserting the pieces fit, over a one-year fixture, and nothing yet scores
+one cell against another.
 
 Both guarantees this project rests on now have tests.
 **Strategy evaluation cannot read past the current bar** — the lookahead
@@ -77,14 +90,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 338 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 391 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 338 tests, none touching the network
+uv run pytest                   # 391 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -113,8 +126,8 @@ window is meant to increment a counter, because the split degrades with use and
 that degradation should be visible rather than forgotten. *The counter is built
 and tested but nothing calls it yet, because nothing reads that window yet.*
 
-**Plateaus over peaks.** *Not yet implemented.* The best single cell in a
-parameter grid is usually the luckiest one. Candidates are scored by the median of their parameter
+**Plateaus over peaks.** *Grid expansion is built; the scoring on top of it is
+not.* The best single cell in a parameter grid is usually the luckiest one. Candidates are scored by the median of their parameter
 neighbourhood; winners sitting on a grid boundary are rejected as walls rather
 than optima; and flatness caused by parameters doing nothing is flagged rather
 than reported as robustness.
