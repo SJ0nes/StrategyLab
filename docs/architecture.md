@@ -72,7 +72,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 
 | Module | What works | Tests |
 |---|---|---|
-| `windows.py` | `in_sample_bars` and `walk_forward_bars` — the one place any component asks which bars it may see. The held-back accessor increments the protocol's touch counter before returning a bar and takes the file it will increment, so tests point it at a copy. No dry run, deliberately. | 13 |
+| `windows.py` | `in_sample_bars` and `walk_forward_bars` — the one place any component asks which bars it may see. The held-back accessor increments the protocol's touch counter before returning a bar and takes the file it will increment, so tests point it at a copy. No dry run, deliberately. | 16 |
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
@@ -93,7 +93,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
 | `cli.py` | `status`, `fetch`, `search` and `report`. | none |
 
-**672 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 35 + 13. Run `uv run pytest` to see the
+**675 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 35 + 16. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

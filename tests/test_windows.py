@@ -182,6 +182,43 @@ def test_there_is_no_way_to_get_held_back_bars_without_paying() -> None:
     )
 
 
+def test_an_overlapping_pair_of_windows_cannot_be_constructed() -> None:
+    # THE HOLE THIS CLOSES. `in_sample_bars` trusts the protocol it is handed,
+    # so a protocol built in code with overlapping windows returned held-back
+    # bars for free - measured at 129 of them, counter untouched. `load_protocol`
+    # refuses an overlapping pair from a FILE; nothing refused one from a
+    # constructor.
+    #
+    # It is now an invariant of the type: there is no overlapping `Windows` to
+    # hand anybody, so no accessor has to remember to check.
+    with pytest.raises(ValueError, match="overlap"):
+        Windows(
+            in_sample=Window(start=date(2010, 1, 1), end=date(2011, 12, 31)),
+            walk_forward=Window(start=date(2010, 7, 1), end=date(2011, 12, 31)),
+            fold_months=12,
+        )
+
+
+def test_windows_touching_on_a_single_day_still_overlap() -> None:
+    # The boundary. Sharing one date is sharing data.
+    with pytest.raises(ValueError, match="overlap"):
+        Windows(
+            in_sample=Window(start=date(2010, 1, 1), end=date(2010, 7, 1)),
+            walk_forward=Window(start=date(2010, 7, 1), end=date(2010, 12, 31)),
+            fold_months=12,
+        )
+
+
+def test_consecutive_windows_are_accepted() -> None:
+    # And the accepting side, so an off-by-one in the comparison would show.
+    windows = Windows(
+        in_sample=Window(start=date(2010, 1, 1), end=date(2010, 6, 30)),
+        walk_forward=Window(start=date(2010, 7, 1), end=date(2010, 12, 31)),
+        fold_months=12,
+    )
+    assert windows.in_sample.end < windows.walk_forward.start
+
+
 # --------------------------------------------------------------------------
 # Refusals, shared by both windows.
 # --------------------------------------------------------------------------

@@ -1345,8 +1345,63 @@ def _wide_protocol() -> Protocol:
     window the other tests use is too short for a 20-bar lookback. That refusal
     is correct - six blocks is a thin surrogate - so these tests widen the
     window rather than weaken the guard.
+
+    The held-back window is moved BEYOND the fixture rather than left where it
+    was. An earlier version widened only the in-sample end, which made the two
+    windows overlap - and `Windows` now refuses that, correctly: an overlapping
+    pair would let `in_sample_bars` return held-back bars with no touch charged.
+    The test that needed a wide window was quietly relying on a malformed
+    protocol.
     """
-    return _protocol(window_end=date(2011, 12, 31))
+    return Protocol(
+        protocol_version=1,
+        created=date(2026, 8, 21),
+        instruments=Instruments(research="SPY", execution="VUAG.L"),
+        windows=Windows(
+            in_sample=Window(start=date(2010, 1, 1), end=date(2011, 12, 31)),
+            walk_forward=Window(start=date(2012, 1, 1), end=date(2013, 12, 31)),
+            fold_months=12,
+        ),
+        costs=TEST_COSTS,
+        validation=Validation(
+            primary_metric="sharpe",
+            min_sharpe=1.0,
+            min_trades_per_fold=10,
+            min_trades_pooled=30,
+            max_drawdown_ceiling_pct=25.0,
+            pass_margin=0.2,
+        ),
+        walk_forward_touches=0,
+    )
+
+
+def _split_protocol() -> Protocol:
+    """A valid split with real bars on BOTH sides, inside the fixture.
+
+    In-sample 2010-01-01 to 2010-09-30, held back from 2010-10-01. The fixture
+    runs to 2011-01-03, so there are genuine bars outside the search's window to
+    poison - which is what makes the window assertions mean anything.
+    """
+    return Protocol(
+        protocol_version=1,
+        created=date(2026, 8, 21),
+        instruments=Instruments(research="SPY", execution="VUAG.L"),
+        windows=Windows(
+            in_sample=Window(start=date(2010, 1, 1), end=date(2010, 9, 30)),
+            walk_forward=Window(start=date(2010, 10, 1), end=date(2011, 12, 31)),
+            fold_months=12,
+        ),
+        costs=TEST_COSTS,
+        validation=Validation(
+            primary_metric="sharpe",
+            min_sharpe=1.0,
+            min_trades_per_fold=10,
+            min_trades_pooled=30,
+            max_drawdown_ceiling_pct=25.0,
+            pass_margin=0.2,
+        ),
+        walk_forward_touches=0,
+    )
 
 
 def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
@@ -1363,19 +1418,26 @@ def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
         "noise_trials": 2,
         "noise_seed": 5,
     }
-    # Corrupt beyond the fixture's own end, so the window still covers every
-    # real bar while the frame carries poisoned rows the search must not read.
+    # ONE protocol, a valid split, and the same frame twice - once intact and
+    # once with every bar after the in-sample end poisoned. The ceiling is
+    # resampled from the window, so it must come out bit-identical.
+    #
+    # An earlier version compared two runs under DIFFERENT protocols and could
+    # only assert their block lengths matched, which is barely a test. It also
+    # built an overlapping pair of windows to do it - now impossible, and the
+    # reason this was rewritten.
+    protocol = _split_protocol()
     clean = run_search(
         _small_strategy(),
         fixture_bars,
-        _wide_protocol(),
+        protocol,
         graveyard_path=tmp_path / "a.jsonl",
         **kwargs,  # type: ignore[arg-type]
     )
     corrupted = run_search(
         _small_strategy(),
-        _corrupt_after(fixture_bars, date(2010, 12, 31)),
-        _protocol(window_end=date(2010, 12, 31)),
+        _corrupt_after(fixture_bars, date(2010, 9, 30)),
+        protocol,
         graveyard_path=tmp_path / "b.jsonl",
         **kwargs,  # type: ignore[arg-type]
     )
@@ -1383,9 +1445,8 @@ def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
     assert clean.noise_ceiling is not None
     assert corrupted.noise_ceiling is not None
     assert len(clean.noise_ceiling) == 2
-    # Both ceilings were built from bars inside their own windows only, so the
-    # poisoned rows changed nothing about either.
-    assert clean.noise_block_bars == corrupted.noise_block_bars
+    pd.testing.assert_series_equal(clean.noise_ceiling, corrupted.noise_ceiling)
+    pd.testing.assert_frame_equal(clean.results, corrupted.results)
 
 
 def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number(

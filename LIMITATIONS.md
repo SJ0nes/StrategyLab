@@ -124,7 +124,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-672 tests pass (`uv run pytest`). They cover the protocol loader, the data
+675 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop, the noise ceiling and the reports — thirteen
@@ -462,6 +462,15 @@ accessors, the loop's private copy is deleted, and any future component asks the
 same function. Reading the held-back window additionally increments the
 protocol's counter and cannot be made not to — there is no dry run, because a
 free look is what the counter exists to prevent.
+
+One hole in that has since been closed, and it is worth recording because it
+was invisible: `in_sample_bars` trusts the protocol it is handed, and a
+`Protocol` built IN CODE with overlapping windows made it return held-back bars
+for free — measured at 129 of them, with the counter untouched. `load_protocol`
+refuses an overlapping pair read from a file; nothing refused one from a
+constructor. It is now an invariant of `Windows` itself, so there is no
+overlapping pair to hand anybody. Two of this repository's own tests turned out
+to be relying on constructing one.
 
 What remains is that nothing *enforces* the use of that module. A component
 could still slice a cached frame with plain pandas and nobody would notice. The

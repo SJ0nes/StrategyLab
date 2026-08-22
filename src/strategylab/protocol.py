@@ -95,6 +95,43 @@ class Windows:
     walk_forward: Window
     fold_months: int
 
+    def __post_init__(self) -> None:
+        """Refuse a pair of windows that overlap.
+
+        :func:`load_protocol` already refuses an overlapping pair read from a
+        file, and does it first, so a malformed ``protocol.yaml`` still gets its
+        own message. This guards the OTHER way in.
+
+        A ``Protocol`` can be built in code - tests do it constantly, and so
+        would any future caller - and one built with overlapping windows made
+        :func:`~strategylab.windows.in_sample_bars` hand back held-back bars for
+        free, with no touch charged, because that accessor trusts the protocol
+        it is given. Measured before this guard existed: a protocol whose
+        in-sample window swallowed the held-back half returned 129 walk-forward
+        bars and left the counter at zero.
+
+        The split is this project's central methodological claim, and a claim
+        that depends on every constructor being called carefully is not a
+        guarantee. Here it is an invariant of the type instead: there is no
+        overlapping ``Windows`` to hand anybody.
+
+        Raises:
+            ValueError: If the two windows share any date. Distinct from
+                ``ProtocolError``, which is what a bad FILE produces - this is a
+                programming error, not a configuration one.
+        """
+        if (
+            self.in_sample.start <= self.walk_forward.end
+            and self.walk_forward.start <= self.in_sample.end
+        ):
+            raise ValueError(
+                "the in-sample and walk-forward windows overlap "
+                f"({self.in_sample.start}..{self.in_sample.end} vs "
+                f"{self.walk_forward.start}..{self.walk_forward.end}); the search must never "
+                "see the held-back window, and an overlapping pair would let it read those "
+                "bars without the access counter moving"
+            )
+
 
 @dataclass(frozen=True)
 class Instruments:
