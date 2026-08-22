@@ -71,6 +71,17 @@ chosen to flatter, which is what distinguishes this from the kind of edit the
 protocol forbids. The same three changes made after the first search would be
 indefensible, and would require resetting the access counter.
 
+> **Update, 2026-08-22.** The paragraph above is preserved as written, because
+> it records what was true at the moment of the amendment and that is the fact
+> it exists to establish. Read today its opening is stale: a search HAS now run.
+> `strategylab search` walked all ninety cells over the in-sample window on
+> 2026-08-22, so there is now a prior number, and the window this paragraph
+> describes as safe to amend in is closed. Its final sentence is now the
+> operative one — the same three changes made from here would be indefensible.
+>
+> `access_log.walk_forward_touches` remains `0`; the held-back window has still
+> never been read.
+
 Two of the three changes are unambiguous tightenings: `min_sharpe` adds a
 criterion that did not previously exist, and removing the run-time argument
 closes the channel through which a threshold could have been chosen after seeing

@@ -39,10 +39,10 @@ validated, and no figure from a search appears in this README.**
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | Plateau scoring, the edge check, the degeneracy check | |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
-| The search loop — grid → engine → scoring → graveyard, with the window test | |
+| The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | `status`, `fetch` and `search` commands *(untested)* | |
 
-**530 tests pass** — verify with `uv run pytest`. They cover the protocol
+**550 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard and the search loop — eleven areas, one per test
@@ -57,9 +57,11 @@ that each later component is built against a fixed interface.
 one file and hands all of it to the search; the search cuts it down from
 `protocol.windows.in_sample` and from nothing else.
 `tests/test_search_loop.py` corrupts every bar after the window's end, passes
-the frame in intact, and asserts no cell's result moves. That protects one
-consumer — the next component that reads bars will need the same treatment, and
-`docs/architecture.md` says how.
+the frame in intact, and asserts both the bar count and that no cell's result
+moves. The count assertion is not decoration: an audit showed the corruption
+alone is blind to a one-bar leak on this fixture, and `LIMITATIONS.md` says why.
+The guard protects one consumer — the next component that reads bars will need
+the same treatment, and `docs/architecture.md` says how.
 
 Both guarantees this project rests on now have tests.
 **Strategy evaluation cannot read past the current bar** — the lookahead
@@ -100,7 +102,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 530 tests, none touching the network
+uv run pytest                   # 550 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

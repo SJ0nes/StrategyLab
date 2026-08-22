@@ -9,10 +9,22 @@ implementation printed.
 walk-forward split - this project's central methodological claim - is enforced
 by `_in_sample_window` and by nothing else.
 `test_bars_outside_the_window_cannot_change_any_cell` corrupts every bar after
-the window's end, passes the frame in INTACT, and asserts every cell's result is
-unchanged. A loop that read one bar past the end fails it. That is the same
-shape as `tests/test_engine.py`'s lookahead test, and for the same reason: the
-guarantee lives in a slice, so the test must attack the slice.
+the window's end, passes the frame in INTACT, and asserts both that the bar
+COUNT is the in-window count and that every cell's result is unchanged.
+
+BOTH HALVES ARE LOAD-BEARING, and an audit is why. The corruption half alone
+cannot see a one-bar leak on this fixture: a signal from bar `t` fills at
+`t+1`'s open, so the window's last bar never produces a fill, and every cell is
+flat at the window end - so one leaked bar adds an identical equity point to
+both runs and the frames stay bit-identical. Measured: extending the slice by
+one row leaves them equal, by two rows turns them red. The bar-count assertion
+is what makes the one-bar case fail, and it sits in this test rather than a
+neighbouring one so that the test the documents nominate is the test that
+carries the claim.
+
+That is NOT the same shape as `tests/test_engine.py`'s lookahead test, which an
+earlier version of this docstring claimed it was. The engine's test fails on a
+single-bar peek on its own; this one needs its count assertion to do so.
 
 **The plateau tables.** `select_candidate` is exercised against hand-built
 frames rather than against real backtests, because the property under test is
@@ -60,7 +72,6 @@ from strategylab.search.loop import (
     NO_TRADES_FINGERPRINT,
     SEARCH_SCHEMA_VERSION,
     TRADED_PREFIX,
-    Candidate,
     SearchError,
     failed_fingerprint,
     run_search,
@@ -169,9 +180,13 @@ def _corrupt_after(bars: pd.DataFrame, cutoff: date) -> pd.DataFrame:
     """Return a copy of `bars` with every bar after `cutoff` made absurd.
 
     Multiplied by a thousand rather than randomised, so the corruption is
-    deterministic and its effect on any metric would be unmissable. A loop that
-    reads one bar past the window produces a different Sharpe on the cells whose
-    windows reach it, and the guard test says so.
+    deterministic and its effect on any metric it reaches would be unmissable.
+
+    "Any metric it reaches" is the qualification that matters. A leak of two or
+    more bars reaches a FILL and moves the Sharpe of every cell whose window
+    touches it. A leak of exactly one bar reaches only a mark-to-market, and on
+    this fixture every cell is flat there, so it moves nothing. The caller's
+    bar-count assertion is what covers that case.
     """
     corrupted = bars.copy()
     after = pd.DatetimeIndex(corrupted.index).normalize() > pd.Timestamp(cutoff)
@@ -189,10 +204,29 @@ def test_bars_outside_the_window_cannot_change_any_cell(
     fixture_bars: pd.DataFrame, tmp_path: Path
 ) -> None:
     # The guarantee the whole project rests on. The frame is passed in INTACT -
-    # nothing is sliced away before the call - so a loop that read a single bar
-    # past the window's end would produce different metrics here.
+    # nothing is sliced away before the call - so a loop that read past the
+    # window's end has the corrupted bars in front of it.
+    #
+    # THIS TEST CATCHES A ONE-BAR LEAK BY COUNT AND A LARGER ONE BY VALUE, and
+    # the two halves are not interchangeable. An audit found the earlier version
+    # of this test, which asserted only the frames, silently blind to the
+    # smallest and most plausible off-by-one. The mechanism: a signal from bar t
+    # fills at t+1's open, so the LAST bar in the window never produces a fill,
+    # and every cell here is flat at 2010-06-30 - so one leaked bar contributes
+    # no fill and no changed mark-to-market. Both runs then add the same equity
+    # point and the frames match. Measured, not reasoned: extending the slice by
+    # one row leaves the frames bit-identical, by two rows turns them red.
+    #
+    # So the bar count carries the one-bar case and the corruption carries the
+    # rest, and both assertions live in the test the documents nominate rather
+    # than one of them living somewhere else.
     protocol = _protocol()
     strategy = _small_strategy()
+
+    stamps = pd.DatetimeIndex(fixture_bars.index).normalize()
+    in_window = int(
+        ((stamps >= pd.Timestamp(date(2010, 1, 1))) & (stamps <= pd.Timestamp(WINDOW_END))).sum()
+    )
 
     clean = run_search(
         strategy,
@@ -211,6 +245,10 @@ def test_bars_outside_the_window_cannot_change_any_cell(
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
+    # By count: one leaked bar changes this even when it changes nothing else.
+    assert clean.bars_used == in_window
+    assert corrupted.bars_used == in_window
+    # By value: a leak large enough to reach a fill moves the metrics.
     pd.testing.assert_frame_equal(clean.results, corrupted.results)
     assert clean.winner == corrupted.winner
 
@@ -273,20 +311,260 @@ def test_a_frame_with_no_bar_in_the_window_is_refused(
         )
 
 
-def test_a_frame_not_indexed_by_timestamp_is_refused(tmp_path: Path) -> None:
-    bars = pd.DataFrame(
+def _one_bar(index: Any) -> pd.DataFrame:
+    """A single well-formed OHLCV row carrying whatever index is handed in."""
+    return pd.DataFrame(
         {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "volume": [1]},
-        index=["not-a-date"],
+        index=index,
     )
-    with pytest.raises(SearchError, match="not indexed by timestamp"):
+
+
+def test_a_frame_not_indexed_by_timestamp_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(SearchError, match="not a DatetimeIndex"):
         run_search(
             _small_strategy(),
-            bars,
+            _one_bar(["not-a-date"]),
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
+
+
+def test_an_integer_index_is_refused_rather_than_read_as_epoch_nanoseconds(
+    tmp_path: Path,
+) -> None:
+    # pandas does not raise on this: it reads the integers as nanoseconds since
+    # the epoch, dating the frame to 1970. Coercing first and complaining that
+    # no bar falls in the window would report the wrong diagnosis, and against a
+    # protocol whose window covered 1970 it would accept the frame outright.
+    with pytest.raises(SearchError, match="nanoseconds since the epoch"):
+        run_search(
+            _small_strategy(),
+            _one_bar([0, 1, 2][:1]),
+            _protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            graveyard_path=tmp_path / "graveyard.jsonl",
+        )
+
+
+def test_a_timezone_aware_index_is_refused(tmp_path: Path) -> None:
+    # The protocol's window is a plain date, so which bars fall inside a
+    # tz-aware frame depends on a conversion nobody has chosen. Comparing the
+    # two directly raises a bare TypeError out of pandas, which is not a failure
+    # mode this loop's contract admits.
+    aware = pd.DatetimeIndex(["2010-03-01"]).tz_localize("America/New_York")
+    with pytest.raises(SearchError, match="timezone-aware"):
+        run_search(
+            _small_strategy(),
+            _one_bar(aware),
+            _protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            graveyard_path=tmp_path / "graveyard.jsonl",
+        )
+
+
+# --------------------------------------------------------------------------
+# A bad input must not masquerade as ninety failed cells.
+#
+# `run_backtest` raises ValueError both for things that are properties of a
+# CELL (a warm-up longer than the window) and for things that are properties of
+# the INPUTS (an unsorted frame, a missing column, a bad starting equity). The
+# loop catches ValueError per cell and records a failure, so without a check up
+# front the second kind would return an ordinary result reporting "90 of 90
+# cells failed" - which this module's own contract calls a legitimate finding -
+# and would append 90 permanent records to an append-only graveyard.
+#
+# Each test below therefore asserts BOTH halves: that a SearchError is raised,
+# and that the graveyard was never touched.
+# --------------------------------------------------------------------------
+
+
+def _bad_input_is_refused(bars: pd.DataFrame, tmp_path: Path, match: str, **kwargs: Any) -> None:
+    """Assert the loop refuses these inputs outright and writes no graveyard."""
+    graveyard = tmp_path / "graveyard.jsonl"
+    with pytest.raises(SearchError, match=match):
+        run_search(
+            kwargs.pop("definition", _small_strategy()),
+            bars,
+            kwargs.pop("protocol", _protocol()),
+            config_path=kwargs.pop("config_path", Path("configs/small.yaml")),
+            data_content_hash="x",
+            graveyard_path=graveyard,
+            **kwargs,
+        )
+    assert not graveyard.exists(), "a refused search must leave no graveyard record"
+
+
+def test_an_unsorted_frame_is_refused_not_reported_as_every_cell_failing(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    _bad_input_is_refused(fixture_bars.iloc[::-1], tmp_path, "not sorted ascending")
+
+
+def test_a_frame_with_duplicate_timestamps_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    _bad_input_is_refused(
+        pd.concat([fixture_bars, fixture_bars]).sort_index(), tmp_path, "duplicate timestamps"
+    )
+
+
+def test_a_frame_missing_a_required_column_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    _bad_input_is_refused(fixture_bars.drop(columns=["volume"]), tmp_path, "required column")
+
+
+@pytest.mark.parametrize("equity", [0.0, -1.0, float("inf"), float("nan")])
+def test_a_starting_equity_that_is_not_positive_and_finite_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path, equity: float
+) -> None:
+    _bad_input_is_refused(fixture_bars, tmp_path, "positive and finite", starting_equity=equity)
+
+
+def test_a_strategy_with_no_searched_parameters_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `expand_grid({})` returns one empty combination by design, which would
+    # reach `plateau_score` as a frame with no parameter axis and raise a bare
+    # ValueError about parameter columns - a confusing diagnosis for a config
+    # that parsed perfectly well.
+    _bad_input_is_refused(
+        fixture_bars,
+        tmp_path,
+        "no searched parameters",
+        definition=_small_strategy(search={}),
+    )
+
+
+def test_a_parameter_named_like_a_result_column_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `{**cell, "sharpe": ...}` would let the metric overwrite the parameter, so
+    # the frame would lose an axis and the failure would surface downstream as a
+    # complaint about duplicate combinations.
+    # The definition must actually SUPPLY every placeholder it references, or
+    # the unsupplied-placeholder check fires first and this test would pass for
+    # the wrong reason. So the offending parameter is one the conditions use.
+    colliding = StrategyDef(
+        name="collides",
+        version=1,
+        description="A strategy whose searched parameter is named like a metric column.",
+        entry=(
+            Condition(
+                IndicatorRef("sma", period_param="sharpe"),
+                "crosses_above",
+                IndicatorRef("sma", period_param="slow"),
+            ),
+        ),
+        exit=(
+            Condition(
+                IndicatorRef("sma", period_param="sharpe"),
+                "crosses_below",
+                IndicatorRef("sma", period_param="slow"),
+            ),
+        ),
+        search={
+            "sharpe": {"min": 3, "max": 7, "step": 2},
+            "slow": {"min": 10, "max": 20, "step": 5},
+        },
+        fixed={"position_size_pct": 95.0},
+    )
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "collide with the result columns", definition=colliding
+    )
+
+
+def _definition(**overrides: Any) -> StrategyDef:
+    """A valid small definition with one field replaced, for the guard tests."""
+    base = _small_strategy()
+    fields = {
+        "name": base.name,
+        "version": base.version,
+        "description": base.description,
+        "entry": base.entry,
+        "exit": base.exit,
+        "search": base.search,
+        "fixed": base.fixed,
+    }
+    fields.update(overrides)
+    return StrategyDef(**fields)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("side", ["entry", "exit"])
+def test_an_empty_condition_list_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path, side: str
+) -> None:
+    # `evaluate` refuses it, so every cell would fail identically. The config
+    # loader refuses it too - but `run_search` takes a StrategyDef, not a path,
+    # and a definition built in code never passes the loader.
+    _bad_input_is_refused(
+        fixture_bars,
+        tmp_path,
+        f"empty '{side}' condition list",
+        definition=_definition(**{side: ()}),
+    )
+
+
+def test_an_indicator_the_engine_does_not_implement_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    entry = (
+        Condition(
+            IndicatorRef("ema", period_param="fast"),
+            "crosses_above",
+            IndicatorRef("sma", period_param="slow"),
+        ),
+    )
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "not in the vocabulary", definition=_definition(entry=entry)
+    )
+
+
+def test_an_operator_the_engine_does_not_implement_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    entry = (
+        Condition(
+            IndicatorRef("sma", period_param="fast"),
+            "crosses_sideways",
+            IndicatorRef("sma", period_param="slow"),
+        ),
+    )
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "not in the vocabulary", definition=_definition(entry=entry)
+    )
+
+
+def test_a_placeholder_nothing_supplies_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `$trend` is referenced but appears in neither `search` nor `fixed`, so
+    # `evaluate` would raise "params omits 'trend'" on every single cell.
+    entry = (
+        *_small_strategy().entry,
+        Condition(IndicatorRef("close"), "above", IndicatorRef("sma", period_param="trend")),
+    )
+    _bad_input_is_refused(
+        fixture_bars,
+        tmp_path,
+        r"placeholder\(s\) \['trend'\]",
+        definition=_definition(entry=entry),
+    )
+
+
+def test_an_absolute_config_path_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
+    # It is recorded verbatim in the artifact, and an absolute path carries the
+    # username of the machine it ran on into a file meant to be read by others.
+    _bad_input_is_refused(
+        fixture_bars,
+        tmp_path,
+        "absolute",
+        config_path=(tmp_path / "small.yaml"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -373,8 +651,8 @@ def test_a_failed_fingerprint_does_not_depend_on_key_order() -> None:
 def _all_cells_fail_strategy() -> StrategyDef:
     """A strategy whose every cell needs more bars than the window holds.
 
-    The window is roughly 125 bars; every `slow` here exceeds that, so the
-    engine refuses each cell for a warm-up it cannot satisfy.
+    The window is 124 bars; every `slow` here exceeds that, so the engine
+    refuses each cell for a warm-up it cannot satisfy.
     """
     return _small_strategy(
         {
@@ -384,11 +662,74 @@ def _all_cells_fail_strategy() -> StrategyDef:
     )
 
 
+def _mixed_failure_strategy() -> StrategyDef:
+    """A strategy where some cells backtest and some cannot warm up.
+
+    The warm-up is `slow + 1` bars against a 124-bar window, so `slow` of 100
+    and 120 need 101 and 121 bars and succeed, while 140 needs 141 and fails.
+    Three values of `fast` times three of `slow` is nine cells, of which the
+    three carrying `slow = 140` fail - which is the case that matters, because
+    a grid with SOME failures is the one that must still produce a surface.
+    """
+    return _small_strategy(
+        {
+            "fast": {"min": 3, "max": 7, "step": 2},
+            "slow": {"min": 100, "max": 140, "step": 20},
+        }
+    )
+
+
+#: Cells of `_mixed_failure_strategy` that cannot warm up: one per `fast` value,
+#: all three carrying `slow = 140`.
+MIXED_FAILURES = 3
+MIXED_CELLS = 9
+
+
+def test_a_grid_in_which_every_cell_fails_is_an_error_not_a_finding(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # An earlier version returned an ordinary result reporting "9 of 9 failed"
+    # and called that a legitimate finding about the window being too short. It
+    # cannot be: `run_backtest` raises the same ValueError for faults in the
+    # DEFINITION or the DATA - an empty condition list, a placeholder nothing
+    # supplies, a non-finite bar - and each of those makes every cell fail
+    # identically. A malformed argument was therefore indistinguishable from a
+    # research outcome, and left one permanent graveyard record per cell.
+    graveyard = tmp_path / "graveyard.jsonl"
+    with pytest.raises(SearchError, match="every one of the 9 cells failed"):
+        run_search(
+            _all_cells_fail_strategy(),
+            fixture_bars,
+            _protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            graveyard_path=graveyard,
+        )
+    assert not graveyard.exists(), "a search that produced no surface must record nothing"
+
+
+def test_the_error_carries_the_first_failure_so_the_cause_is_visible(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # "Everything failed" on its own is not a diagnosis. The underlying message
+    # is what tells the operator whether the window is short or the strategy is
+    # malformed, so it is carried out rather than swallowed.
+    with pytest.raises(SearchError, match="warm-up needs"):
+        run_search(
+            _all_cells_fail_strategy(),
+            fixture_bars,
+            _protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            graveyard_path=tmp_path / "graveyard.jsonl",
+        )
+
+
 def test_a_cell_whose_backtest_raised_keeps_its_row_with_a_nan_metric(
     fixture_bars: pd.DataFrame, tmp_path: Path
 ) -> None:
     result = run_search(
-        _all_cells_fail_strategy(),
+        _mixed_failure_strategy(),
         fixture_bars,
         _protocol(),
         config_path=Path("configs/small.yaml"),
@@ -396,12 +737,15 @@ def test_a_cell_whose_backtest_raised_keeps_its_row_with_a_nan_metric(
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
-    # 3 values of `fast` times 3 of `slow` = 9 cells, all of them failing.
-    assert result.grid_size == 9
-    assert result.failed_cells == 9
-    assert len(result.results) == 9
-    assert result.results[METRIC_COLUMN].isna().all()
-    assert result.winner is None
+    # Every cell keeps its row. A dropped row is a hole in the GRID, which makes
+    # cells two steps apart look adjacent to the neighbourhood walk.
+    assert result.grid_size == MIXED_CELLS
+    assert len(result.results) == MIXED_CELLS
+    assert result.failed_cells == MIXED_FAILURES
+    assert int(result.results[METRIC_COLUMN].isna().sum()) == MIXED_FAILURES
+    # The failures are exactly the cells whose warm-up exceeds the window.
+    failed_rows = result.results[result.results[METRIC_COLUMN].isna()]
+    assert set(failed_rows["slow"]) == {140}
 
 
 def test_every_failed_cell_is_recorded_in_the_graveyard(
@@ -409,7 +753,7 @@ def test_every_failed_cell_is_recorded_in_the_graveyard(
 ) -> None:
     graveyard = tmp_path / "graveyard.jsonl"
     run_search(
-        _all_cells_fail_strategy(),
+        _mixed_failure_strategy(),
         fixture_bars,
         _protocol(),
         config_path=Path("configs/small.yaml"),
@@ -418,26 +762,30 @@ def test_every_failed_cell_is_recorded_in_the_graveyard(
     )
 
     records = [json.loads(line) for line in graveyard.read_text(encoding="utf-8").splitlines()]
-    assert len(records) == 9
-    assert {record["reason"] for record in records} == {"backtest_failed"}
+    failures = [record for record in records if record["reason"] == "backtest_failed"]
+    assert len(failures) == MIXED_FAILURES
     # A non-finite metric is JSON null, so the file stays parseable by something
     # other than Python.
-    assert all(record["metrics"]["sharpe"] is None for record in records)
+    assert all(record["metrics"]["sharpe"] is None for record in failures)
+    # Selection rejections land in the same file, under their own reasons.
+    assert {record["reason"] for record in records} <= REJECTION_REASONS
 
 
 def test_failed_cells_do_not_all_share_one_fingerprint(
     fixture_bars: pd.DataFrame, tmp_path: Path
 ) -> None:
     result = run_search(
-        _all_cells_fail_strategy(),
+        _mixed_failure_strategy(),
         fixture_bars,
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
-    fingerprints = result.results[FINGERPRINT_COLUMN].tolist()
-    assert len(set(fingerprints)) == len(fingerprints)
+    failed = result.results[result.results[METRIC_COLUMN].isna()]
+    fingerprints = failed[FINGERPRINT_COLUMN].tolist()
+    assert len(fingerprints) == MIXED_FAILURES
+    assert len(set(fingerprints)) == MIXED_FAILURES
 
 
 # --------------------------------------------------------------------------
@@ -536,13 +884,21 @@ def test_a_cell_whose_own_backtest_failed_is_never_nominated() -> None:
     # x=5's own Sharpe is NaN but its neighbours are excellent, so its
     # plateau_score is the highest on the grid. Nominating it would nominate a
     # cell that produced no result at all.
+    #   x=4  median(0.1, 9.0, NaN excluded)  = 4.55
+    #   x=5  median(9.0, NaN excluded, 9.0)  = 9.00   <- highest, and unusable
+    #   x=6  median(9.0, NaN excluded, 0.1)  = 4.55
+    # So x=5 outranks everything and must be skipped; x=4 and x=6 then tie at
+    # 4.55, and the lower-value tie-break settles it on x=4. Asserting the
+    # winner IS x=4, rather than merely that it is not x=5, is what makes this
+    # test fail for the right reason.
     sharpes = [0.1, 0.1, 0.1, 9.0, math.nan, 9.0, 0.1, 0.1, 0.1]
     scored = plateau_score(_one_axis_frame(sharpes), radius=1)
     assert float(scored.loc[scored["x"] == 5, "plateau_score"].iloc[0]) == pytest.approx(9.0)
 
     winner = select_candidate(scored, _one_axis_spec(9), 25.0, radius=1)[0]
     assert winner is not None
-    assert winner.cell != {"x": 5}
+    assert winner.cell == {"x": 4}
+    assert winner.plateau_score == pytest.approx(4.55)
 
 
 def test_no_surviving_cell_reports_no_winner() -> None:
@@ -573,10 +929,19 @@ def test_a_degenerate_winner_is_flagged_and_not_rejected() -> None:
 def test_every_reason_this_loop_writes_is_in_the_closed_vocabulary() -> None:
     # The graveyard raises on an unknown reason, so a typo would surface only on
     # the run that hit that branch. This checks all of them at once.
+    # x=5 rises to the boundary and scores highest, so it is refused on the edge
+    # rule; the drawdown of 30.0 against a 25.0 ceiling never gets consulted for
+    # it, because the edge check runs first. x=4 then wins on 0.40.
     scored = plateau_score(_one_axis_frame([0.1, 0.2, 0.3, 0.4, 0.5], [1, 1, 1, 1, 30.0]), radius=1)
-    rejections = select_candidate(scored, _one_axis_spec(5), 25.0, radius=1)[1]
-    assert {rejection.reason for rejection in rejections} <= REJECTION_REASONS
-    assert "backtest_failed" in REJECTION_REASONS
+    winner, rejections = select_candidate(scored, _one_axis_spec(5), 25.0, radius=1)
+
+    # Asserting the set is non-empty matters: `set() <= REJECTION_REASONS` is
+    # vacuously true, so the subset check alone would pass on no rejections.
+    reasons = {rejection.reason for rejection in rejections}
+    assert reasons == {"edge_winner"}
+    assert reasons <= REJECTION_REASONS
+    assert winner is not None
+    assert winner.cell == {"x": 4}
 
 
 # --------------------------------------------------------------------------
@@ -681,14 +1046,42 @@ def test_the_artifact_carries_the_whole_surface_and_its_provenance(
     assert payload["schema_version"] == SEARCH_SCHEMA_VERSION
     assert payload["data_content_hash"] == "abc123"
     assert payload["config"] == "configs/small.yaml"
+    # The bar count is recomputed from the fixture. An earlier version of this
+    # assertion compared payload["window"]["bars"] against itself, which is a
+    # tautology dressed as a check.
+    stamps = pd.DatetimeIndex(fixture_bars.index).normalize()
+    expected_bars = int(
+        ((stamps >= pd.Timestamp(date(2010, 1, 1))) & (stamps <= pd.Timestamp(WINDOW_END))).sum()
+    )
     assert payload["window"] == {
         "start": "2010-01-01",
         "end": WINDOW_END.isoformat(),
-        "bars": payload["window"]["bars"],
+        "bars": expected_bars,
     }
     # The output of this project is the SHAPE of the surface, so every cell is
     # in the file, not just the winner.
     assert len(payload["cells"]) == payload["grid_size"] == 9
+
+    # The costs are recorded, and as FRACTIONS. A surface whose costs a reader
+    # cannot see is a surface they cannot check, and costs are the largest
+    # determinant of every Sharpe in the file.
+    assert payload["costs_frac"] == {
+        "spread": TEST_COSTS.spread_frac,
+        "slippage": TEST_COSTS.slippage_frac,
+        "commission": TEST_COSTS.commission_frac,
+        "fx_conversion": TEST_COSTS.fx_conversion_frac,
+    }
+    # A cash amount, not a rate, which is why it sits outside `costs_frac`.
+    assert payload["commission_min_flat"] == TEST_COSTS.commission_min_flat
+    assert payload["max_drawdown_ceiling_pct"] == 25.0
+
+
+def test_the_artifact_schema_version_matches_the_documented_field_set() -> None:
+    # The version exists so a reader meeting an unfamiliar artifact can say so.
+    # It was bumped to 2 when `costs_frac` and `commission_min_flat` were added:
+    # an artifact written by commit db180ce says 1 and lacks both, so leaving it
+    # at 1 would have labelled two different shapes identically.
+    assert SEARCH_SCHEMA_VERSION == 2
 
 
 def test_the_artifact_states_that_no_noise_ceiling_was_computed(
@@ -707,7 +1100,7 @@ def test_the_artifact_is_strict_json_even_when_a_cell_failed(tmp_path: Path) -> 
     # catch this. Rejecting it is what a strict reader does.
     bars = pd.read_parquet(FIXTURE_BARS)
     result = run_search(
-        _all_cells_fail_strategy(),
+        _mixed_failure_strategy(),
         bars,
         _protocol(),
         config_path=Path("configs/small.yaml"),
@@ -718,7 +1111,9 @@ def test_the_artifact_is_strict_json_even_when_a_cell_failed(tmp_path: Path) -> 
 
     text = path.read_text(encoding="utf-8")
     assert "NaN" not in text
-    assert json.loads(text, parse_constant=_refuse_constant)["cells"][0]["sharpe"] is None
+    payload = json.loads(text, parse_constant=_refuse_constant)
+    nulls = [cell for cell in payload["cells"] if cell["sharpe"] is None]
+    assert len(nulls) == MIXED_FAILURES
 
 
 def _refuse_constant(token: str) -> float:
@@ -761,15 +1156,17 @@ def test_the_only_cell_that_can_win_a_three_by_three_grid_is_its_centre(
     assert {rejection["reason"] for rejection in payload["rejections"]} == {"edge_winner"}
 
 
-def test_the_candidate_type_carries_the_score_it_was_chosen_on() -> None:
-    # Guards against a future edit that ranks on `sharpe` and reports
-    # `plateau_score`, or the reverse - the two fields must stay distinct.
-    candidate = Candidate(
-        cell={"x": 1},
-        sharpe=5.0,
-        max_drawdown_pct=1.0,
-        plateau_score=0.1,
-        neighbour_count=2,
-        degenerate=False,
-    )
-    assert candidate.sharpe != candidate.plateau_score
+def test_the_winner_reports_the_plateau_score_and_its_own_sharpe_separately() -> None:
+    # Deleted from this file: a version of this test that built a Candidate by
+    # hand and asserted `candidate.sharpe != candidate.plateau_score`. That
+    # compared two literals the test itself supplied and could not fail.
+    # The real property is that `select_candidate` fills the two fields from
+    # DIFFERENT columns, which needs a frame where they differ.
+    scored = plateau_score(_one_axis_frame(SPIKE_AND_PLATEAU), radius=1)
+    winner = select_candidate(scored, _one_axis_spec(9), 25.0, radius=1)[0]
+
+    assert winner is not None
+    row = scored.loc[scored["x"] == winner.cell["x"]].iloc[0]
+    assert winner.sharpe == pytest.approx(float(row[METRIC_COLUMN]))
+    assert winner.plateau_score == pytest.approx(float(row["plateau_score"]))
+    assert winner.sharpe != pytest.approx(winner.plateau_score)

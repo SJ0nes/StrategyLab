@@ -16,7 +16,11 @@ enforced by :func:`_in_sample_window`, which slices from
 ``protocol.windows.in_sample`` and by nothing else - not from the frame it was
 handed, not from an argument a caller could widen.
 ``tests/test_search_loop.py`` corrupts every bar after the window's end, passes
-the frame in intact, and asserts no cell's result moves.
+the frame in intact, and asserts both the bar COUNT and that no cell's result
+moves. Both halves are needed: a signal fills at the NEXT bar's open, so the
+window's last bar never produces a fill, and a one-bar leak therefore moves no
+metric on a fixture where every cell is flat there. The count is what fails on
+that case.
 
 ## What this loop does NOT do, and must not be read as doing
 
@@ -61,23 +65,41 @@ from typing import Any
 
 import pandas as pd
 
-from strategylab.backtest.costs import Fill
+from strategylab.backtest.costs import CostModel, Fill
 from strategylab.backtest.engine import run_backtest
-from strategylab.core.types import StrategyDef
+from strategylab.core.config import INDICATORS, OPERATORS
+from strategylab.core.types import IndicatorRef, StrategyDef
+from strategylab.data.source import REQUIRED_COLUMNS
 from strategylab.protocol import Protocol
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH, record_rejection
 from strategylab.search.grid import expand_grid
 from strategylab.search.plateau import (
+    ADDED_COLUMNS,
     FINGERPRINT_COLUMN,
     METRIC_COLUMN,
+    RESULT_COLUMNS,
     is_degenerate,
     is_edge_winner,
     plateau_score,
 )
 
+#: Column names a results frame carries that are NOT searched parameters.
+#: Imported from :mod:`strategylab.search.plateau` rather than re-listed, so a
+#: column added there cannot silently become a searched parameter here. That
+#: coupling is real: this module is the producer of the frame that module
+#: consumes, and the two must agree on which columns are axes.
+_NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
+
 #: Schema version of a search artifact. Bumped when the fields change, so a
 #: reader meeting an unfamiliar version can say so rather than guess.
-SEARCH_SCHEMA_VERSION = 1
+#:
+#: ``1`` was the shape written by commit ``db180ce``. ``2`` adds ``costs_frac``
+#: and ``commission_min_flat``. The bump matters even though no consumer exists
+#: yet and no artifact has been published: an artifact from that commit says
+#: ``1`` and lacks both keys, so leaving this at ``1`` would label two different
+#: shapes identically - which is exactly the confusion the field exists to
+#: prevent. :func:`write_search_result` enumerates the current fields.
+SEARCH_SCHEMA_VERSION = 2
 
 #: Where a search artifact is written. ``cli.status`` counts ``search-*.json``
 #: here to report how many searches have been run.
@@ -133,9 +155,16 @@ class SearchError(Exception):
     """A search could not be run at all, as opposed to running and finding nothing.
 
     Distinct from a cell failing. A cell that raises is a result - recorded with
-    a ``NaN`` metric and a graveyard entry - whereas this means the search never
-    started: no bars in the window, or a protocol whose primary metric is not
-    the one the scoring reads.
+    a ``NaN`` metric and a graveyard entry - whereas this means the search
+    produced no surface at all.
+
+    Raised from two places, and both are needed. :func:`_check_inputs` raises
+    before the first cell runs, naming the fault precisely. :func:`run_search`
+    raises after the loop when EVERY cell failed, which catches the causes
+    ``_check_inputs`` does not know about - and, unlike a list of checks, cannot
+    fall behind the engine. Without the second, a fault in the definition or the
+    data returns ninety ordinary-looking failures and reads as a research
+    outcome.
     """
 
 
@@ -182,14 +211,15 @@ class Rejection:
         reason: One of
             :data:`~strategylab.search.graveyard.REJECTION_REASONS`.
         detail: Human-readable elaboration - the exception message for a failed
-            backtest, the offending figure for a breached ceiling. Empty when
-            ``reason`` says everything there is to say. NOT written to the
-            graveyard, whose schema has no field for it.
+            backtest, the offending figure for a breached ceiling. Always
+            populated: every rejection this module makes has something to add
+            beyond its reason, which is why the field carries no default.
+            NOT written to the graveyard, whose schema has no field for it.
     """
 
     cell: dict[str, int]
     reason: str
-    detail: str = ""
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -219,6 +249,12 @@ class SearchResult:
             PERCENTAGE, from the protocol. Recorded because a rejection is only
             interpretable against the bar it was made under, and the protocol
             file a reader has to hand may not be the one this search ran with.
+        costs: The broker parameters every cell was charged, every rate a
+            FRACTION. Recorded for the same reason as the ceiling, and with
+            more force: costs are the single largest determinant of every
+            Sharpe in the file, and the most effective dial there is for
+            turning a losing strategy into a winning one. A surface whose costs
+            a reader cannot see is a surface they cannot check.
         results: One row per cell: a column per searched parameter holding that
             cell's value in bars, then ``sharpe``, ``max_drawdown_pct``,
             ``trade_count``, ``trade_fingerprint``, ``plateau_score`` and
@@ -245,6 +281,7 @@ class SearchResult:
     plateau_radius: int
     starting_equity: float
     max_drawdown_ceiling_pct: float
+    costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
     rejections: tuple[Rejection, ...] = field(default_factory=tuple)
@@ -255,10 +292,25 @@ def trade_fingerprint(fills: Sequence[Fill]) -> str:
 
     :func:`~strategylab.search.plateau.is_degenerate` fixes the property this
     string must have and leaves the content to this loop: two cells share a
-    fingerprint exactly when they executed the same trades. The fills carry
-    that, and carry nothing else - a fill is a side, the mid it was priced
-    against, the price paid and the quantity, so an identical ordered sequence
-    of them IS an identical set of executions.
+    fingerprint exactly when they executed the same trades.
+
+    QUALIFY THAT BEFORE RELYING ON IT. The property holds across cells that
+    RAN, which is the population the degeneracy check is about. It is
+    deliberately false for cells that did not: two failed cells executed the
+    same trades - none - and :func:`failed_fingerprint` gives them different
+    strings on purpose, so a region of failures cannot read as a region of
+    agreement. A failed cell is outside the biconditional, not a counterexample
+    to it.
+
+    WHAT IS HASHED. Four of :class:`~strategylab.backtest.costs.Fill`'s five
+    fields: the side, the mid it was priced against, the price paid and the
+    quantity. The fifth, ``costs``, is dropped - and that is safe for a reason
+    worth stating rather than by inspection. A ``CostBreakdown`` is a pure
+    function of the other four fields and the ``CostModel``, and one search
+    charges every cell the same ``CostModel``, so within a single search two
+    fills agreeing on the four agree on the fifth. Across searches they need
+    not, which is one more reason fingerprints from different runs must never
+    be compared.
 
     WHY THE FILLS AND NOT THE DATES. Timestamps would read better in a file, and
     :class:`~strategylab.backtest.costs.Fill` does not carry one; recovering
@@ -273,7 +325,9 @@ def trade_fingerprint(fills: Sequence[Fill]) -> str:
     same dates only up to a price collision - two different bars whose opens are
     bit-identical floats and which sit at the same point in an otherwise
     identical sequence. That is not impossible, merely vanishingly unlikely on
-    price data, and it is the one soft edge in this function.
+    price data. A SHA-256 collision would do the same and is more unlikely
+    still. Both are soft edges rather than the single one an earlier version of
+    this docstring claimed.
 
     A position opened and never closed contributes its entry fill. Two cells
     differing only in whether the last position was still open are therefore
@@ -320,6 +374,179 @@ def failed_fingerprint(cell: dict[str, int]) -> str:
     return FAILED_PREFIX + rendered
 
 
+def _check_inputs(
+    definition: StrategyDef,
+    bars: pd.DataFrame,
+    protocol: Protocol,
+    config_path: Path,
+    starting_equity: float,
+) -> None:
+    """Refuse an input this loop cannot honestly search, before any cell runs.
+
+    THIS EXISTS TO KEEP A BAD ARGUMENT FROM MASQUERADING AS NINETY FAILED CELLS.
+    :func:`run_search` catches ``ValueError`` around each backtest and records
+    the cell as failed, which is right for the things that are genuinely
+    properties of a CELL — a warm-up longer than the window, an account driven
+    to zero. But :func:`~strategylab.backtest.engine.run_backtest` raises the
+    same type for properties of the INPUTS: an unsorted frame, a duplicate
+    timestamp, a missing column, a non-positive ``starting_equity``. Those make
+    every cell raise, and without this check the run would return a perfectly
+    ordinary result reporting ``failed_cells == grid_size`` — which this
+    module's own contract calls a legitimate finding — while appending one
+    permanent record per cell to an append-only graveyard.
+
+    So the uniformly-fatal conditions are checked ONCE, here, and raise
+    :class:`SearchError` instead.
+
+    THIS FUNCTION IS NOT THE GUARANTEE, and an earlier version of this docstring
+    said it was - claiming that what reached the per-cell handler afterwards was
+    "cell-specific by elimination". An audit disproved it by naming six causes
+    this function does not see, from
+    :func:`~strategylab.core.strategy.evaluate` and
+    :func:`~strategylab.backtest.costs.apply_costs` rather than from
+    :func:`~strategylab.backtest.engine.run_backtest`'s own frame validation.
+    Mirroring six more of the engine's internal checks here would have produced
+    the same drift one layer deeper.
+
+    The guarantee is structural and lives in :func:`run_search`: if EVERY cell
+    fails, there is no surface, and that is a :class:`SearchError` whatever
+    caused it. This function exists for the diagnosis rather than the
+    guarantee - it names the fault precisely, before four minutes of backtesting
+    discover it the slow way. Two kinds of check live here, and they differ in
+    how they can rot:
+
+    - The frame checks MIRROR the engine's own private validation, and can drift
+      from it. If the engine adds a frame-level check this function does not
+      know about, the structural guarantee still catches it; only the quality of
+      the message degrades.
+    - The definition checks read the CONFIG vocabulary
+      (:data:`~strategylab.core.config.INDICATORS`,
+      :data:`~strategylab.core.config.OPERATORS`), which is the same source the
+      engine's own vocabulary is required to match, so they cannot drift from
+      the engine without the engine already having drifted from the loader.
+
+    Args:
+        definition: The parsed strategy, checked for a searchable ``search``
+            block whose parameter names do not collide with result columns.
+        bars: The bars as handed in, before any window is cut. Checked for a
+            timezone-naive :class:`pandas.DatetimeIndex`, ascending order,
+            unique timestamps and the required OHLCV columns.
+        protocol: The protocol in force, checked for a primary metric matching
+            the one the scoring reads.
+        config_path: Checked to be relative, so no username can reach the
+            artifact.
+        starting_equity: Opening equity in account currency units, checked to
+            be positive and finite.
+
+    Returns:
+        None.
+
+    Raises:
+        SearchError: On any of the above. Every message says what was wrong and
+            why this loop will not proceed with it.
+    """
+    if protocol.validation.primary_metric != METRIC_COLUMN:
+        raise SearchError(
+            f"the protocol's primary metric is '{protocol.validation.primary_metric}' but "
+            f"plateau scoring reads '{METRIC_COLUMN}'; scoring the grid on a metric the "
+            "pass decision is not made on would nominate a candidate against one bar and "
+            "judge it against another"
+        )
+
+    if not definition.search:
+        raise SearchError(
+            f"strategy '{definition.name}' declares no searched parameters, so there is no "
+            "grid to walk; a search needs at least one range in its 'search' block"
+        )
+
+    # The definition-level faults. Each of these makes EVERY cell raise
+    # identically, so each would otherwise arrive as ninety failed cells. They
+    # are checked against the config vocabulary rather than against the engine's
+    # internals, so this does not add another copy of the engine to drift from.
+    #
+    # `load_strategy` already refuses all of them, and that is not sufficient:
+    # `run_search` takes a `StrategyDef`, not a path, and a definition built in
+    # code never passes the loader. The tests in this repository build them that
+    # way, and so would a future caller.
+    for name, conditions in (("entry", definition.entry), ("exit", definition.exit)):
+        if not conditions:
+            raise SearchError(
+                f"strategy '{definition.name}' has an empty '{name}' condition list; "
+                "evaluate refuses it, so every cell would fail identically"
+            )
+
+    supplied = set(definition.search) | set(definition.fixed)
+    referenced: set[str] = set()
+    unknown_indicators: set[str] = set()
+    unknown_operators: set[str] = set()
+    for condition in (*definition.entry, *definition.exit):
+        if condition.operator not in OPERATORS:
+            unknown_operators.add(condition.operator)
+        for side in (condition.left, condition.right):
+            if isinstance(side, IndicatorRef):
+                if side.indicator not in INDICATORS:
+                    unknown_indicators.add(side.indicator)
+                if side.period_param is not None:
+                    referenced.add(side.period_param)
+
+    if unknown_indicators:
+        raise SearchError(
+            f"strategy '{definition.name}' uses indicator(s) {sorted(unknown_indicators)} "
+            f"that are not in the vocabulary {sorted(INDICATORS)}"
+        )
+    if unknown_operators:
+        raise SearchError(
+            f"strategy '{definition.name}' uses operator(s) {sorted(unknown_operators)} "
+            f"that are not in the vocabulary {sorted(OPERATORS)}"
+        )
+    unsupplied = sorted(referenced - supplied)
+    if unsupplied:
+        raise SearchError(
+            f"strategy '{definition.name}' references placeholder(s) {unsupplied} that "
+            "neither its 'search' nor its 'fixed' block supplies, so no cell could resolve "
+            "them and every one would fail identically"
+        )
+
+    colliding = sorted(set(definition.search) & _NON_PARAMETER_COLUMNS)
+    if colliding:
+        raise SearchError(
+            f"searched parameter(s) {colliding} collide with the result columns a results "
+            f"frame carries ({sorted(_NON_PARAMETER_COLUMNS)}); the metric would overwrite "
+            "the parameter in every row and the grid would lose an axis"
+        )
+
+    if config_path.is_absolute():
+        raise SearchError(
+            f"config_path '{config_path}' is absolute; it is recorded in the search "
+            "artifact, and an absolute path carries the username of the machine it ran on "
+            "into a file this project invites people to read"
+        )
+
+    if not (starting_equity > 0) or not math.isfinite(starting_equity):
+        raise SearchError(f"starting_equity must be positive and finite, got {starting_equity}")
+
+    if not isinstance(bars.index, pd.DatetimeIndex):
+        raise SearchError(
+            f"bars is indexed by {type(bars.index).__name__}, not a DatetimeIndex, so the "
+            "in-sample window cannot be cut from it. An integer index is the trap here: "
+            "pandas would read those integers as nanoseconds since the epoch and date the "
+            "whole frame to 1970 rather than refusing it"
+        )
+    if bars.index.tz is not None:
+        raise SearchError(
+            f"bars carries a timezone-aware index ({bars.index.tz}) and the protocol's "
+            "window is a plain date, so which bars fall inside it depends on a conversion "
+            "nobody has chosen. Localise to naive before searching"
+        )
+    missing = [column for column in REQUIRED_COLUMNS if column not in bars.columns]
+    if missing:
+        raise SearchError(f"bars lacks required column(s) {missing}; got {list(bars.columns)}")
+    if not bars.index.is_monotonic_increasing:
+        raise SearchError("bars is not sorted ascending by its index")
+    if bars.index.has_duplicates:
+        raise SearchError("bars carries duplicate timestamps; the bar order is ambiguous")
+
+
 def _in_sample_window(bars: pd.DataFrame, protocol: Protocol) -> pd.DataFrame:
     """Cut the bars down to the pre-registered in-sample window.
 
@@ -333,26 +560,21 @@ def _in_sample_window(bars: pd.DataFrame, protocol: Protocol) -> pd.DataFrame:
     silently dropped by a ``<=`` against that date at midnight.
 
     Args:
-        bars: OHLCV bars indexed by ascending timestamp, spanning any range.
+        bars: OHLCV bars indexed by an ascending, timezone-naive
+            :class:`pandas.DatetimeIndex`, spanning any range.
+            :func:`_check_inputs` has already established that; this function
+            does not re-check it.
         protocol: The protocol in force, read for its in-sample window.
 
     Returns:
         The rows dated within ``[in_sample.start, in_sample.end]`` inclusive, in
-        their original order. A view-independent copy is not taken; the frame is
-        only ever read.
+        their original order. Boolean-mask indexing materialises a new frame, so
+        this IS a copy rather than a view - and nothing here writes to either.
 
     Raises:
-        SearchError: If ``bars`` is not indexed by timestamp, or if no bar falls
-            inside the window.
+        SearchError: If no bar falls inside the window.
     """
-    try:
-        stamps = pd.DatetimeIndex(bars.index).normalize()
-    except (TypeError, ValueError) as exc:
-        raise SearchError(
-            f"bars is not indexed by timestamp, so the in-sample window cannot be cut "
-            f"from it: {exc}"
-        ) from exc
-
+    stamps = pd.DatetimeIndex(bars.index).normalize()
     window = protocol.windows.in_sample
     inside = (stamps >= pd.Timestamp(window.start)) & (stamps <= pd.Timestamp(window.end))
     selected = bars.loc[inside]
@@ -382,16 +604,26 @@ def _ranked(scored: pd.DataFrame, parameters: list[str]) -> list[dict[Hashable, 
         parameters: The searched-parameter column names, used for the tie-break.
 
     Returns:
-        One mapping per scoreable cell, ordered by descending ``plateau_score``
-        and then by ascending parameter values. The tie-break is not cosmetic:
-        a grid plateau produces exact ties routinely, and without it the winner
-        would depend on row order, which would break the determinism guarantee
-        the whole project rests on.
+        One mapping per scoreable cell, ordered by descending ``plateau_score``,
+        ties broken by ascending parameter values compared LEXICOGRAPHICALLY in
+        the order ``parameters`` gives - which is the results frame's column
+        order, which is the order the config's ``search`` block declares. So on
+        the committed three-axis grid a tie is settled by ``fast`` first, then
+        ``slow``, then ``trend``.
+
+        The tie-break is not cosmetic: a grid plateau produces exact ties
+        routinely - the committed 90-cell search produces several - and without
+        it the winner would depend on row order, which would break the
+        determinism guarantee the whole project rests on.
     """
+    # `isfinite`, not `not isnan`: the contract above says finite, and an
+    # infinity is not. No live path produces one - `metrics.sharpe` refuses
+    # non-finite returns - so this is the word matching the test rather than a
+    # bug fixed. Only the cell's OWN metric is tested: a cell with a finite
+    # metric is its own neighbour, so its plateau score can never be NaN, and a
+    # second clause checking that could never fire.
     rows = [
-        row
-        for row in scored.to_dict(orient="records")
-        if not math.isnan(float(row[METRIC_COLUMN])) and not math.isnan(float(row["plateau_score"]))
+        row for row in scored.to_dict(orient="records") if math.isfinite(float(row[METRIC_COLUMN]))
     ]
     rows.sort(key=lambda row: tuple(int(row[name]) for name in parameters))
     rows.sort(key=lambda row: float(row["plateau_score"]), reverse=True)
@@ -410,6 +642,14 @@ def select_candidate(
     in a grid is usually the luckiest one; the project's rule is neighbourhood
     median, and this is where that rule is actually applied to a decision rather
     than merely computed.
+
+    THE TWO REJECTION RULES ARE APPLIED IN A FIXED ORDER - the edge check
+    first, the drawdown ceiling second - and the order is observable, not an
+    implementation detail. A cell that is both on an edge and over the ceiling
+    is recorded once, as ``edge_winner``, and the ceiling breach is never
+    written down. The order is arbitrary but it must be stated, because
+    otherwise which reason appears in the graveyard for such a cell cannot be
+    derived from anything written.
 
     Two rules reject and one flags:
 
@@ -450,12 +690,21 @@ def select_candidate(
             :func:`~strategylab.search.plateau.is_edge_winner` and
             :func:`~strategylab.search.plateau.is_degenerate` - a frame that is
             not a complete grid, a cell off the axes its range generates, a
-            non-string fingerprint. All of those are producer bugs in this
-            module rather than bad user input.
+            non-string fingerprint.
+
+            Those divide into two kinds and an earlier version of this clause
+            called them all one. A malformed ``search_spec`` is BAD USER YAML:
+            ``is_edge_winner`` builds its axes by calling
+            :func:`~strategylab.search.grid.expand_grid`, so every refusal that
+            function makes - a bound that is not a whole number of bars, a step
+            below one, a maximum under its minimum - reaches here unchanged.
+            :func:`run_search` never surfaces those, because it expands the
+            same spec first and they raise there; a direct caller of this
+            function will. Everything else - an incomplete grid, an off-axis
+            cell, a fingerprint that is not a string - is a producer bug in
+            whatever built the frame.
     """
-    known = {METRIC_COLUMN, "max_drawdown_pct", "trade_count", FINGERPRINT_COLUMN}
-    known |= {"plateau_score", "neighbour_count"}
-    parameters = [str(column) for column in scored.columns if column not in known]
+    parameters = [str(column) for column in scored.columns if column not in _NON_PARAMETER_COLUMNS]
 
     rejections: list[Rejection] = []
     for row in _ranked(scored, parameters):
@@ -518,12 +767,18 @@ def run_search(
     take the best surviving cell. Every rejection is appended to the graveyard
     as it is made.
 
-    Deterministic. Nothing here consults a clock or a random source, and
-    ``tests/test_search_loop.py`` asserts that two runs over the same inputs
-    produce an identical results frame, an identical winner and an identical
-    rejection list. The artifact's ``generated_at`` is the one thing that moves
-    between runs, and it is supplied by the caller rather than read here - see
+    THE RETURN VALUE is deterministic: nothing computing it consults a clock or
+    a random source, and ``tests/test_search_loop.py`` asserts that two runs
+    over the same inputs produce an identical results frame, an identical
+    winner and an identical rejection list. The artifact's ``generated_at`` is
+    supplied by the caller rather than read here, for that reason - see
     :func:`write_search_result`.
+
+    THE SIDE EFFECT is not deterministic, and the distinction matters to anyone
+    diffing two runs. Every rejection this function records goes through
+    :func:`~strategylab.search.graveyard.record_rejection`, which stamps
+    ``recorded_at`` from the clock. Two identical searches produce identical
+    results and non-identical graveyard lines.
 
     ONE ROW PER CELL, INCLUDING THE CELLS THAT FAILED. A backtest can raise: an
     account driven to zero reaches
@@ -534,9 +789,21 @@ def run_search(
     and makes cells two steps apart look adjacent. It is also recorded in the
     graveyard under ``backtest_failed``.
 
-    Every cell failing is not an error either - it returns a result with no
-    winner and ``failed_cells == grid_size``. That is a finding about the
-    window being too short for the ranges declared, and the caller reports it.
+    EVERY CELL FAILING IS AN ERROR, NOT A FINDING, and an earlier version of
+    this contract said the opposite - that it returned a result with no winner
+    and ``failed_cells == grid_size``, describing a window too short for the
+    ranges declared. That reading cannot be sustained: several causes of a
+    uniformly failing grid are faults in the definition or the data rather than
+    facts about the window, and a result file reporting ninety nulls made them
+    indistinguishable from a research outcome. A grid in which nothing survived
+    now raises :class:`SearchError` carrying the first failure's own message,
+    which is what names the actual fault.
+
+    THE GRAVEYARD IS WRITTEN ONCE, AT THE END, after the surface is known to
+    exist. Rejections are accumulated in memory during the loop. A run that
+    raises therefore records nothing, which is right: the graveyard is
+    append-only, and rejections from a search that produced no result are
+    permanent noise qualifying nothing.
 
     Args:
         definition: The parsed strategy, with its ``$placeholder`` periods
@@ -547,8 +814,9 @@ def run_search(
             including the held-back window - what is read is decided here, not
             by what is passed.
         protocol: The protocol in force. Read for the in-sample window, the cost
-            model, the primary metric, the drawdown ceiling, the research
-            instrument and the protocol version.
+            model - whose every rate is a FRACTION, never a percentage - the
+            primary metric, the drawdown ceiling, the research instrument and
+            the protocol version.
         config_path: Path the definition was loaded from, recorded in the
             result so a figure can be traced to the file that produced it. Must
             be repository-relative; an absolute path would carry a username into
@@ -569,39 +837,48 @@ def run_search(
         every rejection made.
 
     Raises:
-        SearchError: If ``protocol.validation.primary_metric`` is not the metric
-            the scoring reads, if ``bars`` is not indexed by timestamp, or if no
-            bar falls inside the in-sample window.
+        SearchError: Every input this loop refuses, all of them checked before
+            any cell runs. See :func:`_check_inputs` for the list, and for why
+            they are not left to surface as ninety failed cells.
         ValueError: Propagated unchanged from
             :func:`~strategylab.search.grid.expand_grid` for a malformed search
-            range, and from the scoring functions for a frame this module built
-            wrongly. A ``ValueError`` from
+            range - which is bad user YAML, not an internal fault - and from
+            the scoring functions for a frame this module built wrongly. A
+            ``ValueError`` from
             :func:`~strategylab.backtest.engine.run_backtest` is NOT propagated:
-            that is a failed cell, and it is caught and recorded.
+            after :func:`_check_inputs` such an error is cell-specific, so it is
+            caught and recorded as a failed cell.
+        MemoryError: Propagated unchanged from
+            :func:`~strategylab.search.grid.expand_grid`, which builds both the
+            axes and their product eagerly and caps neither. A search block
+            declaring a large enough product hangs or exhausts memory rather
+            than being refused; that is the callee's stated behaviour and
+            nothing here improves on it.
         OSError: Propagated unchanged if the graveyard cannot be written. A
             search whose rejections are silently lost is worse than one that
             stops.
-    """
-    if protocol.validation.primary_metric != METRIC_COLUMN:
-        raise SearchError(
-            f"the protocol's primary metric is '{protocol.validation.primary_metric}' but "
-            f"plateau scoring reads '{METRIC_COLUMN}'; scoring the grid on a metric the "
-            "pass decision is not made on would nominate a candidate against one bar and "
-            "judge it against another"
-        )
 
+            The graveyard is written in one pass at the end, so a run that
+            raises anywhere before that point records nothing. An earlier
+            version wrote each rejection as it was made and could leave a
+            partial graveyard behind for a search that returned no result.
+    """
+    _check_inputs(definition, bars, protocol, config_path, starting_equity)
     window = _in_sample_window(bars, protocol)
     grid = expand_grid(definition.search)
 
     rows: list[dict[str, Any]] = []
     rejections: list[Rejection] = []
+    pending_records: list[tuple[dict[str, int], dict[str, float], str]] = []
     failed = 0
+    first_failure = ""
 
     for cell in grid:
         try:
             result = run_backtest(definition, cell, window, protocol.costs, starting_equity)
         except ValueError as exc:
             failed += 1
+            first_failure = first_failure or str(exc)
             metrics = {METRIC_COLUMN: math.nan, "max_drawdown_pct": math.nan}
             rows.append(
                 {
@@ -612,7 +889,7 @@ def run_search(
                     FINGERPRINT_COLUMN: failed_fingerprint(cell),
                 }
             )
-            record_rejection(cell, metrics, "backtest_failed", graveyard_path)
+            pending_records.append((cell, metrics, "backtest_failed"))
             rejections.append(Rejection(cell, "backtest_failed", str(exc)))
             continue
 
@@ -626,6 +903,30 @@ def run_search(
             }
         )
 
+    # EVERY CELL FAILING IS AN ERROR, NOT A FINDING. An earlier version of this
+    # function returned an ordinary result reporting `failed_cells ==
+    # grid_size`, and documented that as a legitimate outcome meaning the window
+    # was too short for the ranges declared. An audit showed why that cannot
+    # stand: `run_backtest` raises ValueError for six causes that are properties
+    # of the DEFINITION or the DATA rather than of a cell - an empty condition
+    # list, a placeholder nothing supplies, an indicator the engine does not
+    # implement, a non-finite bar, a non-positive price, a non-numeric column -
+    # and each makes all ninety cells raise identically. Reported as ninety
+    # ordinary failures, a malformed argument is indistinguishable from a
+    # research outcome.
+    #
+    # Rather than mirror six more of the engine's internal checks in
+    # `_check_inputs` - which is what produced the drift the last audit found -
+    # the condition is caught structurally: if nothing survived, the search
+    # produced no surface, and that is a SearchError whatever caused it. The
+    # first failure's own message is carried out, because it names the actual
+    # fault; a too-short window says so, and so does a missing placeholder.
+    if failed == len(grid):
+        raise SearchError(
+            f"every one of the {len(grid)} cells failed to backtest, so there is no "
+            f"surface to score. The first failure was: {first_failure}"
+        )
+
     scored = plateau_score(pd.DataFrame(rows), radius=radius)
     winner, selection_rejections = select_candidate(
         scored,
@@ -637,16 +938,27 @@ def run_search(
         row = scored.loc[
             _row_mask(scored, rejection.cell), [METRIC_COLUMN, "max_drawdown_pct"]
         ].iloc[0]
-        record_rejection(
-            rejection.cell,
-            {
-                METRIC_COLUMN: float(row[METRIC_COLUMN]),
-                "max_drawdown_pct": float(row["max_drawdown_pct"]),
-            },
-            rejection.reason,
-            graveyard_path,
+        pending_records.append(
+            (
+                rejection.cell,
+                {
+                    METRIC_COLUMN: float(row[METRIC_COLUMN]),
+                    "max_drawdown_pct": float(row["max_drawdown_pct"]),
+                },
+                rejection.reason,
+            )
         )
     rejections.extend(selection_rejections)
+
+    # THE GRAVEYARD IS WRITTEN LAST, in one pass, once the run is known to have
+    # produced a surface. Writing each rejection as it was made left permanent
+    # records behind for runs that then raised - a partial graveyard for a
+    # search that returned nothing, which the previous contract audit named and
+    # which no amount of input checking removes on its own. Deferring costs
+    # nothing that matters: a run that does not complete has no rejections worth
+    # keeping, because it has no result they qualify.
+    for cell, metrics, reason in pending_records:
+        record_rejection(cell, metrics, reason, graveyard_path)
 
     in_sample = protocol.windows.in_sample
     return SearchResult(
@@ -663,13 +975,14 @@ def run_search(
         plateau_radius=radius,
         starting_equity=starting_equity,
         max_drawdown_ceiling_pct=protocol.validation.max_drawdown_ceiling_pct,
+        costs=protocol.costs,
         results=scored,
         winner=winner,
         rejections=tuple(rejections),
     )
 
 
-def _row_mask(scored: pd.DataFrame, cell: dict[str, int]) -> Any:
+def _row_mask(scored: pd.DataFrame, cell: dict[str, int]) -> pd.Series:
     """Build a boolean mask selecting the one row matching a cell.
 
     Args:
@@ -678,10 +991,26 @@ def _row_mask(scored: pd.DataFrame, cell: dict[str, int]) -> Any:
 
     Returns:
         A boolean Series, true on exactly the matching row.
+
+    Raises:
+        ValueError: If the cell matches no row, or more than one. Neither can
+            happen on any path in this module - the cells come from
+            :func:`_ranked` over the same frame, and
+            :func:`~strategylab.search.plateau.plateau_score` has already
+            refused a frame with duplicate combinations. It is checked because
+            the alternative failure is an ``IndexError`` from an ``.iloc[0]``
+            two lines away in the caller, which says nothing about what went
+            wrong, and because "true on exactly one row" is the kind of
+            invariant a later edit breaks silently.
     """
     mask = pd.Series(True, index=scored.index)
     for name, value in cell.items():
         mask &= scored[name] == value
+    matched = int(mask.sum())
+    if matched != 1:
+        raise ValueError(
+            f"cell {cell} matches {matched} rows of the results frame, expected exactly one"
+        )
     return mask
 
 
@@ -743,6 +1072,39 @@ def write_search_result(
     itself cannot be tested for determinism, and every other field in this file
     is reproducible from the inputs.
 
+    THE FIELDS, enumerated because :data:`SEARCH_SCHEMA_VERSION` versions them
+    and a version number is worthless without a list to compare against. Nothing
+    should read this file positionally; every field is named.
+
+    - ``schema_version`` — :data:`SEARCH_SCHEMA_VERSION`.
+    - ``generated_at`` — ISO 8601, timezone-aware, as supplied.
+    - ``protocol_version`` — schema version of the protocol, NOT its values.
+    - ``strategy``, ``config`` — the strategy's name and the relative path it
+      was loaded from.
+    - ``instrument``, ``data_content_hash`` — the research ticker and the hash
+      of the snapshot searched. Results are reproducible against a snapshot.
+    - ``window`` — ``start``, ``end``, and ``bars``, the row count inside it.
+    - ``primary_metric`` — the column ranked on, always ``sharpe`` today.
+    - ``max_drawdown_ceiling_pct`` — the rejection ceiling applied, a PERCENTAGE.
+    - ``costs_frac`` — ``spread``, ``slippage``, ``commission``,
+      ``fx_conversion``, every one a FRACTION, not a percentage.
+    - ``commission_min_flat`` — a cash amount in account currency units, not a
+      rate, which is why it sits outside ``costs_frac``.
+    - ``plateau_radius`` — neighbourhood half-width in GRID STEPS.
+    - ``starting_equity`` — account currency units.
+    - ``grid_size``, ``failed_cells`` — cells walked, and how many raised.
+    - ``noise_ceiling`` — always ``null`` today, with ``noise_ceiling_note``
+      saying why. The key is present so its absence cannot read as an oversight.
+    - ``winner`` — ``null``, or an object carrying ``params``, ``sharpe``,
+      ``max_drawdown_pct``, ``plateau_score``, ``neighbour_count`` and
+      ``degenerate``.
+    - ``rejections`` — a list of ``params``, ``reason``, ``detail``, in the
+      order the refusals were made.
+    - ``cells`` — one object per grid cell, each with ``params``, ``sharpe``,
+      ``max_drawdown_pct``, ``trade_count``, ``trade_fingerprint``,
+      ``plateau_score`` and ``neighbour_count``. A metric that is not finite is
+      ``null``. Every cell appears, including the ones that raised.
+
     Args:
         result: The search to record.
         generated_at: When the search ran, timezone-aware and in UTC. Used both
@@ -767,9 +1129,9 @@ def write_search_result(
             "an unqualified timestamp cannot be compared against another machine's"
         )
 
-    known = {METRIC_COLUMN, "max_drawdown_pct", "trade_count", FINGERPRINT_COLUMN}
-    known |= {"plateau_score", "neighbour_count"}
-    parameters = [str(column) for column in result.results.columns if column not in known]
+    parameters = [
+        str(column) for column in result.results.columns if column not in _NON_PARAMETER_COLUMNS
+    ]
 
     payload: dict[str, Any] = {
         "schema_version": SEARCH_SCHEMA_VERSION,
@@ -786,6 +1148,13 @@ def write_search_result(
         },
         "primary_metric": METRIC_COLUMN,
         "max_drawdown_ceiling_pct": result.max_drawdown_ceiling_pct,
+        "costs_frac": {
+            "spread": result.costs.spread_frac,
+            "slippage": result.costs.slippage_frac,
+            "commission": result.costs.commission_frac,
+            "fx_conversion": result.costs.fx_conversion_frac,
+        },
+        "commission_min_flat": result.costs.commission_min_flat,
         "plateau_radius": result.plateau_radius,
         "starting_equity": result.starting_equity,
         "grid_size": result.grid_size,
@@ -813,5 +1182,11 @@ def write_search_result(
 
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"search-{generated_at:%Y%m%dT%H%M%SZ}.json"
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    # allow_nan=False, as the graveyard does. Every metric has already been
+    # through `_finite_or_none`, but the protocol figures beside them have not -
+    # nothing in `load_protocol` checks that the drawdown ceiling is finite - and
+    # a bare `NaN` or `Infinity` token would produce a file that a strict parser
+    # refuses. Raising here is the loud failure; writing invalid JSON is the
+    # quiet one.
+    path.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return path

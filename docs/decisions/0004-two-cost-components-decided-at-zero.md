@@ -31,6 +31,18 @@ been asked what they are.
 > is the part the decision rests on: no *result* exists, nothing has been scored,
 > and `access_log.walk_forward_touches` is still `0`. The two rates recorded here
 > are still costless to have set.
+>
+> **Second update, 2026-08-22.** The middle clause above is now out of date and
+> is left standing rather than rewritten, for the reason the paragraph opens
+> with. A result now exists: `strategylab search` has been run over the
+> in-sample window and has scored all ninety cells. So the two rates were set
+> before any result existed — which is the property that mattered and which is
+> now permanently fixed — but they are no longer costless to CHANGE. Editing
+> either of them from here invalidates every comparison against that search, and
+> the note at the top of `protocol.yaml` applies.
+>
+> `access_log.walk_forward_touches` is still `0`, and the held-back window has
+> still never been read.
 
 ## Decision
 

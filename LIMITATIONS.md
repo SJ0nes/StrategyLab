@@ -76,7 +76,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-530 tests pass (`uv run pytest`). They cover the protocol loader, the data
+550 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard and the search loop — eleven areas, one per test file.
@@ -232,10 +232,15 @@ throughout; there is no lot size or minimum order size.
 compares pooled Sharpe to `min_sharpe + pass_margin` (1.20). No standard error,
 no confidence interval, no p-value, and no deflated Sharpe is computed anywhere.
 
-**The noise ceiling does not enter the pass decision.** It is reported by the
-search, so it informs which candidate a human chooses. `walk_forward` never
-receives it. A candidate can pass validation while sitting inside the noise
-distribution, and nothing in the code will stop that.
+**The noise ceiling does not enter the pass decision, and is not reported
+either.** An earlier version of this entry said "it is reported by the search,
+so it informs which candidate a human chooses". That was written as a
+description of the design and is false of the code: `search/noise.py` is a stub,
+so the search reports `null` and informs nothing. Both statements now apply and
+they compound. Even once the ceiling exists, `walk_forward` will never receive
+it — a candidate can pass validation while sitting inside the noise
+distribution, and nothing in the code will stop that. Today it is worse than
+that: no candidate has been compared against a ceiling at all.
 
 **Nothing computes a benchmark.** There is no buy-and-hold comparison anywhere.
 A long-only trend strategy on the S&P 500 over 2005–2024 must beat simply
@@ -450,6 +455,54 @@ as honest as whatever called `cache_write`.
 spread, and slippage before any search runs, which is the important property —
 but it does not record where those three numbers came from, and the project's own
 cost-arithmetic standard asks that it should.
+
+**The search's window test needed two assertions, and the first version had
+one.** `test_bars_outside_the_window_cannot_change_any_cell` corrupts every bar
+after the window's end and asserts no cell's result moves. On its own that is
+blind to the smallest and most plausible off-by-one. A signal from bar `t` fills
+at bar `t+1`'s open, so the last bar of a window never produces a fill; one
+leaked bar therefore reaches only a mark-to-market, and where every cell is flat
+at the window's end it changes nothing in either run. Measured on the committed
+fixture: extending the slice by one row leaves the results frames
+bit-identical, by two rows turns them red.
+
+The test now also asserts the bar COUNT, which fails on a one-bar leak, and both
+assertions sit in the test the documents nominate. This is recorded rather than
+quietly fixed because it is the second time in this repository that a test named
+in a rule turned out weaker than its name — `tests/test_strategy.py`'s lookahead
+test is the first, and it is documented above. The pattern is worth more than
+the individual fix: a corruption test only detects a leak that reaches something
+the metric depends on.
+
+**A bad input could look like a research finding, and the first fix for it was
+not enough.** `run_backtest` raises `ValueError` both for things that are
+properties of a CELL — a warm-up longer than the window, an account driven to
+zero — and for things that are properties of the DEFINITION or the DATA: an
+empty condition list, a placeholder nothing supplies, an indicator the engine
+does not implement, a non-finite bar, a non-positive price, a non-numeric
+column. The loop catches `ValueError` per cell and records a failure, so the
+second kind returned an ordinary-looking result saying "90 of 90 cells failed",
+which this project's own documentation called a legitimate finding, while
+appending ninety permanent records to an append-only graveyard.
+
+The first attempt at closing this checked the frame-level conditions up front
+and claimed what remained was "cell-specific by elimination". An audit named six
+causes it did not see. That is worth recording as a pattern and not just a bug:
+a list of checks mirroring another module's internals is always one edit behind
+it.
+
+What closes it is structural rather than enumerative. If EVERY cell fails there
+is no surface, and that is a `SearchError` whatever caused it, carrying the
+first failure's own message so the fault is named. The graveyard is written once
+at the end, so a run that produces no result records nothing.
+`loop._check_inputs` remains, for the diagnosis rather than the guarantee.
+
+Its two kinds of check rot differently, which is the honest caveat here. The
+frame checks mirror the engine's private validation and CAN fall behind it —
+when they do, the structural guarantee still fires and only the error message
+degrades. The definition checks read the config vocabulary, the same source the
+engine's own vocabulary must match, so they cannot drift from the engine without
+the engine having already drifted from the loader.
 
 **A full search takes about four minutes, and the noise ceiling multiplies
 that.** Measured: `time uv run strategylab search configs/ma_crossover.yaml`

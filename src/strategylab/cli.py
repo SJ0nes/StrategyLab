@@ -289,7 +289,16 @@ def search(
         err_console.print("Re-download with [bold]uv run strategylab fetch --force[/bold].")
         raise typer.Exit(code=1) from exc
 
-    cells = len(expand_grid(definition.search))
+    # ValueError as well as SearchError: expand_grid refuses a malformed range
+    # with a ValueError, and that is bad YAML rather than an internal fault.
+    # Letting it escape prints a traceback, and a traceback carries the absolute
+    # path of the file that raised - which on most machines contains a username.
+    try:
+        cells = len(expand_grid(definition.search))
+    except ValueError as exc:
+        err_console.print(f"[bold red]search block is not usable[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
     console.print(
         f"Searching [bold]{definition.name}[/bold] - {cells} cells over "
         f"{protocol.windows.in_sample.start} to {protocol.windows.in_sample.end} ..."
