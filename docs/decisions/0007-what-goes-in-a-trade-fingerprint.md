@@ -98,6 +98,8 @@ doing so.
 
 **Two of the graveyard's five rejection reasons are still unwritten by anything.**
 `degenerate_plateau`, because `CLAUDE.md` says degenerate plateaus are flagged
-rather than rejected and the loop obeys that. `below_noise_ceiling`, because
-`search/noise.py` is a stub. Both gaps are deliberate; the vocabulary is not
-missing a branch.
+rather than rejected and the loop obeys that. `below_noise_ceiling`, because the
+ceiling — built since this record was written, see `docs/decisions/0008` — is
+reported rather than enforced: `select_candidate` never receives it, so nothing
+rejects a cell for sitting inside the noise. Both gaps are deliberate; the
+vocabulary is not missing a branch.

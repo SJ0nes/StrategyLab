@@ -106,6 +106,7 @@
   <span><b>drawdown ceiling</b> {{ max_drawdown_ceiling_pct }}%</span>
 </div>
 
+{% if noise_ceiling is none %}
 <div class="banner">
   <b>No noise ceiling was computed, so nothing on this page is yet evidence of an edge.</b>
   {{ noise_ceiling_note }}
@@ -113,6 +114,33 @@
   result, so a winner sitting inside the noise distribution is visible rather than computed.
   That band is absent here because there is nothing to draw, not because it was left out.
 </div>
+{% else %}
+<div class="banner">
+  <b>
+    {% if winner_percentile is none %}
+      A noise ceiling exists, but there is no candidate to compare against it.
+    {% elif winner_percentile >= 95 %}
+      The candidate clears the 95th percentile of what this grid achieves on noise.
+    {% else %}
+      The candidate sits INSIDE the noise distribution — around the
+      {{ winner_percentile | int }}th percentile of what this grid achieves on data with no
+      edge in it.
+    {% endif %}
+  </b>
+  Best-in-grid Sharpe across {{ noise_ceiling.trials }} surrogate series
+  ({{ noise_ceiling.scoreable_trials }} scoreable):
+  median {{ '%.3f'|format(noise_ceiling.percentiles.p50) }},
+  90th {{ '%.3f'|format(noise_ceiling.percentiles.p90) }},
+  95th {{ '%.3f'|format(noise_ceiling.percentiles.p95) }},
+  max {{ '%.3f'|format(noise_ceiling.max) }}.
+  {{ noise_ceiling_note }}
+  <br><br>
+  This is a sentence and a percentile, not a shape. The design standard asks for the
+  distribution drawn on the SAME axis as the surface, so a winner inside it is seen rather
+  than read; that band is roadmap session 8. The placement above is coarse — it comes from the
+  recorded percentiles rather than the raw trials.
+</div>
+{% endif %}
 
 <h2>The surface</h2>
 <div class="panels">

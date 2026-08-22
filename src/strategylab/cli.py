@@ -28,7 +28,13 @@ from strategylab.protocol import Protocol, ProtocolError, load_protocol
 from strategylab.report.surface import ReportError, render_surface
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH
 from strategylab.search.grid import expand_grid
-from strategylab.search.loop import SearchError, run_search, write_search_result
+from strategylab.search.loop import (
+    SearchError,
+    SearchResult,
+    run_search,
+    write_search_result,
+)
+from strategylab.search.noise import trials_note
 
 DATA_DIR = Path("data")
 STATE_DIR = Path("state")
@@ -233,6 +239,62 @@ def fetch(
     )
 
 
+def _report_ceiling(result: SearchResult) -> None:
+    """Print the noise ceiling, or say plainly that there is none.
+
+    THE COMPARISON IS THE POINT, not the number. A ceiling printed in a table
+    below a winner is a fact a reader skips; the winner placed against the
+    distribution is one they cannot. So this prints where the candidate sits.
+
+    Args:
+        result: The finished search.
+
+    Returns:
+        None.
+    """
+    ceiling = result.noise_ceiling
+    if ceiling is None:
+        err_console.print(
+            "\n[bold yellow]No noise ceiling was computed[/bold yellow] - pass "
+            "[bold]--trials N[/bold] to compute one. The best of this many cells on data "
+            "with no edge in it is well above zero, so nothing above is yet evidence of "
+            "anything."
+        )
+        return
+
+    finite = ceiling.dropna()
+    if finite.empty:
+        err_console.print(
+            "\n[bold red]The noise ceiling is empty[/bold red] - no surrogate produced a "
+            "scoreable cell, so there is nothing to compare against."
+        )
+        return
+
+    console.print(
+        f"\nNoise ceiling over {len(ceiling)} surrogate(s): "
+        f"median {finite.quantile(0.50):.3f}, 90th {finite.quantile(0.90):.3f}, "
+        f"95th {finite.quantile(0.95):.3f}, max {finite.max():.3f}"
+    )
+    if result.winner is None:
+        console.print("[dim]No candidate to compare against it.[/dim]")
+    else:
+        beat = int((finite < result.winner.sharpe).sum())
+        share = beat / len(finite) * 100.0
+        verdict = (
+            "[bold green]above[/bold green]" if share >= 95.0 else "[bold red]INSIDE[/bold red]"
+        )
+        console.print(
+            f"The candidate's Sharpe of {result.winner.sharpe:.3f} beats {beat} of "
+            f"{len(finite)} surrogates ({share:.0f}th percentile) - {verdict} the noise."
+        )
+        if share < 95.0:
+            console.print(
+                "[yellow]A candidate inside the noise distribution is what a search of this "
+                "size finds on data with no edge in it.[/yellow]"
+            )
+    console.print(f"[dim]{trials_note(len(ceiling))}[/dim]")
+
+
 def _repository_relative(path: Path) -> Path:
     """Render a path so nothing machine-specific is recorded in a result file.
 
@@ -259,6 +321,20 @@ def search(
         Path,
         typer.Argument(help="Strategy config to search, such as configs/ma_crossover.yaml."),
     ],
+    trials: Annotated[
+        int,
+        typer.Option(
+            "--trials",
+            help=(
+                "Surrogate series to run for the noise ceiling. 0 skips it. Each trial "
+                "costs a full grid, so this multiplies the runtime directly."
+            ),
+        ),
+    ] = 0,
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Seed for the surrogate resampler, so a ceiling repeats."),
+    ] = 0,
 ) -> None:
     """Run the parameter grid over the in-sample window and record the whole surface.
 
@@ -268,10 +344,11 @@ def search(
     degenerate plateau. Writes every cell to state/search-<stamp>.json, appends
     each rejection to the graveyard, and NEVER reads the walk-forward window.
 
-    Reports no noise ceiling: that is a later component, and the command says so
-    on every run rather than letting a bare Sharpe be read as a finding. It
-    renders no HTML either - `strategylab report` does that, from the file this
-    writes, so a template change costs no recomputation.
+    Computes a noise ceiling only when `--trials` is given, because each trial
+    re-runs the whole grid and the committed search takes minutes. Without one,
+    the command says on every run that nothing it printed is evidence of an
+    edge. It renders no HTML either - `strategylab report` does that, from the
+    file this writes, so a template change costs no recomputation.
     """
     protocol = _load_or_exit()
 
@@ -311,6 +388,16 @@ def search(
         f"Searching [bold]{definition.name}[/bold] - {cells} cells over "
         f"{protocol.windows.in_sample.start} to {protocol.windows.in_sample.end} ..."
     )
+    if trials > 0:
+        # Say what this will cost BEFORE spending it. A noise ceiling is the
+        # one thing here that can turn a four-minute command into an overnight
+        # one, and discovering that halfway through is nobody's idea of a tool.
+        console.print(
+            f"  plus a noise ceiling: {trials} surrogate(s) x {cells} cells. "
+            f"That is {trials + 1} full grids in total, so budget roughly "
+            f"{trials + 1} times a plain search."
+        )
+        console.print(f"  [dim]{trials_note(trials)}[/dim]")
 
     started = datetime.now(UTC)
     try:
@@ -320,6 +407,8 @@ def search(
             protocol,
             config_path=_repository_relative(config),
             data_content_hash=entry.content_hash,
+            noise_trials=trials,
+            noise_seed=seed,
         )
     except SearchError as exc:
         err_console.print(f"[bold red]search could not run[/bold red] {exc}")
@@ -396,11 +485,7 @@ def search(
         )
 
     console.print(f"\n  result  {path.as_posix()}")
-    console.print(
-        "\n[bold yellow]No noise ceiling was computed[/bold yellow], because search/noise.py "
-        "is not built. The best of this many cells on data with no edge in it is well above "
-        "zero, so nothing above is yet evidence of anything."
-    )
+    _report_ceiling(result)
 
 
 @app.command()

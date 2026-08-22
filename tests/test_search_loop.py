@@ -1278,21 +1278,22 @@ def test_the_artifact_carries_the_whole_surface_and_its_provenance(
 
 def test_the_artifact_schema_version_matches_the_documented_field_set() -> None:
     # The version exists so a reader meeting an unfamiliar artifact can say so.
-    # It was bumped to 2 when `costs_frac` and `commission_min_flat` were added:
-    # an artifact written by commit db180ce says 1 and lacks both, so leaving it
-    # at 1 would have labelled two different shapes identically.
-    assert SEARCH_SCHEMA_VERSION == 2
+    # 2 added `costs_frac` and `commission_min_flat`; 3 turned `noise_ceiling`
+    # from a permanent null into an object when one was computed. Two artifacts
+    # with different field sets must not both call themselves version 1.
+    assert SEARCH_SCHEMA_VERSION == 3
 
 
 def test_the_artifact_states_that_no_noise_ceiling_was_computed(
     fixture_bars: pd.DataFrame, tmp_path: Path
 ) -> None:
     # An absent key reads as an oversight; an explicit null reads as a
-    # statement. search/noise.py is a stub and the file must say so.
+    # statement. This search was run without --trials and the file must say so.
     _, payload = _written(tmp_path, fixture_bars)
     assert "noise_ceiling" in payload
     assert payload["noise_ceiling"] is None
-    assert "stub" in payload["noise_ceiling_note"]
+    assert "--trials" in payload["noise_ceiling_note"]
+    assert "unbenchmarked" in payload["noise_ceiling_note"]
 
 
 def test_the_artifact_is_strict_json_even_when_a_cell_failed(tmp_path: Path) -> None:
@@ -1319,6 +1320,83 @@ def test_the_artifact_is_strict_json_even_when_a_cell_failed(tmp_path: Path) -> 
 def _refuse_constant(token: str) -> float:
     """Raise on `NaN`, `Infinity` and `-Infinity`, which are not JSON."""
     raise AssertionError(f"the artifact contains the non-JSON token {token!r}")
+
+
+def test_a_search_without_trials_computes_no_ceiling(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # The default. One trial costs a full grid, so a ceiling must be asked for.
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    assert result.noise_ceiling is None
+
+
+def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # THE CEILING MUST SEE THE SAME BARS THE SEARCH DID AND NO MORE. Computing
+    # it on the frame as handed in would read the held-back window, which is a
+    # read of that data whatever it is used for. Asserted the way the window
+    # guard is: corrupt everything after the window's end and require the
+    # ceiling to be unchanged.
+    kwargs = {
+        "config_path": Path("configs/small.yaml"),
+        "data_content_hash": "x",
+        "noise_trials": 2,
+        "noise_seed": 5,
+    }
+    clean = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        graveyard_path=tmp_path / "a.jsonl",
+        **kwargs,  # type: ignore[arg-type]
+    )
+    corrupted = run_search(
+        _small_strategy(),
+        _corrupt_after(fixture_bars, WINDOW_END),
+        _protocol(),
+        graveyard_path=tmp_path / "b.jsonl",
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+    assert clean.noise_ceiling is not None
+    assert len(clean.noise_ceiling) == 2
+    pd.testing.assert_series_equal(clean.noise_ceiling, corrupted.noise_ceiling)
+
+
+def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # A single "the ceiling was 1.4" invites a reader to treat it as a
+    # threshold. The percentiles show how wide the thing is, which is the fact
+    # that decides whether a winner clears it.
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+        noise_trials=2,
+        noise_seed=5,
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    ceiling = payload["noise_ceiling"]
+    assert ceiling is not None
+    assert ceiling["trials"] == 2
+    assert set(ceiling["percentiles"]) == {"p50", "p90", "p95"}
+    assert "max" in ceiling
+    # And the note now describes the run rather than an absent component.
+    assert "trials" in payload["noise_ceiling_note"]
 
 
 def test_a_naive_generated_at_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:

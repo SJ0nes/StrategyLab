@@ -24,16 +24,19 @@ that case.
 
 ## What this loop does NOT do, and must not be read as doing
 
-**It computes no noise ceiling.** :mod:`strategylab.search.noise` is still a
-stub, so nothing here compares the winner against the best Sharpe the same
-ninety cells reach on surrogate series with no edge in them. A winning Sharpe
-from this loop is therefore not evidence of anything - the expected maximum
-across ninety draws of noise is well above zero, and this loop reports that
-maximum without a bar to hold it against. The artifact records
-``"noise_ceiling": null`` explicitly rather than omitting the key, because an
-absent field reads as an oversight and a null reads as a statement.
-``below_noise_ceiling`` is consequently a rejection reason this loop never
-writes.
+**It computes a noise ceiling only when asked.** ``noise_trials`` defaults to
+zero, because one trial costs a full grid and the committed search takes about
+four minutes. Without a ceiling, a winning Sharpe from this loop is not
+evidence of anything - the expected maximum across ninety draws of noise is
+well above zero - and the artifact records ``"noise_ceiling": null`` explicitly
+rather than omitting the key, because an absent field reads as an oversight and
+a null reads as a statement.
+
+**Even with a ceiling, nothing here REJECTS on it.** The ceiling is computed and
+reported so a human can weigh it; ``select_candidate`` never sees it, so
+``below_noise_ceiling`` remains a rejection reason this loop never writes. That
+is deliberate and it is a limitation: a candidate can be nominated while sitting
+inside the noise distribution, and only a reader will notice.
 
 **It renders no report.** ``report/render.py`` is a stub. This loop writes JSON.
 
@@ -73,6 +76,7 @@ from strategylab.data.source import REQUIRED_COLUMNS
 from strategylab.protocol import Protocol
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH, record_rejection
 from strategylab.search.grid import expand_grid
+from strategylab.search.noise import noise_ceiling, trials_note
 from strategylab.search.plateau import (
     ADDED_COLUMNS,
     FINGERPRINT_COLUMN,
@@ -93,13 +97,14 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: Schema version of a search artifact. Bumped when the fields change, so a
 #: reader meeting an unfamiliar version can say so rather than guess.
 #:
-#: ``1`` was the shape written by commit ``db180ce``. ``2`` adds ``costs_frac``
-#: and ``commission_min_flat``. The bump matters even though no consumer exists
-#: yet and no artifact has been published: an artifact from that commit says
-#: ``1`` and lacks both keys, so leaving this at ``1`` would label two different
-#: shapes identically - which is exactly the confusion the field exists to
-#: prevent. :func:`write_search_result` enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 2
+#: ``1`` was the shape written by commit ``db180ce``. ``2`` added
+#: ``costs_frac`` and ``commission_min_flat``. ``3`` turns ``noise_ceiling``
+#: from a permanent ``null`` into an object when one was computed. Each bump
+#: matters even though no consumer exists yet: two artifacts with different
+#: field sets must not both call themselves version 1, which is exactly the
+#: confusion the field exists to prevent. :func:`write_search_result`
+#: enumerates the current fields.
+SEARCH_SCHEMA_VERSION = 3
 
 #: Where a search artifact is written. ``cli.status`` counts ``search-*.json``
 #: here to report how many searches have been run.
@@ -153,11 +158,11 @@ FAILED_PREFIX = "failed:"
 
 #: Recorded in every artifact beside the null ceiling, so a reader of the file
 #: alone learns why the field is empty.
-NOISE_CEILING_NOTE = (
-    "Not computed: search/noise.py is a stub. Until it exists, no Sharpe here "
-    "has been compared against what this same grid achieves on surrogate "
-    "series with no edge in them, and the best of ninety cells on noise is "
-    "well above zero. Treat every figure in this file as unbenchmarked."
+NOISE_CEILING_ABSENT_NOTE = (
+    "Not computed: this search was run without --trials, so no Sharpe here has "
+    "been compared against what the same grid achieves on surrogate series with "
+    "no edge in them. The best of ninety cells on noise is well above zero. "
+    "Treat every figure in this file as unbenchmarked."
 )
 
 
@@ -261,6 +266,10 @@ class SearchResult:
             PERCENTAGE, from the protocol. Recorded because a rejection is only
             interpretable against the bar it was made under, and the protocol
             file a reader has to hand may not be the one this search ran with.
+        noise_ceiling: The best-in-grid Sharpe achieved on each surrogate
+            series, or ``None`` when no ceiling was computed. ``None`` is not a
+            ceiling of zero and must never be rendered as one: it means the
+            comparison was not made.
         costs: The broker parameters every cell was charged, every rate a
             FRACTION. Recorded for the same reason as the ceiling, and with
             more force: costs are the single largest determinant of every
@@ -293,6 +302,7 @@ class SearchResult:
     plateau_radius: int
     starting_equity: float
     max_drawdown_ceiling_pct: float
+    noise_ceiling: pd.Series | None
     costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
@@ -930,6 +940,8 @@ def run_search(
     radius: int = DEFAULT_RADIUS,
     graveyard_path: Path = DEFAULT_GRAVEYARD_PATH,
     starting_equity: float = STARTING_EQUITY,
+    noise_trials: int = 0,
+    noise_seed: int = 0,
 ) -> SearchResult:
     """Backtest every cell of a strategy's grid over the in-sample window and score it.
 
@@ -1010,6 +1022,13 @@ def run_search(
         starting_equity: Opening equity for every cell, in account currency
             units. See :data:`STARTING_EQUITY` for why this is not protocol
             data.
+        noise_trials: Surrogate series to run for the noise ceiling. ZERO MEANS
+            NO CEILING, which is the default because one trial costs a full
+            grid: the committed search takes about four minutes, so a hundred
+            trials is most of a day. A result without a ceiling is not evidence
+            of an edge and says so throughout.
+        noise_seed: Seed for the surrogate resampler, so a ceiling is
+            reproducible.
 
     Returns:
         The complete result, including the rows of the cells that failed and
@@ -1149,6 +1168,18 @@ def run_search(
     for cell, metrics, reason in pending_records:
         record_rejection(cell, metrics, reason, graveyard_path)
 
+    # THE CEILING IS COMPUTED ON THE SAME WINDOW THE SEARCH READ, and on
+    # nothing else. Handing `bars` here instead of `window` would compute it
+    # partly on held-back data, which is a read of that data whatever it is
+    # used for.
+    ceiling = (
+        noise_ceiling(
+            definition, definition.search, window, protocol.costs, noise_trials, noise_seed
+        )
+        if noise_trials > 0
+        else None
+    )
+
     in_sample = protocol.windows.in_sample
     return SearchResult(
         strategy=definition.name,
@@ -1164,6 +1195,7 @@ def run_search(
         plateau_radius=radius,
         starting_equity=starting_equity,
         max_drawdown_ceiling_pct=protocol.validation.max_drawdown_ceiling_pct,
+        noise_ceiling=ceiling,
         costs=protocol.costs,
         results=scored,
         winner=winner,
@@ -1201,6 +1233,39 @@ def _row_mask(scored: pd.DataFrame, cell: dict[str, int]) -> pd.Series:
             f"cell {cell} matches {matched} rows of the results frame, expected exactly one"
         )
     return mask
+
+
+def _ceiling_payload(ceiling: pd.Series | None) -> dict[str, Any] | None:
+    """Render a noise ceiling for the artifact, or ``None`` if there is none.
+
+    THE WHOLE DISTRIBUTION IS SUMMARISED, NOT REDUCED TO ONE NUMBER. A single
+    "the ceiling was 1.4" invites a reader to treat it as a threshold; the
+    percentiles show how wide the thing is, which is the fact that decides
+    whether a winner clears it.
+
+    Trials that produced no scoreable cell are ``NaN`` and are excluded from the
+    percentiles while still being counted in ``trials``, so a reader can see
+    that the summary rests on fewer surrogates than were run.
+
+    Args:
+        ceiling: Best-in-grid Sharpe per surrogate, or ``None``.
+
+    Returns:
+        ``None``, or the summary described in :func:`write_search_result`.
+    """
+    if ceiling is None:
+        return None
+    finite = ceiling.dropna()
+    return {
+        "trials": int(len(ceiling)),
+        "scoreable_trials": int(len(finite)),
+        "percentiles": {
+            "p50": _finite_or_none(float(finite.quantile(0.50))) if len(finite) else None,
+            "p90": _finite_or_none(float(finite.quantile(0.90))) if len(finite) else None,
+            "p95": _finite_or_none(float(finite.quantile(0.95))) if len(finite) else None,
+        },
+        "max": _finite_or_none(float(finite.max())) if len(finite) else None,
+    }
 
 
 def _finite_or_none(value: float) -> float | None:
@@ -1282,8 +1347,11 @@ def write_search_result(
     - ``plateau_radius`` — neighbourhood half-width in GRID STEPS.
     - ``starting_equity`` — account currency units.
     - ``grid_size``, ``failed_cells`` — cells walked, and how many raised.
-    - ``noise_ceiling`` — always ``null`` today, with ``noise_ceiling_note``
-      saying why. The key is present so its absence cannot read as an oversight.
+    - ``noise_ceiling`` — ``null`` when none was computed, otherwise an object
+      with ``trials``, ``block_bars``, ``seed``, ``percentiles`` (the 50th, 90th
+      and 95th of the best-in-grid Sharpe across surrogates) and ``max``. A
+      ``null`` here is NOT a ceiling of zero; ``noise_ceiling_note`` says which
+      case applies and, when a ceiling exists, what its trial count supports.
     - ``winner`` — ``null``, or an object carrying ``params``, ``sharpe``,
       ``max_drawdown_pct``, ``plateau_score``, ``neighbour_count`` and
       ``degenerate``.
@@ -1348,8 +1416,12 @@ def write_search_result(
         "starting_equity": result.starting_equity,
         "grid_size": result.grid_size,
         "failed_cells": result.failed_cells,
-        "noise_ceiling": None,
-        "noise_ceiling_note": NOISE_CEILING_NOTE,
+        "noise_ceiling": _ceiling_payload(result.noise_ceiling),
+        "noise_ceiling_note": (
+            NOISE_CEILING_ABSENT_NOTE
+            if result.noise_ceiling is None
+            else trials_note(len(result.noise_ceiling))
+        ),
         "winner": None
         if result.winner is None
         else {

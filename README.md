@@ -19,21 +19,26 @@ which is the only place that answer is ever current.*
 
 ## Current state
 
-**A parameter search now runs end to end, and its output is not yet evidence of
-anything.** `strategylab search` walks all ninety cells of the committed config
-over 2005–2018, scores the surface by neighbourhood median, and records every
-cell. What it cannot do is tell you whether the winner is real, because the
-**noise ceiling is not built** — and until it is, the best of ninety
-combinations posting a positive Sharpe is the expected outcome on data with no
-edge in it. The validator is not built either. **No strategy has been
-validated, and no figure from a search appears in this README.**
+**A parameter search runs end to end and can now be benchmarked against noise.**
+`strategylab search` walks all ninety cells of the committed config over
+2005–2018, scores the surface by neighbourhood median, and records every cell.
+With `--trials N` it also re-runs the whole grid against block-resampled
+surrogate series and reports where the candidate sits in that distribution —
+the comparison without which a winning Sharpe is a selection artefact rather
+than a finding.
+
+**What is still missing is the part that tests a candidate on unseen data.**
+`validate/` is a stub, nothing has read the held-back window, and nothing
+computes a buy-and-hold benchmark. **No strategy has been validated, and no
+figure from a search appears in this README.**
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | **Noise ceiling** — the one that makes a result mean something |
-| Price data layer — validation, provenance, parquet cache | Walk-forward validation |
-| Cost model — hand-verified arithmetic | Any benchmark — nothing computes buy-and-hold |
+| Protocol loader and validator | Walk-forward validation — no candidate has been tested on unseen data |
+| Price data layer — validation, provenance, parquet cache | Any benchmark — nothing computes buy-and-hold |
+| Cost model — hand-verified arithmetic | The noise band drawn on the figure's own axis |
 | Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters |
+| The noise ceiling — block-resampled surrogates, `--trials` | Rejection *on* the ceiling — it informs, it does not gate |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
 | Backtest engine and metrics, with the determinism test | |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
@@ -43,7 +48,7 @@ validated, and no figure from a search appears in this README.**
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | `status`, `fetch`, `search` and `report` commands *(untested)* | |
 
-**615 tests pass** — verify with `uv run pytest`. They cover the protocol
+**650 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop and the reports — twelve areas,
@@ -103,7 +108,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 615 tests, none touching the network
+uv run pytest                   # 650 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -117,6 +122,7 @@ repository. `search` needs `fetch` to have run, and `report` needs `search`:
 ```bash
 uv run strategylab fetch                              # caches SPY, with provenance
 uv run strategylab search configs/ma_crossover.yaml   # ~4 min; writes state/search-*.json
+uv run strategylab search configs/ma_crossover.yaml --trials 100   # + noise ceiling; hours
 uv run strategylab report                             # renders those to reports/*.html
 ```
 
@@ -151,15 +157,22 @@ sets rather than trade counts. What goes in that trade comparison is
 `search` ranks by the neighbourhood median, refuses an edge winner and moves to
 the next-best cell, and writes every refusal to `state/graveyard.jsonl`.
 
-**The noise ceiling.** ***Not implemented, and it is the gap that matters.***
-The expected maximum across 90 draws from noise is well above zero, so the best
-of 90 parameter combinations (6 x 5 x 3, from the `search` block of
-`configs/ma_crossover.yaml`) will post a positive Sharpe on data with no
-*exploitable* structure in it. Every search is meant to rerun its entire grid
-against block-resampled surrogate series and report the distribution of
-best-in-grid results. Until it does, `search` prints a Sharpe with nothing to
-hold it against, records `"noise_ceiling": null` in its output, and says so on
-every run. **Read any number it prints as unbenchmarked.**
+**The noise ceiling.** *Built, and off by default.* The expected maximum across
+90 draws from noise is well above zero, so the best of 90 parameter combinations
+(6 x 5 x 3, from the `search` block of `configs/ma_crossover.yaml`) will post a
+positive Sharpe on data with no *exploitable* structure in it. `search --trials
+N` reruns the entire grid against `N` block-resampled surrogate series and
+reports where the candidate falls in that distribution. Blocks are as long as
+the grid's longest lookback, so a trend can exist inside one — a shorter block
+destroys the structure under test and sets the bar too low, which is the same
+failure as shuffling arriving more quietly
+([docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md)).
+
+It is **off by default** because one trial costs a full grid: the committed
+search takes about four minutes, so a hundred trials is most of a day. A search
+run without it says on every line of output that nothing it printed is evidence
+of an edge. **The ceiling informs; it does not gate** — `select_candidate` never
+sees it, so a candidate can be nominated while sitting inside the noise.
 
 **Three outcomes, not two.** *Not yet implemented.* Validation returns pass,
 fail, or `insufficient_data`. The third is not a soft failure — it means the strategy was

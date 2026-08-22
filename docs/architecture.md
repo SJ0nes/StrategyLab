@@ -41,7 +41,8 @@ signature and a docstring contract but a `raise NotImplementedError` body.
      │    search/     │            │   execution/    │
      │ grid.py  BUILT │            │ venue.py   STUB │
      │plateau.py BUILT│            │ t212.py    STUB │
-     │ noise.py  STUB │            └────────┬────────┘
+     │ noise.py BUILT │            └────────┬────────┘
+     │surrogate BUILT │
      │graveyard  BUILT│                     │
      │ loop.py  BUILT │                     │
      └───────┬────────┘                     │
@@ -84,12 +85,14 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation that refuses a searched range for every reason the config loader does, bar three: two cross-block checks it cannot make from the `search` block alone, and a huge integer bound it accepts because it never converts to float. Produces the `params` mapping that makes a `StrategyDef` evaluable. `plateau.is_edge_winner` calls it to build an axis, so the two can never disagree about which values a range generates. Reached by `strategylab search`, through both `cli.search` and `search/loop.py`. | 74 |
 | `search/loop.py` | `run_search` — the caller everything above was waiting for. Cuts the bars to `protocol.windows.in_sample` and to nothing else, walks the grid, fingerprints each cell's trades, scores the surface, and takes the best surviving cell. `select_candidate` ranks by plateau score rather than by Sharpe, rejects an edge winner or a drawdown breach and moves on, and flags a degenerate plateau rather than rejecting it. `write_search_result` persists the whole surface. Refuses a bad input up front with `SearchError`, and refuses a grid in which every cell failed - a fault in the definition or the data would otherwise read as a research finding. Carries the window test, which asserts the bar count as well as the values, because the corruption half alone cannot see a one-bar leak. | 77 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
+| `search/surrogate.py` | `block_length_for` and `block_resample` — moving-block resampling over bar INDICES, so a bar's own shape travels with its return. Block length is the grid's longest lookback, per `docs/decisions/0008`. Log returns, so a surrogate price can never reach zero. | 32 |
+| `search/noise.py` | `noise_ceiling` — the whole grid against `n_trials` surrogates, recording the best Sharpe on each. Failed cells skipped rather than scored zero; a trial with nothing scoreable is `NaN` rather than dropped. `trials_note` says what a trial count buys. | in the 32 |
 | `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 42 |
 | `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. | in the 42 |
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 42 |
 | `cli.py` | `status`, `fetch`, `search` and `report`. | none |
 
-**615 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 77 + 42. Run `uv run pytest` to see the
+**650 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 42 + 32. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -99,13 +102,12 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **15
-`NotImplementedError` bodies across 6 files:**
+session builds against a fixed interface rather than inventing one. **14
+`NotImplementedError` bodies across 5 files:**
 
 `cli.py` (3 — three of the seven commands) · `execution/t212.py` (6) ·
 `logging/decisions.py` (2) ·
 `risk/limits.py` (2) ·
-`search/noise.py` ·
 `validate/walkforward.py`.
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
@@ -132,16 +134,21 @@ these exist:
   The counter reads zero because nothing has read the held-back window, and that
   is now guaranteed by `loop._in_sample_window` rather than by there being no
   reader at all.
-- **Any noise ceiling.** `search/noise.py` is a stub, so `search` reports
-  `"noise_ceiling": null` in every artifact it writes and says so on every run.
-  Nothing it prints is yet evidence of an edge.
+- **A noise ceiling by default.** `search` computes one only when given
+  `--trials`, because each trial costs a full grid. Without it the artifact
+  records `"noise_ceiling": null` and every output says nothing it printed is
+  evidence of an edge.
 - **Any equity curve, anywhere.** The report's contract asks for click-a-cell to
   show one and the search artifact carries none: ninety curves over three and a
   half thousand bars is tens of megabytes against a thirty-kilobyte file. What
   to store is undecided, so that interaction does not exist.
 - **Any noise band on a figure.** The report standard requires the ceiling drawn
-  on the same axis as the result. `search/noise.py` is a stub, so every page
-  states the absence where the band would be.
+  on the same axis as the result so a winner inside the noise is *seen* rather
+  than read. A ceiling now exists, but the page states it as a sentence and a
+  percentile; the band itself is roadmap session 8.
+- **Any rejection on the noise ceiling.** `select_candidate` never receives it,
+  so a candidate can be nominated while sitting inside the noise distribution.
+  The ceiling informs a human; it does not gate anything.
 - **A `StrategyDef` with its placeholders substituted into it.** `expand_grid`
   is built, but it does not rewrite a definition: it produces the `params`
   mapping that `evaluate` resolves each `$placeholder` against, once per bar. So

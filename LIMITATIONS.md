@@ -6,13 +6,13 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Fourteen modules have working bodies: `protocol.py`, `data/source.py`,
+Sixteen modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
 `core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`,
-`search/graveyard.py`, `search/loop.py`, `report/render.py`,
-`report/surface.py`, `report/palette.py`, and the `status`, `fetch`, `search`
-and `report` commands in `cli.py`. Fifteen `NotImplementedError` bodies remain,
-across 6 files. Two
+`search/graveyard.py`, `search/loop.py`, `search/surrogate.py`,
+`search/noise.py`, `report/render.py`, `report/surface.py`,
+`report/palette.py`, and the `status`, `fetch`, `search` and `report` commands
+in `cli.py`. Fourteen `NotImplementedError` bodies remain, across 5 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -38,14 +38,31 @@ in it will not find one.
 `strategylab search configs/ma_crossover.yaml` walks all ninety cells over
 2005-2018, scores the surface by neighbourhood median, rejects edge winners and
 drawdown breaches into the graveyard, and writes every cell to
-`state/search-<stamp>.json`. That is a real result and it is deliberately not
-quoted anywhere, here or in the README, for the reason this project exists to
-state: **no noise ceiling has been computed**, so nothing the search prints has
-been compared against what the same ninety cells achieve on surrogate series
-with no edge in them. The expected best of ninety draws from noise is well above
-zero. A Sharpe without that comparison is not a weak finding, it is not a
-finding. `search/noise.py` is still a stub, the artifact records
-`"noise_ceiling": null` explicitly, and the command says so on every run.
+`state/search-<stamp>.json`. No number from it is quoted here or in the README.
+
+**The noise ceiling exists now, and is OFF BY DEFAULT.** `--trials N` re-runs
+the whole grid against `N` block-resampled surrogates and reports where the
+candidate falls in that distribution. Without it the artifact records
+`"noise_ceiling": null` and every output says nothing printed is evidence of an
+edge. The default is zero because one trial costs a full grid — about four
+minutes — so a hundred trials is most of a day. That default is a real hazard
+worth naming: the cheap path is the unbenchmarked one, and a reader who runs
+`search` without reading its output will get a plausible Sharpe and no warning
+they sought out.
+
+**The ceiling informs; it does not gate.** `select_candidate` never receives it,
+so a candidate can be nominated, written to the artifact and drawn on a report
+while sitting inside the noise distribution. Only a human reading the comparison
+will notice. This is the same gap the validation section records for
+`walk_forward`, now present one stage earlier.
+
+**Fewer than ~100 trials cannot support a threshold.** The ceiling is read by
+its upper percentiles, and with twenty trials the 95th percentile is essentially
+the maximum of twenty draws — it moves a long way between seeds, so the
+comparison measures the resampler's luck. `trials_note` says so on every run and
+in every artifact. Nothing refuses a short run, because a short run is a
+legitimate way to see the machinery work and refusing it would push people
+towards not running it at all.
 
 `state/` is gitignored, so no search output is committed and none is
 reproducible from this repository alone — regenerating one needs a `fetch`
@@ -77,7 +94,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-615 tests pass (`uv run pytest`). They cover the protocol loader, the data
+650 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop and the reports — twelve areas, one per test
@@ -235,15 +252,12 @@ throughout; there is no lot size or minimum order size.
 compares pooled Sharpe to `min_sharpe + pass_margin` (1.20). No standard error,
 no confidence interval, no p-value, and no deflated Sharpe is computed anywhere.
 
-**The noise ceiling does not enter the pass decision, and is not reported
-either.** An earlier version of this entry said "it is reported by the search,
-so it informs which candidate a human chooses". That was written as a
-description of the design and is false of the code: `search/noise.py` is a stub,
-so the search reports `null` and informs nothing. Both statements now apply and
-they compound. Even once the ceiling exists, `walk_forward` will never receive
-it — a candidate can pass validation while sitting inside the noise
-distribution, and nothing in the code will stop that. Today it is worse than
-that: no candidate has been compared against a ceiling at all.
+**The noise ceiling does not enter the pass decision.** It is reported by the
+search when asked for, so it can inform which candidate a human chooses.
+`walk_forward` never receives it, and neither does `select_candidate`. A
+candidate can therefore be nominated by the search AND pass validation while
+sitting inside the noise distribution, and nothing in the code will stop that at
+either stage. The ceiling is a number a person must read and act on.
 
 **Nothing computes a benchmark.** There is no buy-and-hold comparison anywhere.
 A long-only trend strategy on the S&P 500 over 2005–2024 must beat simply
@@ -549,9 +563,12 @@ gap is structural rather than unfinished work:
   or recompute on demand — and nobody has taken it.
 - **No noise ceiling on the axis.** The standard is emphatic that the ceiling
   belongs on the SAME axis as the result, so a winner inside the noise
-  distribution is *visible* rather than computed. `search/noise.py` is a stub.
-  Every page states the absence where the band would be, which is the least bad
-  thing available and is not a substitute.
+  distribution is *visible* rather than computed. A ceiling now exists, but the
+  page reports it as a sentence and a percentile — the reader has to do the
+  comparison the figure was supposed to make for them. Worse, the placement is
+  computed from the artifact's stored percentiles rather than the raw trials, so
+  it is coarse: it can say "above the 95th" or "around the 50th" and nothing
+  between. The band is roadmap session 8.
 - **No fold panels and no two-run comparison.** `validate/` is a stub, so no
   fold exists, and nothing yet loads two result sets. These are roadmap session
   8, after the components they display.
@@ -568,17 +585,22 @@ sampling and is asserted by a test. The exact 256-entry table is not
 reproduced, and a reader matching these colours against a matplotlib figure
 will find small differences.
 
-**A full search takes about four minutes, and the noise ceiling multiplies
-that.** Measured: `time uv run strategylab search configs/ma_crossover.yaml`
-took 4m02s for ninety cells over 3,523 bars on the machine it was run on — the
-engine steps `evaluate` bar by bar in Python and re-derives the moving averages
-on every bar of every cell. That is tolerable for one search and it is a
-problem for the component that comes next: `noise_ceiling` reruns the ENTIRE
-grid once per surrogate series, so a hundred trials is on the order of seven
-hours as things stand. Whoever builds it will have to make the engine faster,
-cut the trial count and say what that costs the ceiling's precision, or accept
-an overnight run. None of those is free, and the choice should be recorded
-rather than made by whichever is easiest at the time.
+**A full search takes about four minutes, and the noise ceiling multiplies it
+by the trial count.** Measured: `time uv run strategylab search
+configs/ma_crossover.yaml` took 4m02s for ninety cells over 3,523 bars on the
+machine it was run on. `--trials N` costs `N + 1` grids, so a hundred trials is
+on the order of seven hours. The choice was to keep the ceiling exact and make
+the cost explicit — the command prints the estimate before starting — rather
+than shrink the surrogate grid, which would understate the ceiling, since the
+ceiling is a property of how many combinations were tried.
+
+The engine's cost was measured rather than assumed, and an earlier version of
+this entry got the reason wrong. It said the engine "re-derives the moving
+averages on every bar of every cell", implying quadratic behaviour. Timed across
+400, 800, 1,600 and 3,200 bars the scaling is roughly LINEAR — 2.1x for 2x bars
+— so the cost is per-call overhead, not the rolling recompute. There is no
+cheap win hiding there: making the ceiling affordable means restructuring how
+`evaluate` is called, which is an engine change and a separate piece of work.
 
 **A stub command prints your home directory.** The three unbuilt CLI commands —
 `validate`, `run`, `diff` — raise `NotImplementedError`,

@@ -14,13 +14,18 @@ region look like a plateau, erasing the spike-versus-plateau distinction the
 figure exists to show. The score is in the hover, where it belongs: the eye gets
 the honest surface, and the number that decided the winner is one hover away.
 
-WHAT IS MISSING, AND SAID ON THE FIGURE. There is no noise ceiling to draw,
-because ``search/noise.py`` is a stub. The ``report-design`` standard requires
-the ceiling on the SAME axis as the result rather than in a table below it, so
-that a winner sitting inside the noise distribution is visible rather than
-computed. Nothing here can meet that yet, and the report says so where the
-ceiling would be rather than omitting the row - an absent band reads as an
-oversight, a stated absence reads as a fact.
+THE NOISE CEILING, WHEN THERE IS ONE. A search run with ``--trials`` records
+the distribution of best-in-grid Sharpe across surrogates, and the page then
+shows where the candidate sits within it. What it does NOT yet do is draw that
+distribution on the SAME axis as the surface, which is what the
+``report-design`` standard requires so a winner inside the noise is visible
+rather than computed. The band is roadmap session 8, alongside the fold panels.
+Until then the comparison is a sentence and a percentile rather than a shape,
+which is weaker and is said so on the page.
+
+When a search was run without ``--trials`` there is no ceiling at all, and the
+page says that where the band would be - an absent field reads as an oversight,
+a stated absence reads as a fact.
 
 Equity curves are not drawn either. The ``render`` contract asks for click-a-cell
 to show one, and the search artifact does not carry them: ninety curves over
@@ -211,6 +216,7 @@ def build_context(artifact: dict[str, Any], command: str) -> dict[str, Any]:
         "plateau_radius": artifact["plateau_radius"],
         "noise_ceiling": artifact["noise_ceiling"],
         "noise_ceiling_note": artifact["noise_ceiling_note"],
+        "winner_percentile": _winner_percentile(artifact),
         "accent": ACCENT,
         "failed_fill": FAILED_FILL,
         "panel_width": PANEL_PAD + len(across_values) * CELL + 16,
@@ -341,6 +347,38 @@ def _legend(low: float, high: float) -> dict[str, Any]:
             for index in range(len(VIRIDIS))
         ],
     }
+
+
+def _winner_percentile(artifact: dict[str, Any]) -> float | None:
+    """Where the candidate sits in the noise distribution, as a PERCENTAGE.
+
+    Args:
+        artifact: The parsed search artifact.
+
+    Returns:
+        The share of surrogates the candidate's metric exceeds, 0 to 100, or
+        ``None`` when there is no ceiling, no candidate, or no scoreable
+        surrogate. ``None`` means the comparison was not made and must never be
+        rendered as a zero, which would read as "beaten by everything".
+
+        Computed from the recorded PERCENTILES rather than the raw trials,
+        because the artifact stores a summary. That makes this a coarse
+        placement - the page says so - and it is the reason the on-axis band of
+        roadmap session 8 is worth building.
+    """
+    ceiling = artifact["noise_ceiling"]
+    winner = artifact["winner"]
+    if ceiling is None or winner is None or not ceiling.get("scoreable_trials"):
+        return None
+    metric = winner[artifact["primary_metric"]]
+    if metric is None:
+        return None
+    percentiles = ceiling["percentiles"]
+    for share, key in ((95.0, "p95"), (90.0, "p90"), (50.0, "p50")):
+        value = percentiles.get(key)
+        if value is not None and metric >= value:
+            return share
+    return 0.0
 
 
 def _outcomes(artifact: dict[str, Any]) -> list[dict[str, Any]]:
