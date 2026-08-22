@@ -135,6 +135,18 @@ def record_rejection(
             raises mid-run, so the caller must use a constant rather than a
             literal it typed twice.
 
+            A candidate whose parameter names are not strings is refused too:
+            ``json`` coerces an ``int`` key to a string without complaint, so
+            ``{5: 10}`` would be recorded as ``{"5": 10}`` and a later reader
+            could not tell which it had been.
+
+            NO REFUSAL LEAVES A FILE BEHIND. The record is serialised before the
+            path is touched, so a failure to serialise cannot create the empty
+            file that an earlier version left whenever ``json.dumps`` raised.
+            Whatever ``json.dumps`` refuses - a value of a type it cannot
+            represent - is re-raised as a ``ValueError`` naming it, rather than
+            escaping as the ``TypeError`` this contract does not admit.
+
             OSError propagates unchanged if the file or its directory cannot be
             written. That is not caught, because a graveyard that silently fails
             to record is worse than a search that stops.
@@ -147,18 +159,35 @@ def record_rejection(
             "closed so that rejections can be counted by category"
         )
 
+    unnamed = sorted(repr(key) for key in candidate if not isinstance(key, str))
+    if unnamed:
+        raise ValueError(
+            f"candidate has non-string parameter names {unnamed}; JSON object keys are "
+            "strings, and json would silently coerce an int key to one"
+        )
+
     record: dict[str, Any] = {
         "schema_version": GRAVEYARD_SCHEMA_VERSION,
         "recorded_at": datetime.now(UTC).isoformat(),
-        "candidate": candidate,
+        "candidate": dict(candidate),
         "metrics": {name: _jsonable_metric(value, name) for name, value in metrics.items()},
         "reason": reason,
     }
 
-    # allow_nan=False is a second line of defence and is unreachable as long as
+    # SERIALISED BEFORE THE FILE IS TOUCHED, so that no refusal leaves a file
+    # behind. Serialising inside the `with` block created an empty file and left
+    # it there whenever json.dumps raised, which broke the one property this
+    # function promises about a call it rejects.
+    #
+    # allow_nan=False is a second line of defence, unreachable as long as
     # _jsonable_metric runs first, which is why no test exercises it. It is kept
     # because the invariant it protects - this file stays valid JSON - is the
     # one a silent regression would break most quietly.
+    try:
+        line = json.dumps(record, allow_nan=False, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"rejection is not serialisable as JSON: {exc}") from exc
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(record, allow_nan=False, sort_keys=True) + "\n")
+        handle.write(line + "\n")

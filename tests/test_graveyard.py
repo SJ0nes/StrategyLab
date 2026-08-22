@@ -229,6 +229,35 @@ def test_a_metric_that_is_not_a_real_number_is_refused(tmp_path: Path, value: ob
         record_rejection(CANDIDATE, metrics, "edge_winner", tmp_path / "graveyard.jsonl")
 
 
+@pytest.mark.parametrize("key", [5, (1, 2), None])
+def test_a_candidate_with_a_non_string_parameter_name_is_refused(
+    tmp_path: Path, key: object
+) -> None:
+    # `json` coerces an int key to a string without complaint, so `{5: 10}`
+    # would be recorded as `{"5": 10}` and a reader could not tell which it had
+    # been. A tuple key is worse: `json.dumps` raises TypeError, which this
+    # contract does not admit, and it used to do so with the file already open.
+    candidate: dict[Any, Any] = {key: 10}
+    with pytest.raises(ValueError, match="non-string parameter names"):
+        record_rejection(candidate, METRICS, "edge_winner", tmp_path / "graveyard.jsonl")
+
+
+def test_nothing_is_written_when_the_record_cannot_be_serialised(tmp_path: Path) -> None:
+    # The record is serialised BEFORE the path is touched. Serialising inside
+    # the open block created the file, then raised, leaving an empty file that
+    # a reader would count as a graveyard with no rejections in it.
+    #
+    # An unserialisable VALUE, not key: a bad key is refused by the check above
+    # before serialisation is ever reached, so a key-based case cannot exercise
+    # this path at all. This candidate's parameter name is a string and passes
+    # every earlier check, so `json.dumps` is the first thing to object.
+    path = tmp_path / "graveyard.jsonl"
+    candidate: dict[str, Any] = {"fast": object()}
+    with pytest.raises(ValueError, match="not serialisable as JSON"):
+        record_rejection(candidate, METRICS, "edge_winner", path)
+    assert not path.exists()
+
+
 def test_a_refused_rejection_writes_nothing(tmp_path: Path) -> None:
     # The reason check runs before the file is touched, so a bad call does not
     # leave a partial file or an empty one behind.
