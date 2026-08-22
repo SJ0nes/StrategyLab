@@ -12,9 +12,10 @@ nothing built, :func:`~strategylab.search.plateau.is_degenerate` read a
 makes it the first place the in-sample/walk-forward split can be violated.
 ``strategylab fetch`` caches 2005-2024 in one parquet file; nothing partitions
 it. Until now the split was enforced by the absence of any consumer. Here it is
-enforced by :func:`_in_sample_window`, which slices from
+enforced by :func:`~strategylab.windows.in_sample_bars`, which slices from
 ``protocol.windows.in_sample`` and by nothing else - not from the frame it was
-handed, not from an argument a caller could widen.
+handed, not from an argument a caller could widen. That accessor is shared with
+every other component that reads bars, so the guard cannot drift between them.
 ``tests/test_search_loop.py`` corrupts every bar after the window's end, passes
 the frame in intact, and asserts both the bar COUNT and that no cell's result
 moves. Both halves are needed: a signal fills at the NEXT bar's open, so the
@@ -87,6 +88,7 @@ from strategylab.search.plateau import (
     plateau_score,
 )
 from strategylab.search.surrogate import block_length_for
+from strategylab.windows import WindowError, in_sample_bars
 
 #: Column names a results frame carries that are NOT searched parameters.
 #: Imported from :mod:`strategylab.search.plateau` rather than re-listed, so a
@@ -483,12 +485,12 @@ def _check_inputs(
     Args:
         definition: The parsed strategy, checked for a searchable ``search``
             block whose parameter names do not collide with result columns.
-        bars: The bars as handed in, before any window is cut. ONLY what is
-            needed to cut the window is checked here - that the index is a
-            timezone-naive :class:`pandas.DatetimeIndex`. Everything that reads
-            a bar's contents belongs in :func:`_check_window`, after the slice,
-            so the held-back window cannot decide whether an in-sample search
-            runs.
+        bars: The bars as handed in, before any window is cut. NOTHING about
+            them is checked here: the shape checks needed to cut a window belong
+            to :func:`~strategylab.windows.in_sample_bars`, which owns the
+            slicing, and everything that reads a bar's CONTENTS belongs in
+            :func:`_check_window`, after the slice, so the held-back window
+            cannot decide whether an in-sample search runs.
         protocol: The protocol in force, checked for a primary metric matching
             the one the scoring reads.
         config_path: Checked to be relative, so no username can reach the
@@ -645,20 +647,6 @@ def _check_inputs(
     if not (starting_equity > 0) or not math.isfinite(starting_equity):
         raise SearchError(f"starting_equity must be positive and finite, got {starting_equity}")
 
-    if not isinstance(bars.index, pd.DatetimeIndex):
-        raise SearchError(
-            f"bars is indexed by {type(bars.index).__name__}, not a DatetimeIndex, so the "
-            "in-sample window cannot be cut from it. An integer index is the trap here: "
-            "pandas would read those integers as nanoseconds since the epoch and date the "
-            "whole frame to 1970 rather than refusing it"
-        )
-    if bars.index.tz is not None:
-        raise SearchError(
-            f"bars carries a timezone-aware index ({bars.index.tz}) and the protocol's "
-            "window is a plain date, so which bars fall inside it depends on a conversion "
-            "nobody has chosen. Localise to naive before searching"
-        )
-
 
 def _check_window(window: pd.DataFrame) -> None:
     """Refuse an in-sample window this loop cannot honestly search.
@@ -739,48 +727,6 @@ def _check_window(window: pd.DataFrame) -> None:
             "the whole search, which is why it is refused here rather than left to the "
             "every-cell-failed check"
         )
-
-
-def _in_sample_window(bars: pd.DataFrame, protocol: Protocol) -> pd.DataFrame:
-    """Cut the bars down to the pre-registered in-sample window.
-
-    THE ONLY PLACE A SEARCH DECIDES WHICH BARS IT MAY SEE, and it decides from
-    ``protocol.windows.in_sample`` alone. The frame it is handed may span the
-    held-back window - ``fetch`` caches 2005-2024 in one file and nothing
-    partitions it - and the search must be unable to tell.
-
-    Timestamps are normalised to midnight before comparison, so a bar carrying
-    an intraday time on the window's last date is inside the window rather than
-    silently dropped by a ``<=`` against that date at midnight.
-
-    Args:
-        bars: OHLCV bars indexed by an ascending, timezone-naive
-            :class:`pandas.DatetimeIndex`, spanning any range.
-            :func:`_check_inputs` has already established that; this function
-            does not re-check it.
-        protocol: The protocol in force, read for its in-sample window.
-
-    Returns:
-        The rows dated within ``[in_sample.start, in_sample.end]`` inclusive, in
-        their original order. Boolean-mask indexing materialises a new frame, so
-        this IS a copy rather than a view - and nothing here writes to either.
-
-    Raises:
-        SearchError: If no bar falls inside the window.
-    """
-    stamps = pd.DatetimeIndex(bars.index).normalize()
-    window = protocol.windows.in_sample
-    inside = (stamps >= pd.Timestamp(window.start)) & (stamps <= pd.Timestamp(window.end))
-    selected = bars.loc[inside]
-    if selected.empty:
-        raise SearchError(
-            f"no bar falls inside the in-sample window {window.start} to {window.end}; "
-            f"the frame spans {stamps.min().date()} to {stamps.max().date()}"
-            if len(stamps)
-            else f"no bar falls inside the in-sample window {window.start} to "
-            f"{window.end}; the frame is empty"
-        )
-    return selected
 
 
 def _ranked(scored: pd.DataFrame, parameters: list[str]) -> list[dict[Hashable, Any]]:
@@ -1083,7 +1029,13 @@ def run_search(
             partial graveyard behind for a search that returned no result.
     """
     _check_inputs(definition, bars, protocol, config_path, starting_equity)
-    window = _in_sample_window(bars, protocol)
+    try:
+        window = in_sample_bars(bars, protocol)
+    except WindowError as exc:
+        # Re-typed, not swallowed. `windows.py` owns the slicing and raises its
+        # own error; a caller of `run_search` should not have to catch two
+        # exception types to handle "this search could not run".
+        raise SearchError(str(exc)) from exc
     _check_window(window)
     grid = expand_grid(definition.search)
 

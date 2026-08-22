@@ -124,7 +124,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-659 tests pass (`uv run pytest`). They cover the protocol loader, the data
+672 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop, the noise ceiling and the reports — thirteen
@@ -457,13 +457,23 @@ lesson is the one this file keeps relearning: the leak arrived in code written
 to make the system safer.
 
 That is one consumer, not a chokepoint. `_in_sample_window` is private to the
-search loop, so the next component that reads bars — the validator, a report, a
-live worker — gets nothing from it and could slice the cached frame itself
-exactly as before. Lifting that function somewhere both can reach is the right
-move when the second consumer arrives, and until then this guarantee protects
-one code path rather than the repository.
+search loop. **That is now fixed rather than pending:** `windows.py` owns both
+accessors, the loop's private copy is deleted, and any future component asks the
+same function. Reading the held-back window additionally increments the
+protocol's counter and cannot be made not to — there is no dry run, because a
+free look is what the counter exists to prevent.
 
-**Nothing calls `increment_walk_forward_touches`.** The counter is implemented
+What remains is that nothing *enforces* the use of that module. A component
+could still slice a cached frame with plain pandas and nobody would notice. The
+chokepoint is a convention backed by one obvious place to go, not a mechanism.
+
+**Nothing calls `increment_walk_forward_touches` in anger yet.** It is now
+wired: `windows.walk_forward_bars` increments it before returning a single
+held-back bar. But no product code calls that accessor either, because the
+validator does not exist, so the counter still reads zero for the honest reason
+rather than an accidental one.
+
+**The old entry, still true of what it describes.** The counter is implemented
 and tested, and no production code path invokes it, because the only thing that
 should — walk-forward validation — does not exist. The counter reads zero
 because nothing has read the held-back window; for the search that is now

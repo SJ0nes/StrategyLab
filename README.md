@@ -48,7 +48,7 @@ figure from a search appears in this README.**
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | `status`, `fetch`, `search` and `report` commands *(untested)* | |
 
-**659 tests pass** — verify with `uv run pytest`. They cover the protocol
+**672 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling and the reports — thirteen
@@ -108,7 +108,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 659 tests, none touching the network
+uv run pytest                   # 672 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

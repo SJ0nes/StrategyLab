@@ -72,6 +72,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 
 | Module | What works | Tests |
 |---|---|---|
+| `windows.py` | `in_sample_bars` and `walk_forward_bars` — the one place any component asks which bars it may see. The held-back accessor increments the protocol's touch counter before returning a bar and takes the file it will increment, so tests point it at a copy. No dry run, deliberately. | 13 |
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
 | `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
@@ -92,7 +93,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
 | `cli.py` | `status`, `fetch`, `search` and `report`. | none |
 
-**659 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 35. Run `uv run pytest` to see the
+**672 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 35 + 13. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -171,12 +172,15 @@ the frame it was handed, not from an argument a caller could widen — and by
 `tests/test_search_loop.py`, which corrupts every bar after the window's end,
 passes the frame in intact, and asserts no cell's result moves.
 
-Be precise about the scope of that. It guards ONE consumer. The next component
-that reads bars gets no protection from it, and there is no shared chokepoint
-that would give it any: `_in_sample_window` is private to the search loop. A
-validator, a report or a live worker that slices the cached frame itself would
-destroy the guarantee exactly as before. The right fix when the second consumer
-arrives is to lift that function somewhere both can reach, not to copy it.
+**That chokepoint now exists.** `windows.py` owns both accessors and every
+component asks it for bars. `in_sample_bars` is a plain slice; `walk_forward_bars`
+CANNOT BE CALLED WITHOUT INCREMENTING the protocol's touch counter, and takes the
+protocol file it will increment so tests and development can point it at a copy.
+There is deliberately no dry run: a mode returning held-back bars without
+charging for them is the loophole that would make the counter meaningless.
+
+The search loop's private `_in_sample_window` is gone rather than kept beside
+it, so there is one slicer and it cannot drift.
 
 ## Design rules the structure encodes
 
