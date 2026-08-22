@@ -25,9 +25,14 @@ The conventional choice from the moving-block bootstrap literature is roughly
 
 ## Decision
 
-**The block length is the longest lookback the grid reaches**, read from the
-`search` block's largest declared `max`. For `configs/ma_crossover.yaml` that is
-`trend: 200`, so blocks are two hundred bars.
+**The block length is the longest lookback the grid actually reaches**, taken
+from `expand_grid` rather than from the declared `max`. A range is inclusive of
+`max` only on a step boundary, so `{min: 1, max: 10, step: 4}` tops out at 9 and
+a block sized from the declared 10 would exceed anything the grid can use. This
+is the same rule `plateau.is_edge_winner` applies, read from the same place, so
+the two cannot disagree about what a range means. For
+`configs/ma_crossover.yaml` the answer is `trend: 200`, which the grid does
+reach, so blocks are two hundred bars.
 
 Floored at two, because a block of one *is* the shuffle the rules forbid.
 
@@ -82,3 +87,45 @@ gap between them would itself be informative. Rejected on cost: the ceiling
 already runs the whole grid once per surrogate, and doubling that for a
 diagnostic nobody has yet asked for is the wrong first version. If a result ever
 turns on which length was used, this is the first thing to revisit.
+
+## A divergence from a non-negotiable rule, recorded rather than hidden
+
+`CLAUDE.md` lists among the rules that may not be broken:
+
+> **Every search reports its noise ceiling.** A winning Sharpe means nothing
+> until compared against the best Sharpe the same grid achieves on surrogate
+> series with no edge in them.
+
+**The implementation does not honour that literally.** `--trials` defaults to
+zero, so `strategylab search` with no flags reports no ceiling. This section
+exists because a rule described as non-negotiable should not be quietly
+softened by a default.
+
+**Why.** One trial re-runs the entire grid. The committed search takes about
+four minutes, so honouring the rule literally makes every search a multi-hour
+command — and a hundred trials, the point at which the upper tail is stable
+enough to quote, is most of a day. A tool whose only mode costs a day does not
+get run; it gets worked around, and the workaround is somebody computing a
+Sharpe in a notebook with no ceiling at all. Enforcing the rule in the code
+would produce less compliance with its intent, not more.
+
+**What is done instead.** The rule's purpose is that nobody reads a winning
+Sharpe as evidence. That is enforced, on every path:
+
+- a search run without `--trials` prints, to standard error, that no ceiling
+  was computed and that nothing it printed is evidence of an edge;
+- the artifact records `"noise_ceiling": null` with a note saying the same, so
+  the file cannot be read later without the caveat;
+- the HTML report states the absence where the band would be;
+- `status` repeats it.
+
+**What is NOT done, and is the residual risk.** The cheap path is still the
+unbenchmarked one. A reader who runs `search`, ignores four warnings and quotes
+the winner has a plausible-looking number and nothing stopping them. The
+mitigations are all disclosure, and disclosure is weaker than refusal.
+
+**What would close it.** Making `--trials` a required option with no default,
+so skipping the ceiling is an explicit act rather than an omission. That is a
+small change and it is deliberately not made yet: it should be made when
+somebody other than the author first uses this, because that is when the
+default's pull can actually be observed rather than guessed at.

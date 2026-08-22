@@ -38,6 +38,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from strategylab.search.grid import expand_grid
+
 #: Shortest block this module will resample with, in bars.
 #:
 #: Two, because a block of one IS the i.i.d. shuffle the project rules forbid -
@@ -50,8 +52,23 @@ MIN_BLOCK_BARS = 2
 def block_length_for(search_spec: dict[str, dict[str, float]]) -> int:
     """Choose the resampling block length for a grid, in BARS.
 
-    THE LONGEST LOOKBACK THE GRID REACHES. A surrogate is a fair opponent only
-    if it can express the structure the strategy trades, and a strategy with a
+    THE LONGEST LOOKBACK THE GRID ACTUALLY REACHES, which is not always the
+    declared ``max``. A range is inclusive of ``max`` only when ``max`` falls on
+    a step boundary, so ``{min: 1, max: 10, step: 4}`` tops out at 9 and a block
+    sized from the declared 10 would be a bar longer than anything the grid can
+    use. The axis is therefore taken from
+    :func:`~strategylab.search.grid.expand_grid`, exactly as
+    :func:`~strategylab.search.plateau.is_edge_winner` does, so the three can
+    never disagree about which values a range generates.
+
+    That is a small error in this direction - a slightly longer block is a
+    slightly fairer opponent - but reading the declared bound is the same
+    mistake ``plateau.py`` documents at length, and one module in this package
+    quietly disagreeing with another about what a range means is how the
+    expensive version of it starts.
+
+    WHY THE LONGEST LOOKBACK AT ALL. A surrogate is a fair opponent only if it
+    can express the structure the strategy trades, and a strategy with a
     two-hundred-bar trend filter cannot see a trend inside a twenty-bar block.
     Blocks shorter than the lookback destroy the very thing being tested, the
     strategy finds nothing on noise, and the ceiling comes out far too easy to
@@ -73,25 +90,20 @@ def block_length_for(search_spec: dict[str, dict[str, float]]) -> int:
             ``min``/``max``/``step``, values in BARS.
 
     Returns:
-        The block length in bars: the largest ``max`` any range declares, never
-        below :data:`MIN_BLOCK_BARS`.
+        The block length in bars: the largest value any range actually
+        generates, never below :data:`MIN_BLOCK_BARS`.
 
     Raises:
-        ValueError: If ``search_spec`` is empty, or if a range omits ``max`` or
-            carries one that is not a real number. A block length guessed from a
-            malformed spec would silently change the methodology.
+        ValueError: If ``search_spec`` is empty, and every reason
+            :func:`~strategylab.search.grid.expand_grid` refuses a range -
+            propagated unchanged, so a malformed spec is reported once, in one
+            vocabulary, by the function that owns it. A block length guessed
+            from a malformed spec would silently change the methodology.
     """
     if not search_spec:
         raise ValueError("search_spec is empty; there is no lookback to size a block from")
 
-    longest = 0
-    for name, bounds in search_spec.items():
-        if "max" not in bounds:
-            raise ValueError(f"range '{name}' omits 'max', so its longest lookback is unknown")
-        value = bounds["max"]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"range '{name}' has a non-numeric 'max': {value!r}")
-        longest = max(longest, int(value))
+    longest = max(value for cell in expand_grid(search_spec) for value in cell.values())
     return max(MIN_BLOCK_BARS, longest)
 
 

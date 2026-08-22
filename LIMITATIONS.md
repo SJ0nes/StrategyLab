@@ -40,7 +40,17 @@ in it will not find one.
 drawdown breaches into the graveyard, and writes every cell to
 `state/search-<stamp>.json`. No number from it is quoted here or in the README.
 
-**The noise ceiling exists now, and is OFF BY DEFAULT.** `--trials N` re-runs
+**The noise ceiling is off by default, which diverges from a rule `CLAUDE.md`
+calls non-negotiable.** That rule reads "Every search reports its noise
+ceiling"; `--trials` defaults to zero, so a plain `strategylab search` does not.
+The reasoning, the four places the absence is disclosed, and the residual risk
+that disclosure is weaker than refusal are recorded in
+[docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md). It is
+named here rather than left to be discovered because a non-negotiable rule
+softened by a default is exactly the kind of thing this document exists to
+surface.
+
+**How the ceiling behaves when it IS asked for.** `--trials N` re-runs
 the whole grid against `N` block-resampled surrogates and reports where the
 candidate falls in that distribution. Without it the artifact records
 `"noise_ceiling": null` and every output says nothing printed is evidence of an
@@ -94,7 +104,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-650 tests pass (`uv run pytest`). They cover the protocol loader, the data
+652 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
 the graveyard, the search loop and the reports — twelve areas, one per test

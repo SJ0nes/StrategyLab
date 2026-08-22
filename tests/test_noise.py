@@ -34,6 +34,7 @@ import pytest
 
 from strategylab.backtest.costs import CostModel
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
+from strategylab.search.grid import expand_grid
 from strategylab.search.noise import RELIABLE_TRIALS, noise_ceiling, trials_note
 from strategylab.search.surrogate import (
     MIN_BLOCK_BARS,
@@ -115,17 +116,30 @@ def test_a_tiny_lookback_still_gets_a_block_of_at_least_two() -> None:
     assert block_length_for({"p": {"min": 1, "max": 1, "step": 1}}) == MIN_BLOCK_BARS
 
 
+def test_the_block_is_sized_from_what_the_grid_reaches_not_what_it_declares() -> None:
+    # A range is inclusive of `max` only on a step boundary. {1, 10, 4} tops out
+    # at 9, so the block is 9 - the same rule `plateau.is_edge_winner` applies,
+    # and taken from the same place so the two cannot disagree. An earlier
+    # version read the declared bound and returned 10.
+    spec: dict[str, dict[str, float]] = {"p": {"min": 1, "max": 10, "step": 4}}
+    assert sorted({cell["p"] for cell in expand_grid(spec)}) == [1, 5, 9]
+    assert block_length_for(spec) == 9
+
+
 @pytest.mark.parametrize(
     ("spec", "match"),
     [
         ({}, "empty"),
-        ({"p": {"min": 1, "step": 1}}, "omits 'max'"),
-        ({"p": {"min": 1, "max": "x", "step": 1}}, "non-numeric"),
+        ({"p": {"min": 1, "step": 1}}, "step"),
+        ({"p": {"min": 1, "max": "x", "step": 1}}, "max"),
+        ({"p": {"min": 10, "max": 2, "step": 1}}, "max"),
     ],
 )
 def test_a_spec_whose_lookbacks_cannot_be_read_is_refused(spec: dict[str, Any], match: str) -> None:
     # Guessing a block length from a malformed spec would silently change the
-    # methodology rather than fail.
+    # methodology rather than fail. Everything but the empty case is refused by
+    # `expand_grid` and propagated, so a bad range is reported once, in one
+    # vocabulary, by the function that owns it.
     with pytest.raises(ValueError, match=match):
         block_length_for(spec)
 
