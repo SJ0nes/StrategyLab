@@ -135,3 +135,54 @@ which is the prompt that generated a stub rather than the stub itself; `git show
 settled it. Both were recorded as not-reproduced rather than fixed. This is the
 "one thing no auditor can check" above, arriving exactly as described, and the
 only defence that worked was checking before relaying.
+
+---
+
+## Addendum, 2026-08-22: six rounds on `search/loop.py`
+
+The search loop was the hardest test this record has had. It is recorded here
+because it both confirms the thesis above and complicates it.
+
+**Confirmed, again and emphatically: the arithmetic never broke.** Across six
+rounds `arithmetic-checker` recomputed every hand-derived value in
+`tests/test_search_loop.py` — plateau medians, grid sizes, warm-ups, bar counts
+— and disagreed with none of them. Every defect found in six rounds was code or
+prose.
+
+**Complicated: `contract-auditor` on a CORRECTION commit found behavioural
+defects, not wording, four rounds running.** The record above says a full round
+on a correction returns wording. That did not hold here, and the reason is
+worth knowing: each correction ADDED GUARD LOGIC, and new guard logic is new
+behaviour whatever the commit prefix says. The cadence rule should be read as
+"audit new behaviour", not "audit new modules" — a `fix:` commit that adds a
+check is a new-behaviour commit.
+
+**The convergence signal from `expand_grid` did not appear.** Rounds went:
+behavioural, behavioural, behavioural, behavioural, behavioural, behavioural.
+The loop did not converge, because each round's fix created the next round's
+surface. Six rounds in, the findings were still real — the last one caught a
+check that was STRICTER than the engine it guarded and would have refused valid
+searches. What stopped it was a judgement that continuing is the operator's
+call, not a signal from the findings.
+
+**Three defects were self-inflicted by fixing.** A window guard that read the
+held-back window while validating it; a value check stricter than the engine; a
+justification comment asserting a hole that measurement showed did not exist.
+All three arrived in code written to make the component safer. That is the
+sharpest lesson here: the fix is as likely to carry the defect as the original.
+
+**Two findings did not reproduce, and one was actively wrong.** An auditor
+reported that a numeric check refused `int64`, `float32` and nullable columns;
+testing showed it accepted all three. Another reported a defect already fixed
+while it was running. Both were recorded as such rather than acted on. The
+defence remains the one named above: check before relaying.
+
+**Two MEASUREMENT HARNESSES were themselves broken**, which is a failure mode
+this record had not previously named. A mutation checker grepped pytest output
+for `1 passed` while `addopts = "-q"` plus an explicit `-q` suppressed the
+summary line, so it reported every mutation as caught. Its replacement used a
+byte diff to detect whether a mutation applied, and `sed -i` rewrites CRLF to
+LF, so a pattern that never matched still "changed" the file. Both harnesses
+produced confident, wrong results, and neither was the code under test. A
+harness needs positive confirmation that it did what it claims — grep for the
+mutated text, not for the absence of a diff.
