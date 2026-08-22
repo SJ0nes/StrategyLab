@@ -298,7 +298,7 @@ def _artifact(cells: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
         "grid_size": len(cells),
         "failed_cells": sum(1 for cell in cells if cell["sharpe"] is None),
         "noise_ceiling": None,
-        "noise_ceiling_note": "Not computed: search/noise.py is a stub.",
+        "noise_ceiling_note": "Not computed: this search was run without --trials.",
         "winner": None,
         "rejections": [],
         "cells": cells,
@@ -513,6 +513,67 @@ def test_the_context_carries_every_traceability_key() -> None:
 # --------------------------------------------------------------------------
 # End to end.
 # --------------------------------------------------------------------------
+
+
+CEILING = {
+    "trials": 10,
+    "scoreable_trials": 10,
+    "block_bars": 20,
+    "seed": 0,
+    "percentiles": {"p50": 1.0, "p90": 2.0, "p95": 3.0},
+    "max": 4.0,
+}
+
+
+def _with_ceiling(metric: float) -> dict[str, Any]:
+    """An artifact carrying a ceiling and a winner at a given metric."""
+    return _artifact(
+        _two_axis_cells(),
+        winner={
+            "params": {"a": 2, "b": 20},
+            "sharpe": metric,
+            "max_drawdown_pct": 5.0,
+            "plateau_score": metric,
+            "neighbour_count": 3,
+            "degenerate": False,
+        },
+        noise_ceiling=CEILING,
+        noise_ceiling_note="10 trials is below the 100 at which the upper tail settles.",
+    )
+
+
+@pytest.mark.parametrize(
+    ("metric", "expected"), [(9.0, 95.0), (2.5, 90.0), (1.5, 50.0), (0.1, -1.0)]
+)
+def test_the_candidate_is_placed_against_the_ceiling(metric: float, expected: float) -> None:
+    # The ceiling-present branch had no test at all, and it decides the single
+    # most consequential sentence the report prints.
+    assert build_context(_with_ceiling(metric), "cmd")["winner_percentile"] == expected
+
+
+def test_a_page_with_a_ceiling_does_not_render_as_the_absent_case(tmp_path: Path) -> None:
+    path = tmp_path / "search-probe.json"
+    path.write_text(json.dumps(_with_ceiling(9.0)), encoding="utf-8")
+    html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
+
+    assert "clears the 95th percentile" in html
+    assert "No noise ceiling was computed" not in html
+    # And it must not call reordered history "noise" without qualifying it.
+    assert "not noise" in html
+
+
+def test_a_candidate_below_the_median_is_not_rendered_as_the_zeroth_percentile(
+    tmp_path: Path,
+) -> None:
+    # `_winner_percentile` returned 0.0 for anything under p50 and the page
+    # printed "around the 0th percentile" - a precision the three recorded
+    # percentiles cannot support, and the harshest possible reading of them.
+    path = tmp_path / "search-probe.json"
+    path.write_text(json.dumps(_with_ceiling(0.1)), encoding="utf-8")
+    html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
+
+    assert "0th percentile" not in html
+    assert "BELOW THE MEDIAN" in html
 
 
 def test_a_surface_renders_to_a_self_contained_page(tmp_path: Path) -> None:

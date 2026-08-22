@@ -48,14 +48,14 @@ figure from a search appears in this README.**
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | `status`, `fetch`, `search` and `report` commands *(untested)* | |
 
-**652 tests pass** — verify with `uv run pytest`. They cover the protocol
+**659 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
-plateau scoring, the graveyard, the search loop and the reports — twelve areas,
-one per test file.
+plateau scoring, the graveyard, the search loop, the noise ceiling and the reports — thirteen
+areas, one per test file.
 The four CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 15 of them across 6
+docstring contract with a `raise NotImplementedError` body — 14 of them across 5
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -108,7 +108,7 @@ makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 652 tests, none touching the network
+uv run pytest                   # 659 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -171,8 +171,17 @@ failure as shuffling arriving more quietly
 It is **off by default** because one trial costs a full grid: the committed
 search takes about four minutes, so a hundred trials is most of a day. A search
 run without it says on every line of output that nothing it printed is evidence
-of an edge. **The ceiling informs; it does not gate** — `select_candidate` never
-sees it, so a candidate can be nominated while sitting inside the noise.
+of an edge. That default diverges from a rule `CLAUDE.md` calls non-negotiable,
+and the divergence is argued out in
+[docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md) rather than
+left to be noticed.
+
+**Two honest caveats.** The surrogates are not noise — each block is a verbatim
+stretch of real history, so the comparison is against a *reordering of this
+market's own regimes*, which is a harder and narrower test than the rules
+describe. And **the ceiling informs; it does not gate**: `select_candidate`
+never sees it, so a candidate can be nominated while sitting inside the
+distribution.
 
 **Three outcomes, not two.** *Not yet implemented.* Validation returns pass,
 fail, or `insufficient_data`. The third is not a soft failure — it means the strategy was

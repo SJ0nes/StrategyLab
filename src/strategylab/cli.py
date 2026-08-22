@@ -162,8 +162,9 @@ def status() -> None:
     console.print("       Recomputes nothing and reads no window.")
     console.print()
     console.print(
-        "[yellow]No noise ceiling exists[/yellow], so no result so far is evidence of an "
-        "edge.\nThat component is not built, and neither is the validator."
+        "[yellow]A search reports a noise ceiling only when given --trials[/yellow]; "
+        "without one, nothing it printed is evidence of an edge.\nThe validator is not "
+        "built at all, so no candidate has been tested on the held-back window."
     )
 
 
@@ -551,8 +552,8 @@ def report() -> None:
         "its metrics.[/dim]"
     )
     console.print(
-        "[bold yellow]No noise ceiling is drawn[/bold yellow], because search/noise.py is "
-        "not built. Every figure says so on its face."
+        "[dim]A figure shows a noise ceiling only if its search was run with --trials, "
+        "and says which case applies on its face.[/dim]"
     )
 
 

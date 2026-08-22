@@ -86,6 +86,7 @@ from strategylab.search.plateau import (
     is_edge_winner,
     plateau_score,
 )
+from strategylab.search.surrogate import block_length_for
 
 #: Column names a results frame carries that are NOT searched parameters.
 #: Imported from :mod:`strategylab.search.plateau` rather than re-listed, so a
@@ -266,6 +267,10 @@ class SearchResult:
             PERCENTAGE, from the protocol. Recorded because a rejection is only
             interpretable against the bar it was made under, and the protocol
             file a reader has to hand may not be the one this search ran with.
+        noise_block_bars: Resampling block length in BARS, or ``None`` when
+            no ceiling was computed. Recorded so a ceiling can be reproduced
+            from the artifact alone.
+        noise_seed: The resampler seed that produced the ceiling.
         noise_ceiling: The best-in-grid Sharpe achieved on each surrogate
             series, or ``None`` when no ceiling was computed. ``None`` is not a
             ceiling of zero and must never be rendered as one: it means the
@@ -303,6 +308,8 @@ class SearchResult:
     starting_equity: float
     max_drawdown_ceiling_pct: float
     noise_ceiling: pd.Series | None
+    noise_block_bars: int | None
+    noise_seed: int
     costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
@@ -1172,13 +1179,13 @@ def run_search(
     # nothing else. Handing `bars` here instead of `window` would compute it
     # partly on held-back data, which is a read of that data whatever it is
     # used for.
-    ceiling = (
-        noise_ceiling(
+    ceiling = None
+    block_bars = None
+    if noise_trials > 0:
+        block_bars = block_length_for(definition.search)
+        ceiling = noise_ceiling(
             definition, definition.search, window, protocol.costs, noise_trials, noise_seed
         )
-        if noise_trials > 0
-        else None
-    )
 
     in_sample = protocol.windows.in_sample
     return SearchResult(
@@ -1196,6 +1203,8 @@ def run_search(
         starting_equity=starting_equity,
         max_drawdown_ceiling_pct=protocol.validation.max_drawdown_ceiling_pct,
         noise_ceiling=ceiling,
+        noise_block_bars=block_bars,
+        noise_seed=noise_seed,
         costs=protocol.costs,
         results=scored,
         winner=winner,
@@ -1235,7 +1244,9 @@ def _row_mask(scored: pd.DataFrame, cell: dict[str, int]) -> pd.Series:
     return mask
 
 
-def _ceiling_payload(ceiling: pd.Series | None) -> dict[str, Any] | None:
+def _ceiling_payload(
+    ceiling: pd.Series | None, block_bars: int | None, seed: int
+) -> dict[str, Any] | None:
     """Render a noise ceiling for the artifact, or ``None`` if there is none.
 
     THE WHOLE DISTRIBUTION IS SUMMARISED, NOT REDUCED TO ONE NUMBER. A single
@@ -1249,6 +1260,10 @@ def _ceiling_payload(ceiling: pd.Series | None) -> dict[str, Any] | None:
 
     Args:
         ceiling: Best-in-grid Sharpe per surrogate, or ``None``.
+        block_bars: Resampling block length in BARS, or ``None`` when there is
+            no ceiling. Recorded because a ceiling cannot be reproduced without
+            it and it is derived from the grid rather than fixed.
+        seed: The resampler seed, for the same reason.
 
     Returns:
         ``None``, or the summary described in :func:`write_search_result`.
@@ -1259,6 +1274,8 @@ def _ceiling_payload(ceiling: pd.Series | None) -> dict[str, Any] | None:
     return {
         "trials": int(len(ceiling)),
         "scoreable_trials": int(len(finite)),
+        "block_bars": block_bars,
+        "seed": seed,
         "percentiles": {
             "p50": _finite_or_none(float(finite.quantile(0.50))) if len(finite) else None,
             "p90": _finite_or_none(float(finite.quantile(0.90))) if len(finite) else None,
@@ -1416,7 +1433,9 @@ def write_search_result(
         "starting_equity": result.starting_equity,
         "grid_size": result.grid_size,
         "failed_cells": result.failed_cells,
-        "noise_ceiling": _ceiling_payload(result.noise_ceiling),
+        "noise_ceiling": _ceiling_payload(
+            result.noise_ceiling, result.noise_block_bars, result.noise_seed
+        ),
         "noise_ceiling_note": (
             NOISE_CEILING_ABSENT_NOTE
             if result.noise_ceiling is None

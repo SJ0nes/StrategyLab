@@ -120,11 +120,14 @@
     {% if winner_percentile is none %}
       A noise ceiling exists, but there is no candidate to compare against it.
     {% elif winner_percentile >= 95 %}
-      The candidate clears the 95th percentile of what this grid achieves on noise.
+      The candidate clears the 95th percentile of what this grid achieves on resampled
+      history.
+    {% elif winner_percentile < 0 %}
+      The candidate sits BELOW THE MEDIAN of what this grid achieves on resampled history —
+      more than half the surrogates beat it.
     {% else %}
-      The candidate sits INSIDE the noise distribution — around the
-      {{ winner_percentile | int }}th percentile of what this grid achieves on data with no
-      edge in it.
+      The candidate sits INSIDE the distribution — it clears the
+      {{ winner_percentile | int }}th percentile but not the next one up.
     {% endif %}
   </b>
   Best-in-grid Sharpe across {{ noise_ceiling.trials }} surrogate series
@@ -135,10 +138,17 @@
   max {{ '%.3f'|format(noise_ceiling.max) }}.
   {{ noise_ceiling_note }}
   <br><br>
-  This is a sentence and a percentile, not a shape. The design standard asks for the
+  <b>These surrogates are not noise.</b> Blocks are as long as the grid's longest lookback,
+  so each one is a verbatim stretch of real history at a rescaled price level. What this
+  compares against is a REORDERING OF THIS MARKET'S OWN REGIMES, which is a harder and
+  narrower test than noise — and not the one the project rules describe. See
+  docs/decisions/0008.
+  <br><br>
+  This is also a sentence and a percentile, not a shape. The design standard asks for the
   distribution drawn on the SAME axis as the surface, so a winner inside it is seen rather
   than read; that band is roadmap session 8. The placement above is coarse — it comes from the
-  recorded percentiles rather than the raw trials.
+  three recorded percentiles rather than the raw trials, so it can only say which of them the
+  candidate cleared.
 </div>
 {% endif %}
 

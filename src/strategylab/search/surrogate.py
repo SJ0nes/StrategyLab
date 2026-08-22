@@ -20,11 +20,26 @@ WHAT IS PRESERVED, deliberately:
   travel with its return. A surrogate bar is a real bar's shape at a new price
   level, rather than a synthesised one.
 
-WHAT IS DESTROYED, which is the point: any structure spanning a block boundary.
-The long trend that made a parameter set look good on the real series is cut
-wherever two blocks meet, so a strategy can only profit from a surrogate by
-finding structure that resampling happened to leave in - which is the definition
-of noise for this purpose.
+WHAT IS DESTROYED, AND IT IS LESS THAN IT SOUNDS: structure that spans a block
+boundary. Only the seams are cut. Everything inside a block is a verbatim
+stretch of real history at a rescaled price level, so a two-hundred-bar block
+contains two hundred bars of genuine market behaviour - including whatever trend
+a strategy would have traded there.
+
+THIS IS NOT AN EDGE-FREE SERIES AND MUST NOT BE DESCRIBED AS ONE. With the block
+length set to the grid's longest lookback (``docs/decisions/0008``), a surrogate
+is better called a REORDERING OF THE SAME MARKET'S REGIMES than noise. The
+question the ceiling actually answers is "could this result have come from
+shuffling the order of this market's own episodes", which is a harder and
+narrower question than "could it have come from noise" - and it is not the
+question ``CLAUDE.md`` describes. The gap is recorded in
+``docs/decisions/0008``.
+
+The two goals genuinely conflict and no block length resolves them: to be a fair
+opponent for a two-hundred-bar trend strategy the surrogate must contain
+two-hundred-bar structure, and two-hundred-bar structure IS the thing being
+tested. Preserve it and the ceiling contains real edge; destroy it and the
+strategy cannot score at all. This module chooses the first and says so.
 
 WHY LOG RETURNS. Reconstructing a price series by compounding log returns can
 never produce a zero or negative price. That is not tidiness: a non-positive
@@ -39,6 +54,19 @@ import numpy as np
 import pandas as pd
 
 from strategylab.search.grid import expand_grid
+
+#: Fewest blocks a surrogate must be built from.
+#:
+#: WITHOUT THIS THE SURROGATE CAN BE THE INPUT. A block as long as the series
+#: is one block, drawn once, so the "surrogate" is the real series returned
+#: unchanged and the ceiling becomes the strategy measured against itself. That
+#: is not a conservative ceiling, it is an incoherent one, and it produced no
+#: error before this check existed.
+#:
+#: Eight is a judgement rather than a derivation: few enough not to obstruct a
+#: long-lookback grid, many enough that no single stretch of history dominates a
+#: surrogate. The committed grid gives seventeen.
+MIN_BLOCKS = 8
 
 #: Shortest block this module will resample with, in bars.
 #:
@@ -134,9 +162,9 @@ def block_resample(
     Args:
         bars: The real OHLCV bars, indexed by ascending timestamp. Must hold at
             least two rows, since one bar yields no return to resample.
-        block_bars: Block length in BARS, at least
-            :data:`MIN_BLOCK_BARS` and no longer than the number of returns
-            available.
+        block_bars: Block length in BARS, at least :data:`MIN_BLOCK_BARS` and
+            short enough to leave at least :data:`MIN_BLOCKS` blocks. The upper
+            bound is what stops a surrogate being the real series back again.
         generator: Seeded random source. Passed in rather than created here so
             the caller owns reproducibility: a ceiling that moves between runs
             cannot be compared against anything.
@@ -148,7 +176,7 @@ def block_resample(
     Raises:
         ValueError: If ``bars`` holds fewer than two rows, lacks a required
             column, or if ``block_bars`` is below :data:`MIN_BLOCK_BARS` or
-            exceeds the number of available returns.
+            long enough to leave fewer than :data:`MIN_BLOCKS` blocks.
     """
     required = ("open", "high", "low", "close")
     missing = [column for column in required if column not in bars.columns]
@@ -166,10 +194,14 @@ def block_resample(
     closes = bars["close"].to_numpy(dtype="float64")
     returns = np.log(closes[1:] / closes[:-1])
     n_returns = len(returns)
-    if block_bars > n_returns:
+    largest = n_returns // MIN_BLOCKS
+    if block_bars > largest:
         raise ValueError(
-            f"block_bars is {block_bars} but only {n_returns} returns are available; a "
-            "block cannot be longer than the series it is drawn from"
+            f"block_bars is {block_bars} but only {n_returns} returns are available, so "
+            f"the longest block leaving {MIN_BLOCKS} of them is {largest}. A surrogate "
+            "built from fewer blocks is dominated by a handful of real stretches, and at "
+            "one block it IS the real series - the ceiling would then measure the strategy "
+            "against itself"
         )
 
     # Ratios of each bar to its OWN close, so a bar's shape travels with its

@@ -50,6 +50,26 @@ named here rather than left to be discovered because a non-negotiable rule
 softened by a default is exactly the kind of thing this document exists to
 surface.
 
+**The surrogates are not noise, and the word matters.** Blocks are as long as
+the grid's longest lookback, so each is a verbatim stretch of real history at a
+rescaled price level — about seventeen of them across the in-sample window.
+Only the seams are cut. What the ceiling compares a candidate against is
+therefore a REORDERING OF THIS MARKET'S OWN REGIMES, not a series with no edge
+in it, which is what `CLAUDE.md` describes and what an earlier version of this
+file implied. The bias runs towards a harder bar, and it has no principled
+bound: at one block the surrogate would be the real series and the ceiling would
+measure the strategy against itself. `block_resample` refuses fewer than eight
+blocks to put a floor under that, which limits the degeneracy without making the
+bias small.
+
+The conflict is real and no block length resolves it — a fair opponent for a
+200-bar trend strategy must contain 200-bar structure, and that structure is the
+thing being tested.
+[docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md) argues it
+out. **Read a cleared ceiling as "beat a reshuffling of this market's own
+history", which is a strong claim, and read a ceiling that is not cleared as
+close to fatal.**
+
 **How the ceiling behaves when it IS asked for.** `--trials N` re-runs
 the whole grid against `N` block-resampled surrogates and reports where the
 candidate falls in that distribution. Without it the artifact records
@@ -104,11 +124,11 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-652 tests pass (`uv run pytest`). They cover the protocol loader, the data
+659 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, grid expansion, plateau scoring,
-the graveyard, the search loop and the reports — twelve areas, one per test
-file.
+the graveyard, the search loop, the noise ceiling and the reports — thirteen
+areas, one per test file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED areas are untested: **the CLI**, all four

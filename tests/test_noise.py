@@ -33,11 +33,13 @@ import pandas as pd
 import pytest
 
 from strategylab.backtest.costs import CostModel
+from strategylab.core.strategy import required_history
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
 from strategylab.search.grid import expand_grid
 from strategylab.search.noise import RELIABLE_TRIALS, noise_ceiling, trials_note
 from strategylab.search.surrogate import (
     MIN_BLOCK_BARS,
+    MIN_BLOCKS,
     block_length_for,
     block_resample,
 )
@@ -239,12 +241,21 @@ def test_the_surrogate_keeps_the_volatility_clustering_a_shuffle_destroys() -> N
     # a test of anything.
     assert _clustering(real) > 0.3
 
-    # Blocks of 60 sit inside the 150-bar regimes, so most adjacent pairs come
-    # from the same regime and the clustering survives.
-    assert _clustering(surrogate) > _clustering(real) / 2
-    # The shuffle keeps essentially none of it. This comparison is what makes
-    # the choice of resampler meaningful rather than decorative.
-    assert abs(_clustering(shuffled)) < 0.05
+    # DERIVED, NOT EYEBALLED. One adjacent pair in every B straddles a block
+    # seam and contributes no covariance, so the surrogate's autocorrelation is
+    # about `(1 - 1/B)` of the real one - 0.983 at B = 60. An earlier version
+    # asserted `> real / 2`, which reduces to `B > 2` and would pass with
+    # three-bar blocks: it looked like a test of block resampling and was a test
+    # of almost nothing.
+    expected = (1.0 - 1.0 / 60) * _clustering(real)
+    assert _clustering(surrogate) == pytest.approx(expected, rel=0.15)
+
+    # The shuffle keeps essentially none of it. Under the null of no
+    # autocorrelation the sample estimate has SD about `1/sqrt(n)`, which is
+    # 0.029 for this series, so the bound is three sigma. An earlier version
+    # used 0.05 - 1.7 sigma - which roughly one seed in eighteen would breach.
+    sigma = 1.0 / np.sqrt(len(real))
+    assert abs(_clustering(shuffled)) < 3.0 * sigma
     assert _clustering(surrogate) > abs(_clustering(shuffled)) * 4
 
 
@@ -252,8 +263,14 @@ def test_the_recorded_fixture_is_too_short_to_show_clustering(bars: pd.DataFrame
     # Pinned so the reasoning above cannot quietly rot. If a longer fixture is
     # ever committed this goes red, and whoever changed it should move the
     # clustering test onto real bars rather than leave the synthetic one.
+    #
+    # The bound is OBSERVED, not derived: the fixture's value is about 0.04.
+    # Two sigma under the no-autocorrelation null is 0.126 for 252 returns, so
+    # this says the fixture is indistinguishable from having none - which is
+    # exactly why it cannot carry the test above.
     assert len(bars) < 300
-    assert abs(_clustering(_log_returns(bars))) < 0.1
+    two_sigma = 2.0 / np.sqrt(len(bars) - 1)
+    assert abs(_clustering(_log_returns(bars))) < two_sigma
 
 
 def test_a_surrogate_is_not_simply_the_real_series_again(bars: pd.DataFrame) -> None:
@@ -284,7 +301,7 @@ def test_a_different_seed_gives_a_different_surrogate(bars: pd.DataFrame) -> Non
     [
         (1, 20, "a return needs two"),
         (100, 1, "below the floor"),
-        (100, 500, "cannot be longer"),
+        (100, 500, "longest block leaving"),
     ],
 )
 def test_a_resample_that_cannot_be_done_is_refused(
@@ -334,18 +351,41 @@ def test_the_ceiling_is_above_zero(bars: pd.DataFrame) -> None:
 
 def test_a_warm_up_can_never_be_the_thing_that_empties_a_trial() -> None:
     # A consequence of the block-length choice, worth pinning because it is not
-    # obvious and it removes a whole class of failure.
+    # obvious and it removes a whole class of failure: if a surrogate can be
+    # built at all, every cell in the grid can warm up on it.
     #
-    # The block is the longest lookback L, and `block_resample` requires
-    # `block <= len - 1`, so any resampleable window holds at least L + 1 bars.
-    # The largest cell needs a warm-up of L + 1. So if a surrogate can be built
-    # at all, every cell in the grid can warm up on it: the two constraints
-    # cannot both bite.
+    # ASSERTED AGAINST THE REAL FUNCTIONS. An earlier version computed both
+    # sides itself and compared `longest + 1 >= longest + 1`, which is `X >= X`
+    # and could not fail - a test of arithmetic the test had just done, not of
+    # the code. This one asks `block_resample` what the shortest window it
+    # accepts is, and `required_history` what the largest cell needs.
     for spec in (TINY_SPEC, COMMITTED_SPEC):
-        longest = block_length_for(spec)
-        shortest_resampleable_window = longest + 1
-        largest_warm_up = longest + 1
-        assert shortest_resampleable_window >= largest_warm_up
+        block = block_length_for(spec)
+        shortest_window = block * MIN_BLOCKS + 1
+
+        # The shortest window a surrogate can be built from, per the guard.
+        source = _regime_bars(periods=shortest_window)
+        assert block_resample(source, block, np.random.default_rng(0)) is not None
+
+        # The hungriest cell in that grid, per the engine's own rule.
+        hungriest = max(required_history(_spec_strategy(spec), cell) for cell in expand_grid(spec))
+        assert hungriest <= shortest_window
+
+
+def _spec_strategy(spec: dict[str, dict[str, float]]) -> StrategyDef:
+    """A crossover whose two placeholders are the first two names in a spec."""
+    names = list(spec)
+    left = IndicatorRef("sma", period_param=names[0])
+    right = IndicatorRef("sma", period_param=names[-1])
+    return StrategyDef(
+        name="probe",
+        version=1,
+        description="Probe strategy for warm-up arithmetic.",
+        entry=(Condition(left, "crosses_above", right),),
+        exit=(Condition(left, "crosses_below", right),),
+        search=spec,
+        fixed={"position_size_pct": 95.0},
+    )
 
 
 def test_a_trial_where_no_cell_scored_is_nan_rather_than_dropped(
@@ -377,8 +417,23 @@ def test_a_non_positive_trial_count_is_refused(bars: pd.DataFrame) -> None:
 def test_a_window_too_short_for_the_grid_s_block_is_refused(bars: pd.DataFrame) -> None:
     # The block length comes from the GRID, not from the data, so a long
     # lookback against a short window cannot be resampled at all.
-    with pytest.raises(ValueError, match="cannot be longer"):
+    with pytest.raises(ValueError, match="longest block leaving"):
         noise_ceiling(_strategy(), TINY_SPEC, bars.iloc[:15], TEST_COSTS, n_trials=1)
+
+
+def test_a_window_giving_too_few_blocks_is_refused(bars: pd.DataFrame) -> None:
+    # THE CHECK THAT STOPS A SURROGATE BEING THE INPUT. A block as long as the
+    # series is one block drawn once, so the "surrogate" is the real series and
+    # the ceiling measures the strategy against itself. That produced no error
+    # before this guard existed.
+    returns = len(bars) - 1
+    with pytest.raises(ValueError, match="measure the strategy against itself"):
+        block_resample(bars, returns, np.random.default_rng(0))
+    # And the boundary from the accepting side, so an off-by-one would show.
+    largest = returns // MIN_BLOCKS
+    assert block_resample(bars, largest, np.random.default_rng(0)) is not None
+    with pytest.raises(ValueError, match="longest block leaving"):
+        block_resample(bars, largest + 1, np.random.default_rng(0))
 
 
 # --------------------------------------------------------------------------

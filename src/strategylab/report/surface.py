@@ -56,6 +56,11 @@ PANEL_PAD = 54
 #: page stops being a figure and starts being a contact sheet nobody reads.
 MAX_PANELS = 24
 
+#: Returned by :func:`_winner_percentile` for a candidate under the ceiling's
+#: median. A sentinel rather than ``0.0``, because the artifact stores only
+#: three percentiles and cannot tell "under the median" from "under everything".
+BELOW_MEDIAN = -1.0
+
 #: The template this module renders. Resolved against the package's templates
 #: directory by :func:`~strategylab.report.render.render`.
 SURFACE_TEMPLATE = "surface.html.j2"
@@ -356,7 +361,8 @@ def _winner_percentile(artifact: dict[str, Any]) -> float | None:
         artifact: The parsed search artifact.
 
     Returns:
-        The share of surrogates the candidate's metric exceeds, 0 to 100, or
+        The share of surrogates the candidate's metric exceeds - one of 95,
+        90 or 50 - or :data:`BELOW_MEDIAN` when it is under all three, or
         ``None`` when there is no ceiling, no candidate, or no scoreable
         surrogate. ``None`` means the comparison was not made and must never be
         rendered as a zero, which would read as "beaten by everything".
@@ -378,7 +384,12 @@ def _winner_percentile(artifact: dict[str, Any]) -> float | None:
         value = percentiles.get(key)
         if value is not None and metric >= value:
             return share
-    return 0.0
+    # Below the median. NOT zero: the artifact records only three percentiles,
+    # so nothing here can distinguish "beaten by every surrogate" from "just
+    # under the median". An earlier version returned 0.0 and the page rendered
+    # "around the 0th percentile", which is a precision the data does not have
+    # and the harshest possible reading of it.
+    return BELOW_MEDIAN
 
 
 def _outcomes(artifact: dict[str, Any]) -> list[dict[str, Any]]:

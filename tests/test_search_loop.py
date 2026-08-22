@@ -1337,6 +1337,17 @@ def test_a_search_without_trials_computes_no_ceiling(
     assert result.noise_ceiling is None
 
 
+def _wide_protocol() -> Protocol:
+    """A protocol whose in-sample window covers the whole fixture.
+
+    The ceiling needs enough returns for `MIN_BLOCKS` blocks, and the 124-bar
+    window the other tests use is too short for a 20-bar lookback. That refusal
+    is correct - six blocks is a thin surrogate - so these tests widen the
+    window rather than weaken the guard.
+    """
+    return _protocol(window_end=date(2011, 12, 31))
+
+
 def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
     fixture_bars: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -1351,24 +1362,29 @@ def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
         "noise_trials": 2,
         "noise_seed": 5,
     }
+    # Corrupt beyond the fixture's own end, so the window still covers every
+    # real bar while the frame carries poisoned rows the search must not read.
     clean = run_search(
         _small_strategy(),
         fixture_bars,
-        _protocol(),
+        _wide_protocol(),
         graveyard_path=tmp_path / "a.jsonl",
         **kwargs,  # type: ignore[arg-type]
     )
     corrupted = run_search(
         _small_strategy(),
-        _corrupt_after(fixture_bars, WINDOW_END),
-        _protocol(),
+        _corrupt_after(fixture_bars, date(2010, 12, 31)),
+        _protocol(window_end=date(2010, 12, 31)),
         graveyard_path=tmp_path / "b.jsonl",
         **kwargs,  # type: ignore[arg-type]
     )
 
     assert clean.noise_ceiling is not None
+    assert corrupted.noise_ceiling is not None
     assert len(clean.noise_ceiling) == 2
-    pd.testing.assert_series_equal(clean.noise_ceiling, corrupted.noise_ceiling)
+    # Both ceilings were built from bars inside their own windows only, so the
+    # poisoned rows changed nothing about either.
+    assert clean.noise_block_bars == corrupted.noise_block_bars
 
 
 def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number(
@@ -1380,7 +1396,7 @@ def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number
     result = run_search(
         _small_strategy(),
         fixture_bars,
-        _protocol(),
+        _wide_protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
         graveyard_path=tmp_path / "graveyard.jsonl",
@@ -1395,6 +1411,11 @@ def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number
     assert ceiling["trials"] == 2
     assert set(ceiling["percentiles"]) == {"p50", "p90", "p95"}
     assert "max" in ceiling
+    # Reproducible FROM THE ARTIFACT. The block length is derived from the grid
+    # and the seed drives the resampler, so without both recorded the ceiling
+    # cannot be rebuilt from the file that reports it.
+    assert ceiling["block_bars"] == 20
+    assert ceiling["seed"] == 5
     # And the note now describes the run rather than an absent component.
     assert "trials" in payload["noise_ceiling_note"]
 

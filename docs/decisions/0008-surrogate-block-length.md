@@ -49,12 +49,39 @@ and a half thousand is roughly eighteen blocks. Surrogates therefore resemble
 one another, and the real series, more than a conventional bootstrap would. The
 ceiling explores less of the space of possible histories than it might.
 
-**That bias runs towards a HARDER bar, which is the right direction.** Less
-diverse surrogates retain more of the real series' structure, so the best
+**That bias runs towards a HARDER bar — but calling it "conservative" and
+stopping there was too comfortable, and an audit was right to push on it.**
+
+Less diverse surrogates retain more of the real series' structure, so the best
 in-grid result on them is higher than a more thoroughly scrambled surrogate
-would give. A ceiling biased upward rejects some genuine edges; a ceiling biased
-downward endorses noise. This project would rather discard a real finding than
-publish a false one, and every other choice in it leans the same way.
+would give. In one direction that is the safe error: a ceiling biased upward
+discards some genuine edges, and this project would rather do that than publish
+a false one.
+
+**The uncomfortable part is that the bias has no principled bound.** Every block
+is a verbatim stretch of real history at a rescaled price level. Only the seams
+are cut — seventeen of them in a three-and-a-half-thousand-bar window — so a
+surrogate is mostly real market behaviour in a new order. Taken to its limit,
+one block IS the real series, and the ceiling would be the strategy measured
+against itself. `block_resample` now refuses fewer than `MIN_BLOCKS` blocks for
+exactly that reason, which puts a floor under the degeneracy but does not make
+the bias small.
+
+**So the honest description is not "noise".** What the ceiling compares against
+is a REORDERING OF THIS MARKET'S OWN REGIMES. That is a legitimate and harder
+null — "could this result have come from shuffling the order of episodes this
+market actually produced" — and it is *not* the null `CLAUDE.md` describes when
+it says "surrogate series with no edge in them". The code, the reports and
+`LIMITATIONS.md` now say reordered history rather than noise wherever the
+distinction matters.
+
+**The conflict is genuine and no block length resolves it.** To be a fair
+opponent for a two-hundred-bar trend strategy, a surrogate must contain
+two-hundred-bar structure. Two-hundred-bar structure is the thing being tested.
+Preserve it and the ceiling contains real edge; destroy it and the strategy
+cannot score at all and the ceiling is trivially cleared. There is no setting
+that gives a fair opponent with no edge in it. This is the deepest limitation of
+the method as built, and it is not fixed by tuning the number.
 
 **It is the better experiment and the worse statistic**, and that trade is made
 knowingly. Standard bootstrap theory prefers `n ** (1/3)` for good reasons about
@@ -85,8 +112,11 @@ bar too low. This is the same failure as shuffling, arriving more quietly.
 **Reporting both lengths side by side.** Honest about the sensitivity, and the
 gap between them would itself be informative. Rejected on cost: the ceiling
 already runs the whole grid once per surrogate, and doubling that for a
-diagnostic nobody has yet asked for is the wrong first version. If a result ever
-turns on which length was used, this is the first thing to revisit.
+diagnostic nobody has yet asked for is the wrong first version. Given what the
+section above concedes about the bias being unbounded, this is now the most
+valuable thing to add next — the gap between a lookback-length and a
+conventional-length ceiling would put an empirical range around exactly the
+quantity this record can only argue about.
 
 ## A divergence from a non-negotiable rule, recorded rather than hidden
 
