@@ -82,9 +82,11 @@ def test_an_isolated_spike_loses_to_a_broad_region() -> None:
     spike = plateau_score(one_axis([1, 2, 3, 4, 5], [0.0, 0.0, 9.0, 0.0, 0.0]))
     broad = plateau_score(one_axis([1, 2, 3, 4, 5], [0.0, 1.0, 1.0, 1.0, 0.0]))
 
-    # The two lines below restate the inputs and cannot fail. They are here as
-    # preconditions, so a reader can see the spike really is the higher peak
-    # before the scores are compared - not as coverage.
+    # The two lines below are preconditions rather than coverage: they let a
+    # reader see the spike really is the higher peak before the scores are
+    # compared. Saying they "cannot fail" was too strong - they read the
+    # RETURNED frame, so they would catch a `plateau_score` that dropped or
+    # altered the metric column. Narrow, but not nothing.
     assert spike["sharpe"].max() == 9.0
     assert broad["sharpe"].max() == 1.0
     assert spike.loc[spike["p"] == 3, "plateau_score"].item() == 0.0
@@ -436,6 +438,16 @@ def test_a_radius_of_zero_makes_a_cell_trivially_degenerate() -> None:
     # rather than useful - a single cell is no evidence that anything varies.
     frame = fingerprinted([1, 2, 3], ["A", "B", "C"])
     assert is_degenerate(frame, {"p": 2}, radius=0) is True
+
+
+def test_a_non_string_fingerprint_is_refused() -> None:
+    # A NaN fingerprint is equal to nothing, itself included. Without this
+    # check the cell matched NONE of its own neighbourhood, so a neighbourhood
+    # of one reported NOT degenerate - the exact inverse of what the contract
+    # says a single cell does.
+    frame = pd.DataFrame({"p": [1], "sharpe": [1.0], "trade_fingerprint": [math.nan]})
+    with pytest.raises(ValueError, match="must be a string"):
+        is_degenerate(frame, {"p": 1}, radius=0)
 
 
 def test_a_frame_without_fingerprints_is_refused() -> None:

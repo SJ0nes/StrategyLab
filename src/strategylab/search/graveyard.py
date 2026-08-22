@@ -14,17 +14,25 @@ file, and a reader can stream a graveyard larger than memory. The record carries
 - ``metrics``, what it achieved;
 - ``reason``, from the closed vocabulary in :data:`REJECTION_REASONS`.
 
+Those are the fields, NOT the order they appear in. Keys are written sorted, so
+the line reads ``candidate, metrics, reason, recorded_at, schema_version``, and
+the parameter names inside ``candidate`` are alphabetised too rather than kept in
+the order the grid produced them. Sorting is deliberate: it makes the bytes a
+function of the record alone, so two runs recording the same rejection differ
+only in ``recorded_at``. Nothing should read this file positionally.
+
 This file lives under ``state/``, which is gitignored, because a graveyard from
 a real search is a record of real trading research and not a fixture.
 
 TWO THINGS THIS MODULE IS NOT. It is not deterministic - ``recorded_at`` reads a
 clock, so the same rejection recorded twice produces two different lines. The
 project's determinism rule is about the ENGINE, whose output must not depend on
-when it ran; a log of what happened when is the one place a clock belongs, and
-``DecisionRecord`` and ``CacheEntry`` both carry the same field for the same
-reason. And it is not safe against concurrent writers: one line is written per
-call in a single append, which is atomic enough for the searches this project
-runs, and nothing coordinates two processes writing the same file.
+when it ran; a log of what happened when is the one place a clock belongs.
+``DecisionRecord`` carries ``recorded_at`` and ``CacheEntry`` carries
+``fetched_at``, both for this reason. And it is not safe against concurrent
+writers: one line is written per call in a single append, which is atomic
+enough for the searches this project runs, and nothing coordinates two processes
+writing the same file.
 """
 
 from __future__ import annotations
@@ -114,8 +122,10 @@ def record_rejection(
             different findings. A non-finite value is recorded as JSON ``null``;
             see :func:`_jsonable_metric`.
         reason: Why it was rejected. Must be one of :data:`REJECTION_REASONS`.
-        path: Graveyard file, relative to the repository root. Created along
-            with its parent directory if absent.
+        path: Graveyard file. A relative path is resolved against the WORKING
+            DIRECTORY, not the repository root - the two coincide only because
+            every command in this project is documented as run from the root.
+            Created along with its parent directory if absent.
 
     Returns:
         None.
@@ -169,7 +179,7 @@ def record_rejection(
     record: dict[str, Any] = {
         "schema_version": GRAVEYARD_SCHEMA_VERSION,
         "recorded_at": datetime.now(UTC).isoformat(),
-        "candidate": dict(candidate),
+        "candidate": candidate,
         "metrics": {name: _jsonable_metric(value, name) for name, value in metrics.items()},
         "reason": reason,
     }
@@ -179,10 +189,12 @@ def record_rejection(
     # it there whenever json.dumps raised, which broke the one property this
     # function promises about a call it rejects.
     #
-    # allow_nan=False is a second line of defence, unreachable as long as
-    # _jsonable_metric runs first, which is why no test exercises it. It is kept
-    # because the invariant it protects - this file stays valid JSON - is the
-    # one a silent regression would break most quietly.
+    # allow_nan=False is NOT unreachable, and an earlier version of this comment
+    # said it was. Only `metrics` passes through _jsonable_metric; a non-finite
+    # value in `candidate` reaches json.dumps untouched, and this is what stops
+    # it writing a bare NaN token. A lookback of NaN is nonsense rather than a
+    # measurement, so it is refused rather than recorded as null the way a
+    # failed metric is.
     try:
         line = json.dumps(record, allow_nan=False, sort_keys=True)
     except (TypeError, ValueError) as exc:

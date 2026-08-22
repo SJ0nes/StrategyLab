@@ -370,10 +370,18 @@ def is_degenerate(results: pd.DataFrame, cell: dict[str, int], radius: int = 1) 
         cell offers no evidence that anything varies.
 
     Raises:
-        ValueError: If ``results`` lacks the ``trade_fingerprint`` column, if it
-            is empty or not a complete grid, if ``cell`` does not name exactly
-            the frame's parameter columns, if ``cell`` is not present in
-            ``results``, or if ``radius`` is negative.
+        ValueError: If ``results`` lacks the ``trade_fingerprint`` column or
+            holds a non-string in it, if it is empty or not a complete grid, if
+            ``cell`` does not name exactly the frame's parameter columns, if
+            ``cell`` is not present in ``results``, or if ``radius`` is negative.
+
+            THE NON-STRING CHECK IS AN ADDITION, and it exists because a ``NaN``
+            fingerprint silently inverted the promise two paragraphs above.
+            ``NaN`` is equal to nothing, itself included, so a cell carrying one
+            matched none of its own neighbourhood, and a neighbourhood of one
+            reported NOT degenerate - the exact opposite of what this contract
+            says a single cell does. A missing fingerprint is a producer bug,
+            and it is refused rather than allowed to invert an answer.
     """
     if radius < 0:
         raise ValueError(f"radius is {radius}; a neighbourhood half-width cannot be negative")
@@ -383,6 +391,17 @@ def is_degenerate(results: pd.DataFrame, cell: dict[str, int], radius: int = 1) 
         raise ValueError(
             f"results lacks the '{FINGERPRINT_COLUMN}' column, so trade SETS cannot be "
             "compared; a trade count would call two different sets of the same size identical"
+        )
+
+    fingerprints = results[FINGERPRINT_COLUMN].tolist()
+    unstringy = sorted(
+        {type(value).__name__ for value in fingerprints if not isinstance(value, str)}
+    )
+    if unstringy:
+        raise ValueError(
+            f"'{FINGERPRINT_COLUMN}' holds {unstringy} where every value must be a string; "
+            "a NaN there is equal to nothing, itself included, so a cell would match none of "
+            "its own neighbourhood and a neighbourhood of one would report NOT degenerate"
         )
 
     parameters = _parameter_columns(results)
@@ -405,7 +424,6 @@ def is_degenerate(results: pd.DataFrame, cell: dict[str, int], radius: int = 1) 
         raise ValueError(f"cell {cell} is not present in results")
 
     neighbourhood = _neighbourhoods(results, parameters, radius)[rows[0]]
-    fingerprints = results[FINGERPRINT_COLUMN].tolist()
     own = fingerprints[rows[0]]
     matching = sum(1 for index in neighbourhood if fingerprints[index] == own)
     return matching / len(neighbourhood) >= DEGENERATE_SHARE

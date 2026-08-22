@@ -21,8 +21,9 @@ which is the only place that answer is ever current.*
 
 **No strategy has been backtested for a result, searched, or validated.** The
 backtester is written and now runs end to end from a config file — but only in a
-test, over a one-year fixture, reporting nothing. The search is one part of four;
-the validator is not written at all.
+test, over a one-year fixture, reporting nothing. The search's four pieces are
+all built and nothing joins them into a search; the noise ceiling and the
+validator are not written at all.
 
 | Built | Not built |
 |---|---|
@@ -37,9 +38,10 @@ the validator is not written at all.
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | `status` and `fetch` commands *(untested)* | |
 
-**495 tests pass** — verify with `uv run pytest`. They cover the protocol
+**496 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the data layer, the cost model, the strategy-config loader, strategy
-evaluation, the performance metrics, the backtest engine, and grid expansion.
+evaluation, the performance metrics, the backtest engine, grid expansion,
+plateau scoring and the graveyard — ten areas, one per test file.
 The two CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
 docstring contract with a `raise NotImplementedError` body — 18 of them across 7
@@ -92,14 +94,14 @@ Full version, with every module marked built or stubbed, in
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run against a fresh clone of `58217b7` with an empty `data/` cache:
 154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 495 passed in the working tree, and the fresh-clone
+— `uv run pytest` reports 496 passed in the working tree, and the fresh-clone
 run has not been repeated at that count. The clone and the first `uv run` need
 the network to fetch dependencies; **the test suite itself makes no network
 call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 495 tests, none touching the network
+uv run pytest                   # 496 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

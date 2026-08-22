@@ -49,9 +49,10 @@ smaller claim than it sounds. Those bars are the 253-row fixture in
 fixture and not as a research window; the run is a test asserting that the
 pieces fit, and it records no output. Nothing scores the cells against each
 other, nothing takes its window from `protocol.windows`, and `cli.search` still
-raises before reading its argument. There is still no search — grid expansion is
-three of its four parts - grid expansion, plateau scoring and the graveyard -
-and the noise ceiling is still a stub — and no validator.
+raises before reading its argument. There is still no search LOOP, though all
+four of its pieces now exist: grid expansion, plateau scoring, the degeneracy
+check and the graveyard. Nothing joins them, nothing computes a noise ceiling
+(a later component, still a stub), and there is no validator.
 
 **There are two decision-log shapes and the design says there should be one.**
 `docs/architecture.md` states the schema is defined once, in
@@ -72,9 +73,10 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-495 tests pass (`uv run pytest`). They cover the protocol loader, the data
+496 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, the backtest engine, and grid expansion.
+performance metrics, the backtest engine, grid expansion, plateau scoring and
+the graveyard — ten areas, one per test file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED things are untested: the `status` and
