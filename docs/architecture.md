@@ -76,11 +76,11 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 41 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
-| `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation as total as the config loader's. Produces the `params` mapping that makes a `StrategyDef` evaluable; **nothing under `src/` calls it yet.** | 53 |
+| `search/grid.py` | `expand_grid` — every combination of the declared ranges, inclusive of `max` only on a step boundary, integer arithmetic throughout, and validation as total as the config loader's. Produces the `params` mapping that makes a `StrategyDef` evaluable; **nothing under `src/` calls it yet.** | 71 |
 | `execution/venue.py` | The venue interface and its data classes. A `typing.Protocol`, so no `NotImplementedError` appears in it. | none |
 | `cli.py` | `status` and `fetch`. | none |
 
-**391 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 53. Run `uv run pytest` to see the
+**409 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 71. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

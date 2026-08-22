@@ -72,7 +72,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-391 tests pass (`uv run pytest`). They cover the protocol loader, the data
+409 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, and grid expansion. Nothing else has
 tests because nothing else has code.
@@ -279,7 +279,11 @@ day is therefore unmodelled.
   whole numbers. (Not *all* of them: `step: 2.5` from `min: 5` gives 5, 7.5, 10,
   12.5, so every other cell is whole. An earlier version of this line claimed
   every cell after the first was fractional, which is true of `step: 0.3` and
-  false of `step: 2.5`.)
+  false of `step: 2.5`.) `expand_grid` enforces the same rule again, independently
+  of the loader, and adds the floor the loader also applies: no bound below one
+  bar. That second check exists for a spec built by hand rather than read from a
+  config, which is the only way to reach the grid without passing the loader
+  first.
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.

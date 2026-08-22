@@ -55,6 +55,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from strategylab.backtest.costs import CostModel
 from strategylab.backtest.engine import BacktestResult, run_backtest
 from strategylab.core.config import load_strategy
 from strategylab.core.types import IndicatorRef, StrategyDef
@@ -205,17 +206,39 @@ def test_every_value_of_every_cell_is_an_int_and_not_a_float() -> None:
 # --------------------------------------------------------------------------
 # Refusals
 #
-# Six conditions, checked in the order `expand_grid` documents. Four of them are
-# additions to the contract the stub carried; each closes a case whose
-# alternative was a silently wrong grid rather than a refused one.
+# Nine conditions, checked in the order `expand_grid` documents. Seven of them
+# are additions to the contract the stub carried, which named only a missing
+# key, a non-positive step and a max below min. Each closes a case whose
+# alternative was a silently wrong grid, or an exception of a type the contract
+# does not admit, rather than a refused one.
 # --------------------------------------------------------------------------
 
 
-def test_a_parameter_name_carrying_the_leading_dollar_is_refused() -> None:
-    # `evaluate` matches a placeholder by its bare name, so a `$fast` key here
-    # would surface as a missing-parameter error from a different module.
-    with pytest.raises(ValueError, match="without the leading"):
-        expand_grid({"$fast": {"min": 1.0, "max": 10.0, "step": 1.0}})
+def test_a_search_spec_that_is_not_a_mapping_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a mapping"):
+        expand_grid([("fast", {"min": 1.0, "max": 10.0, "step": 1.0})])  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["$fast", "fast$", "fa$st", "", "my param", "a/b", "fast\n", 5, None],
+)
+def test_a_malformed_parameter_name_is_refused(name: object) -> None:
+    # The same charset `load_strategy` holds these names to, for the same
+    # reason - the name becomes part of a result key. A `$fast` key here would
+    # otherwise surface as a missing-parameter error from a different module,
+    # and a trailing newline is what a YAML block scalar produces by accident.
+    with pytest.raises(ValueError, match="letters, digits, underscores or hyphens"):
+        expand_grid({name: {"min": 1.0, "max": 10.0, "step": 1.0}})  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("spec", [5, None, "minmaxstep", {"min", "max", "step"}])
+def test_a_range_that_is_not_a_mapping_is_refused(spec: object) -> None:
+    # Without this, an int range raises TypeError on iteration and a str range
+    # is reported as carrying the unknown keys 'a', 'e', 'i' - neither of which
+    # is a failure mode this function's contract admits.
+    with pytest.raises(ValueError, match="is not a mapping"):
+        expand_grid({"p": spec})  # type: ignore[dict-item]
 
 
 def test_an_unrecognised_key_inside_a_range_is_refused() -> None:
@@ -290,9 +313,45 @@ def test_a_min_below_one_bar_is_refused(low: float) -> None:
         expand_grid({"p": {"min": low, "max": 10.0, "step": 1.0}})
 
 
-def test_all_three_bounds_are_read_before_any_two_are_compared() -> None:
+def test_an_unknown_key_is_reported_before_the_key_it_displaces() -> None:
+    # `stp` both adds an unknown key and omits `step`. The documented order
+    # reports the misspelling, which is the fault, rather than the omission,
+    # which is its consequence.
+    spec: dict[str, Any] = {"min": 1.0, "max": 10.0, "stp": 1.0}
+    with pytest.raises(ValueError, match="unknown keys"):
+        expand_grid({"p": spec})
+
+
+@pytest.mark.parametrize(
+    ("spec", "reported"),
+    [
+        ({"min": 2.5, "max": 3.5, "step": 1.0}, "min"),
+        ({"min": 1.0, "max": 3.5, "step": 0.5}, "max"),
+    ],
+)
+def test_the_bounds_are_converted_in_the_order_min_max_step(
+    spec: dict[str, float], reported: str
+) -> None:
+    # Two bounds are malformed in each case; the contract fixes which is named.
+    with pytest.raises(ValueError, match=f"'{reported}' of"):
+        expand_grid({"p": spec})
+
+
+def test_an_enormous_integer_bound_does_not_replace_the_message_with_a_digit_limit() -> None:
+    # CPython refuses to render an int of more than 4300 digits as a string. A
+    # bound that large reaches the message through the int fast path, so an
+    # unguarded f-string would raise about digit limits instead of about the
+    # bound. The exception type would still be ValueError, which is why this is
+    # not caught by asserting the type.
+    with pytest.raises(ValueError, match="a lookback is at least 1 bar"):
+        expand_grid({"p": {"min": -(10**5000), "max": 10, "step": 1}})
+
+
+def test_a_bound_is_checked_for_wholeness_before_it_is_compared_to_another() -> None:
     # Documented ordering: two conditions are true here - `max` is not whole AND
-    # it is below `min` - and the non-whole bound is the one reported.
+    # it is below `min` - and the non-whole bound is the one reported. `step` is
+    # valid and plays no part, so this pins down the max-versus-min ordering
+    # only; the min/max/step conversion order is the test above.
     #
     # `min` is deliberately WHOLE and `max` the offender. With both malformed the
     # test could not tell the orderings apart: `min` is converted first either
@@ -443,12 +502,50 @@ def test_the_fast_parameter_reaches_the_result(
     # dropped `fast` entirely would pass every other test in this file. These two
     # cells differ in nothing else.
     costs = load_protocol(REPO_PROTOCOL).costs
-    slow_cell = {"fast": 5, "slow": 40, "trend": 100}
-    fast_cell = {"fast": 30, "slow": 40, "trend": 100}
-    slowest = run_backtest(committed_strategy, slow_cell, fixture_bars, costs)
-    fastest = run_backtest(committed_strategy, fast_cell, fixture_bars, costs)
-    assert len(slowest.equity) == len(fastest.equity)
-    assert float(slowest.equity.iloc[-1]) != float(fastest.equity.iloc[-1])
+    short_period_cell = {"fast": 5, "slow": 40, "trend": 100}
+    long_period_cell = {"fast": 30, "slow": 40, "trend": 100}
+    short = run_backtest(committed_strategy, short_period_cell, fixture_bars, costs)
+    long = run_backtest(committed_strategy, long_period_cell, fixture_bars, costs)
+
+    # A PRECONDITION, not coverage: `fast` is below `slow` in both cells, so it
+    # cannot enter the warm-up under any reading of the rule and the two curves
+    # are the same length for a structural reason. It cannot fail.
+    assert len(short.equity) == len(long.equity)
+
+    # Also a precondition. If neither cell ever traded, both finals would be the
+    # starting equity and the assertion below would go red for a reason that has
+    # nothing to do with whether `fast` reached anything.
+    assert short.fills or long.fills
+
+    assert float(short.equity.iloc[-1]) != float(long.equity.iloc[-1])
+
+
+def test_the_protocol_costs_reach_the_fills_and_reduce_the_result(
+    committed_strategy: StrategyDef, fixture_bars: pd.DataFrame
+) -> None:
+    # Without this, every other end-to-end assertion passes unchanged if
+    # `load_protocol(...).costs` returned a model of all zeroes - so the file
+    # would claim to run "with the real protocol costs" and nothing would carry
+    # it. A cell that trades is required, hence the fills precondition.
+    #
+    # The direction is the only part hand-derivable here: a buyer crosses half
+    # the spread upward and pays commission out of cash, so a charged run cannot
+    # end above a free one. The size of the gap depends on the fixture and is
+    # deliberately not asserted.
+    charged = load_protocol(REPO_PROTOCOL).costs
+    free = CostModel(
+        spread_frac=0.0,
+        slippage_frac=0.0,
+        commission_frac=0.0,
+        commission_min_flat=0.0,
+        fx_conversion_frac=0.0,
+    )
+    assert charged.spread_frac > 0.0
+    cell = {"fast": 30, "slow": 40, "trend": 100}
+    with_costs = run_backtest(committed_strategy, cell, fixture_bars, charged)
+    without_costs = run_backtest(committed_strategy, cell, fixture_bars, free)
+    assert with_costs.fills
+    assert float(with_costs.equity.iloc[-1]) < float(without_costs.equity.iloc[-1])
 
 
 def test_a_second_pass_over_a_cell_reproduces_it_exactly(
@@ -463,4 +560,7 @@ def test_a_second_pass_over_a_cell_reproduces_it_exactly(
     reexpanded = expand_grid(committed_strategy.search)[0]
     again = run_backtest(committed_strategy, reexpanded, fixture_bars, costs)
     assert again.params == cell
-    pd.testing.assert_series_equal(again.equity, first.equity)
+    # check_exact, because the default for floats is rtol=1e-5 - a tolerance of
+    # about 0.10 on an equity near 10,000, which is not what "exactly" means.
+    # `tests/test_engine.py` asserts its determinism the same way.
+    pd.testing.assert_series_equal(again.equity, first.equity, check_exact=True)
