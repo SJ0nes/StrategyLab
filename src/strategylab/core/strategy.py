@@ -226,6 +226,17 @@ def _render(condition: Condition, left: float, right: float) -> str:
     """
 
     def name(ref: IndicatorRef | float) -> str:
+        """Render one side of a condition for the log line.
+
+        Args:
+            ref: The indicator reference, or a bare number in the units of
+                whatever it is compared against.
+
+        Returns:
+            ``indicator(period)`` for a resolved reference, ``indicator($name)``
+            for an unresolved one, ``indicator`` for one taking no period, and
+            six significant figures for a literal.
+        """
         if not isinstance(ref, IndicatorRef):
             return f"{ref:.6g}"
         if ref.period is not None:

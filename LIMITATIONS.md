@@ -137,13 +137,21 @@ auditors run against every component this repository has built. The record of
 what they found is in `git log`: each round is followed by a `fix:` commit whose
 message names the defect. Read those.
 
-The pattern across them is one-directional. Independent recomputation of the
-hand-derived numbers in the tests has not yet found a wrong value. Independent
-reading of the prose has found something untrue every single round — a test
-described as covering more than it could, a paragraph left standing beside the
-paragraph that superseded it, a figure quoted from a harness that was never
-committed. The errors are not in the arithmetic. They are in the claims about
-how good the arithmetic is, and they overstate.
+Independent recomputation of the hand-derived numbers in the tests has not yet
+found a wrong value — that has held through every component, including the three
+in `search/`. Independent reading of the prose has found something untrue every
+single round: a test described as covering more than it could, a paragraph left
+standing beside the paragraph that superseded it, a figure quoted from a harness
+that was never committed.
+
+An earlier version of this paragraph went further and said "the errors are not in
+the arithmetic", meaning the audits only ever caught prose. That is no longer
+true, and `docs/decisions/0006` records the counter-evidence: building `search/`
+produced silently expanding lookbacks of zero and minus ten, two `TypeError`s
+escaping a contract admitting only `ValueError`, and a graveyard refusal leaving
+a zero-byte file that reads as a search with no rejections in it. The audits
+catch code defects too. What is still true is the DIRECTION — every finding,
+prose or code, has been an overstatement of how good the verification is.
 
 So: **trust the numbers in this repository more than the sentences around them**,
 and trust neither more than the command that regenerates them. Where a figure
@@ -281,6 +289,28 @@ day is therefore unmodelled.
   behaviour in a way the backtester does not model.
 - **One strategy family, one config.** `configs/` holds a single moving-average
   crossover. Nothing has been compared across strategy types.
+- **Nothing produces a `trade_fingerprint`, so `is_degenerate` cannot be used
+  yet.** It compares trade SETS rather than trade counts, and reads a per-cell
+  fingerprint string from the results frame. `search/plateau.py` fixes only the
+  property that string must have — two cells share one exactly when they executed
+  the same trades — and no code anywhere builds one. The degeneracy check is
+  therefore built, tested against hand-made frames, and unusable until the search
+  loop decides what goes in that column. Two cases there need a deliberate
+  answer rather than a default: a cell that took no trades, and a cell whose
+  backtest raised.
+- **Plateau scoring cannot detect a missing parameter level.** It refuses a
+  results frame with rows missing, because a hole makes cells two grid steps
+  apart look adjacent. But drop EVERY row at one value of a parameter and what
+  remains is a complete smaller grid, indistinguishable from a search that
+  declared fewer values — and the neighbourhood walk silently spans the gap.
+  Detecting it needs the declared `search_spec`, which `plateau_score` does not
+  receive. It is the caller's responsibility and nothing enforces it.
+- **The neighbourhood radius is a call-time default, not pre-registered.** It
+  defaults to 1 and is not in `protocol.yaml`, so it is a parameter of the
+  scoring that a caller could vary after seeing results. `DEGENERATE_SHARE` is
+  the same: a module constant at 0.8. Both are reporting choices rather than
+  pass criteria — nothing in `validation` reads them — but neither is protected
+  by the write-once rule that protects the pass bar.
 - **Three searched parameters, 90 grid cells.** The config's own comment notes
   that this much data supports three or four parameters at most. `expand_grid`
   confirms the count is 90; nothing yet decides which of the 90 to believe.

@@ -92,12 +92,11 @@ Full version, with every module marked built or stubbed, in
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run against a fresh clone of `58217b7` with an empty `data/` cache:
-154 passed, and `status` reported `data  not cached`. The suite has grown since
-— `uv run pytest` reports 496 passed in the working tree, and the fresh-clone
-run has not been repeated at that count. The clone and the first `uv run` need
-the network to fetch dependencies; **the test suite itself makes no network
-call**, which is the property that matters.
+were last run against a fresh clone of `63e163e` with an empty `data/` cache:
+**496 passed**, and `status` reported `data  not cached`. The clone and the
+first `uv run` need the network to fetch dependencies; **the test suite itself
+makes no network call**, which is the property that matters and which that run
+verified with outbound sockets blocked.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
