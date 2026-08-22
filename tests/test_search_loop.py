@@ -661,7 +661,7 @@ def test_a_bad_price_anywhere_in_the_window_is_refused(
     # and is traded by others.
     bars = fixture_bars.copy()
     bars.loc[bars.index[10], "open"] = bad
-    _bad_input_is_refused(bars, tmp_path, "non-finite or non-positive price")
+    _bad_input_is_refused(bars, tmp_path, "not a positive, finite number")
 
 
 def test_a_non_finite_literal_on_the_right_of_a_condition_is_refused(
@@ -709,11 +709,51 @@ def test_a_bad_value_in_a_column_nothing_reads_does_not_block_the_search(
     pd.testing.assert_frame_equal(result.results, clean.results)
 
 
+def test_a_literal_on_the_left_of_a_condition_is_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # `Condition.left` is typed `IndicatorRef` and nothing enforces it at run
+    # time. A literal there reaches the engine as an AttributeError, which is
+    # not a ValueError, so it is neither caught as a failed cell nor admitted by
+    # `run_search`'s contract.
+    entry = (Condition(1.0, "above", IndicatorRef("sma", period_param="slow")),)  # type: ignore[arg-type]
+    _bad_input_is_refused(
+        fixture_bars, tmp_path, "on the left of a condition", definition=_definition(entry=entry)
+    )
+
+
+@pytest.mark.parametrize("dtype", ["object", "Float64", "float32", "int64"])
+def test_price_columns_the_engine_accepts_are_not_refused(
+    fixture_bars: pd.DataFrame, tmp_path: Path, dtype: str
+) -> None:
+    # The value check must be no stricter than the thing it guards. The engine
+    # does `to_numpy(dtype="float64")` and `validate_bars` accepts an
+    # object-dtype column of real floats, so refusing one would decline a search
+    # that would have run. An earlier dtype gate did exactly that.
+    bars = fixture_bars.copy()
+    for column in ("open", "close"):
+        if dtype == "int64":
+            bars[column] = (bars[column] * 100).round().astype("int64")
+        else:
+            # The dtype is parametrised, so the overload cannot be resolved.
+            bars[column] = bars[column].astype(dtype)  # type: ignore[call-overload]
+
+    result = run_search(
+        _small_strategy(),
+        bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    assert len(result.results) == 9
+
+
 def test_a_non_numeric_price_column_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:
     bars = fixture_bars.copy()
     bars["close"] = bars["close"].astype(object)
     bars.loc[bars.index[10], "close"] = "not-a-price"
-    _bad_input_is_refused(bars, tmp_path, "not a numeric price")
+    _bad_input_is_refused(bars, tmp_path, "not a positive, finite number")
 
 
 def test_an_absolute_config_path_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:

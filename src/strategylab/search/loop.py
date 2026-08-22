@@ -64,7 +64,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 from strategylab.backtest.costs import CostModel, Fill
 from strategylab.backtest.engine import run_backtest
@@ -520,14 +519,26 @@ def _check_inputs(
     for condition in (*definition.entry, *definition.exit):
         if condition.operator not in OPERATORS:
             unknown_operators.add(condition.operator)
+        # `Condition.left` is typed `IndicatorRef` and `Condition.right` is
+        # `IndicatorRef | float`. Nothing enforces that at run time, and this
+        # function's whole reason for existing is that a `StrategyDef` can be
+        # built in code without passing the loader.
+        if not isinstance(condition.left, IndicatorRef):
+            raise SearchError(
+                f"strategy '{definition.name}' has {condition.left!r} on the left of a "
+                "condition, where only an indicator is allowed; a literal there reaches "
+                "the engine as an AttributeError, which this loop does not catch"
+            )
         for side in (condition.left, condition.right):
             if not isinstance(side, IndicatorRef):
-                # `condition.right` may be a bare float literal. A non-finite
-                # one is not caught anywhere below - it reaches `evaluate`,
-                # which refuses it only on the cells that actually get that far,
-                # so it fails SOME cells and not all. Same shape as a bad price,
-                # and it would otherwise slip through both this gate and the
-                # every-cell-failed backstop.
+                # A bare float literal on the right. A non-finite one is
+                # refused here for the MESSAGE, not because it would otherwise
+                # escape: measured, it fails every cell, so the
+                # every-cell-failed backstop does catch it. An earlier version
+                # of this comment claimed the opposite - that it failed only
+                # some cells and evaded the backstop - and that was wrong. What
+                # this buys is a diagnosis naming the literal, instead of four
+                # minutes of backtesting followed by a generic failure.
                 if isinstance(side, float) and not math.isfinite(side):
                     raise SearchError(
                         f"strategy '{definition.name}' compares against the non-finite "
@@ -656,9 +667,12 @@ def _check_window(window: pd.DataFrame) -> None:
 
     Raises:
         SearchError: If a required OHLCV column is absent, if the window is
-            unsorted or carries duplicate timestamps, or if any of ``open``,
-            ``high``, ``low`` or ``close`` holds a non-numeric, non-finite or
-            non-positive value.
+            unsorted or carries duplicate timestamps, or if ``open`` or
+            ``close`` holds a value that is not a positive, finite number.
+
+            ``high`` and ``low`` must be PRESENT and their values are NOT
+            checked - nothing on the backtest path reads them. See the comment
+            beside the check.
     """
     missing = [column for column in REQUIRED_COLUMNS if column not in window.columns]
     if missing:
@@ -672,32 +686,36 @@ def _check_window(window: pd.DataFrame) -> None:
             "the in-sample window carries duplicate timestamps; the bar order is ambiguous"
         )
 
-    # ONLY THE COLUMNS ANYTHING ACTUALLY READS. The engine takes `open` (the
-    # fill price) and `close` (the mark and every indicator's input);
-    # `high` and `low` are required to be PRESENT, because a bar without them is
-    # not an OHLCV bar, but nothing downstream ever reads their values. Checking
-    # them here would refuse a search over data that would have run perfectly -
-    # the same over-strictness this project already documents in its ingest
-    # gate, and there is no reason to repeat it in a second place.
+    # ONLY THE COLUMNS THE BACKTEST ACTUALLY READS. The engine takes `open` (the
+    # fill price) and `close` (the mark and every indicator's input). `high` and
+    # `low` are required to be PRESENT - a bar without them is not an OHLCV bar
+    # - but no code on the backtest path reads their values, verified by
+    # grepping all of `src/`: the only reader anywhere is
+    # `data.source.validate_bars`, which checks them at INGEST, where that
+    # belongs. Re-checking them here would refuse a search over data that would
+    # have run perfectly, duplicating in a second place the over-strictness this
+    # project already documents about its ingest gate.
     prices = ["open", "close"]
-    for name in prices:
-        column = window[name]
-        if is_bool_dtype(column) or not is_numeric_dtype(column):
-            raise SearchError(
-                f"the in-sample window's '{name}' column has dtype {column.dtype}, which is "
-                "not a numeric price; the engine converts it to floats and would fail on "
-                "whichever cells reach that bar"
-            )
-    values = window[prices]
-    numeric = values.astype("float64")
+    # COERCE RATHER THAN GATE ON DTYPE. An earlier version refused any column
+    # that was not already a numeric dtype, which was stricter than the thing it
+    # guards: the engine does `to_numpy(dtype="float64")` and handles an
+    # object-dtype column of real floats perfectly, and `validate_bars` accepts
+    # one at ingest. That check therefore declined searches that would have run.
+    # `to_numeric` accepts everything they accept - object, nullable, int64,
+    # float32 - and turns a genuine non-number into NaN, which the finiteness
+    # test below then reports. Tolerant where the engine is tolerant, strict
+    # where it must be.
+    numeric = window[prices].apply(pd.to_numeric, errors="coerce")
     # `math.isfinite` rather than `notna`, because an infinity is neither NaN
     # nor caught by `> 0` - `inf > 0` is true. A test for this passed against
     # the weaker check and is the reason the stronger one is here.
     if not bool(numeric.map(math.isfinite).all().all()) or not bool((numeric > 0).all().all()):
         raise SearchError(
-            f"the in-sample window carries a non-finite or non-positive price in one of "
-            f"{prices}; a price must be a positive real number, and a bad one fails only "
-            "the cells that read that bar rather than the whole search"
+            f"the in-sample window carries a value in one of {prices} that is not a "
+            "positive, finite number - a non-number, a NaN, an infinity or a value at or "
+            "below zero. A bad one fails only the cells that read that bar rather than "
+            "the whole search, which is why it is refused here rather than left to the "
+            "every-cell-failed check"
         )
 
 
