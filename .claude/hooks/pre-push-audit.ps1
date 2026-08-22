@@ -75,7 +75,14 @@ $benign = @{
         # A space-padded hyphen is an arithmetic operator, not a separator.
         # "(10500 - 7857.142857)" is a comment showing its working. Account
         # numbers and sort codes never pad their hyphens.
-        '\s-\s'
+        '\s-\s',
+        # A YEAR RANGE. "2005-2018" is a digit, eight of the class, a digit -
+        # the same shape as an ISO date and just as harmless. The two windows
+        # this project is built around are written that way in prose dozens of
+        # times, and every one of them was reported as a possible account
+        # number. Both years must be plausible calendar years, so this does not
+        # suppress an eight-digit run that merely happens to contain a hyphen.
+        '^(19|20)\d{2}-(19|20)\d{2}$'
     )
 }
 
