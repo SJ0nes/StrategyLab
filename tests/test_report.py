@@ -54,6 +54,7 @@ from strategylab.report.surface import (
     build_context,
     render_surface,
 )
+from strategylab.search.loop import SEARCH_SCHEMA_VERSION
 
 TRACEABLE: dict[str, Any] = {
     "protocol_version": 1,
@@ -276,7 +277,8 @@ def test_a_self_contained_construct_is_not_mistaken_for_an_external_one(
 def _artifact(cells: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
     """A minimal search artifact carrying the fields the report reads."""
     artifact: dict[str, Any] = {
-        "schema_version": 2,
+        # From the constant, so a bump cannot leave this fixture behind.
+        "schema_version": SEARCH_SCHEMA_VERSION,
         "generated_at": "2026-08-22T13:05:00+00:00",
         "protocol_version": 1,
         "strategy": "probe",

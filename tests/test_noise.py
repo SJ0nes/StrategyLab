@@ -234,21 +234,36 @@ def test_the_surrogate_keeps_the_volatility_clustering_a_shuffle_destroys() -> N
     # opponent and sets the bar far too low."
     source = _regime_bars()
     real = _log_returns(source)
-    surrogate = _log_returns(block_resample(source, 60, np.random.default_rng(4)))
     shuffled = np.random.default_rng(4).permutation(real)
 
     # The synthetic series must actually exhibit the effect, or nothing below is
     # a test of anything.
     assert _clustering(real) > 0.3
 
-    # DERIVED, NOT EYEBALLED. One adjacent pair in every B straddles a block
-    # seam and contributes no covariance, so the surrogate's autocorrelation is
-    # about `(1 - 1/B)` of the real one - 0.983 at B = 60. An earlier version
-    # asserted `> real / 2`, which reduces to `B > 2` and would pass with
-    # three-bar blocks: it looked like a test of block resampling and was a test
-    # of almost nothing.
-    expected = (1.0 - 1.0 / 60) * _clustering(real)
-    assert _clustering(surrogate) == pytest.approx(expected, rel=0.15)
+    # DERIVED, AND AVERAGED OVER SEEDS. One adjacent pair in every B straddles a
+    # block seam and contributes no covariance, so the EXPECTED surrogate
+    # autocorrelation is `(1 - 1/B)` of the real one - 0.983 at B = 60.
+    #
+    # Two earlier versions of this assertion were wrong in opposite directions.
+    # The first asserted `> real / 2`, which reduces to `B > 2` and passes with
+    # three-bar blocks. The second compared ONE surrogate against the identity
+    # at 15% tolerance - and a single realisation has an SD of about 13.6% of
+    # the mean, so 24% of seeds fail it. It was green because seed 4 happened to
+    # land inside. Widening the tolerance to cover that spread would reach 41%
+    # and readmit the three-bar case, so the fix is to test the expectation the
+    # identity is actually about: average over twenty surrogates, where the SD
+    # falls to about 3% and a 10% bound is roughly three sigma.
+    block = 60
+    observed = float(
+        np.mean(
+            [
+                _clustering(_log_returns(block_resample(source, block, np.random.default_rng(s))))
+                for s in range(20)
+            ]
+        )
+    )
+    expected = (1.0 - 1.0 / block) * _clustering(real)
+    assert observed == pytest.approx(expected, rel=0.10)
 
     # The shuffle keeps essentially none of it. Under the null of no
     # autocorrelation the sample estimate has SD about `1/sqrt(n)`, which is
@@ -256,7 +271,25 @@ def test_the_surrogate_keeps_the_volatility_clustering_a_shuffle_destroys() -> N
     # used 0.05 - 1.7 sigma - which roughly one seed in eighteen would breach.
     sigma = 1.0 / np.sqrt(len(real))
     assert abs(_clustering(shuffled)) < 3.0 * sigma
-    assert _clustering(surrogate) > abs(_clustering(shuffled)) * 4
+    assert observed > abs(_clustering(shuffled)) * 4
+
+
+def test_short_blocks_do_not_satisfy_the_clustering_identity() -> None:
+    # The discrimination the assertion above is for, made explicit. Three-bar
+    # blocks destroy most of the structure, and their mean lands far outside the
+    # tolerance that a sixty-bar block meets. Without this, a future widening of
+    # that tolerance could go unnoticed.
+    source = _regime_bars()
+    expected_at_60 = (1.0 - 1.0 / 60) * _clustering(_log_returns(source))
+    at_three = float(
+        np.mean(
+            [
+                _clustering(_log_returns(block_resample(source, 3, np.random.default_rng(s))))
+                for s in range(20)
+            ]
+        )
+    )
+    assert at_three < expected_at_60 * 0.90
 
 
 def test_the_recorded_fixture_is_too_short_to_show_clustering(bars: pd.DataFrame) -> None:

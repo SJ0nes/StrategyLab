@@ -75,9 +75,11 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
       artifact carries per-cell metrics and no curves; ninety curves over three
       and a half thousand bars is tens of megabytes against a thirty-kilobyte
       file, so what to store is a decision nobody has taken yet;
-    - the noise ceiling on the SAME axis as the result - NOT MET, because
-      ``search/noise.py`` is a stub and there is no ceiling to draw. The page
-      says so where the band would be;
+    - the noise ceiling on the SAME axis as the result - NOT MET, though no
+      longer for want of a ceiling. ``search --trials`` computes one and the
+      page reports where the candidate falls in it, but as a sentence and a
+      percentile rather than a band drawn on the surface's own axis. A page
+      whose search had no ceiling says that instead;
     - fold results side by side - NOT MET, because ``validate/`` is a stub and
       no fold exists;
     - loading two result sets to compare runs - NOT MET.

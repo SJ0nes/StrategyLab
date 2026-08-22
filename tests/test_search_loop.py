@@ -1276,13 +1276,54 @@ def test_the_artifact_carries_the_whole_surface_and_its_provenance(
     assert payload["max_drawdown_ceiling_pct"] == 25.0
 
 
-def test_the_artifact_schema_version_matches_the_documented_field_set() -> None:
-    # The version exists so a reader meeting an unfamiliar artifact can say so.
+def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: Path) -> None:
+    # ASSERTED AGAINST THE PAYLOAD, not against itself. An earlier version
+    # checked `SEARCH_SCHEMA_VERSION == 4` and nothing else, which compares a
+    # constant to a literal and would stay green while the fields underneath it
+    # changed - the very drift the constant exists to signal.
+    #
     # 2 added `costs_frac` and `commission_min_flat`; 3 turned `noise_ceiling`
     # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
     # briefly two different shapes, because those last fields went in without a
-    # bump - the exact confusion this field exists to prevent.
+    # bump.
     assert SEARCH_SCHEMA_VERSION == 4
+
+    documented = {
+        "schema_version",
+        "generated_at",
+        "protocol_version",
+        "strategy",
+        "config",
+        "instrument",
+        "data_content_hash",
+        "window",
+        "primary_metric",
+        "max_drawdown_ceiling_pct",
+        "costs_frac",
+        "commission_min_flat",
+        "plateau_radius",
+        "starting_equity",
+        "grid_size",
+        "failed_cells",
+        "noise_ceiling",
+        "noise_ceiling_note",
+        "winner",
+        "rejections",
+        "cells",
+    }
+    bars = pd.read_parquet(FIXTURE_BARS)
+    result = run_search(
+        _small_strategy(),
+        bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    written = set(json.loads(path.read_text(encoding="utf-8")))
+
+    assert written == documented, "the payload and the enumerated schema disagree"
 
 
 def test_the_artifact_states_that_no_noise_ceiling_was_computed(

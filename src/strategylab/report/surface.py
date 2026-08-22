@@ -43,6 +43,7 @@ from typing import Any
 
 from strategylab.report.palette import ACCENT, FAILED_FILL, VIRIDIS, sample
 from strategylab.report.render import DEFAULT_REPORT_DIR, render
+from strategylab.search.loop import SEARCH_SCHEMA_VERSION
 
 #: Side of one heatmap cell, in SVG user units.
 CELL = 46
@@ -133,14 +134,23 @@ def build_context(artifact: dict[str, Any], command: str) -> dict[str, Any]:
         the legend and the summary counts.
 
     Raises:
-        ReportError: If the artifact carries no cells, declares no searched
-            parameters, or would facet into more than :data:`MAX_PANELS`
-            panels.
+        ReportError: If the artifact declares a schema version this reader does
+            not understand, carries no cells, declares no searched parameters,
+            or would facet into more than :data:`MAX_PANELS` panels.
         KeyError: If the artifact is missing a field this module reads. Not
             caught and re-raised as something friendlier, because a
             well-formed artifact always has them and a malformed one is a
             producer bug worth seeing raw.
     """
+    version = artifact.get("schema_version")
+    if version != SEARCH_SCHEMA_VERSION:
+        raise ReportError(
+            f"this artifact declares schema version {version!r} and this reader understands "
+            f"{SEARCH_SCHEMA_VERSION}. Re-run the search rather than drawing a surface from "
+            "a file whose fields may mean something else - an audit pointed out that nothing "
+            "read this field at all, which made it decoration rather than a safeguard"
+        )
+
     cells = artifact["cells"]
     if not cells:
         raise ReportError("the artifact carries no cells; there is no surface to draw")

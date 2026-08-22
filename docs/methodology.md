@@ -129,10 +129,19 @@ best of the 90 will still post a positive Sharpe — not because anything worked
 but because you took the maximum of 90 random draws. Report only that winner and
 you have reported a selection artefact as a finding.
 
-So the search runs the **entire grid** against surrogate series that have no edge
-in them, `n_trials` times, recording the best-in-grid Sharpe achieved on each.
-That distribution is the noise ceiling: what this search, on this data, at this
-grid size, achieves on nothing.
+So the search can run the **entire grid** against surrogate series `n_trials`
+times, recording the best-in-grid Sharpe achieved on each. That distribution is
+the ceiling: what this search, on this data, at this grid size, achieves without
+the real ordering of history to help it.
+
+Two qualifications, both load-bearing. It runs only when asked — `--trials N`,
+because each trial costs a full grid — so a plain search reports no ceiling and
+says so. And the surrogates are **not** series with no edge in them: blocks are
+as long as the grid's longest lookback, so each is a verbatim stretch of real
+history and what the ceiling really measures is a reordering of this market's
+own regimes. That is a harder test than noise and a narrower one.
+[decisions/0008](decisions/0008-surrogate-block-length.md) argues out why no
+block length avoids the trade.
 
 A winning Sharpe is not evidence until it is compared against that distribution.
 If it sits inside it, the search found the shape of its own multiplicity.

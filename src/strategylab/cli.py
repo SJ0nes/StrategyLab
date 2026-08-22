@@ -272,7 +272,9 @@ def _report_ceiling(result: SearchResult) -> None:
         return
 
     console.print(
-        f"\nNoise ceiling over {len(ceiling)} surrogate(s): "
+        f"\nCeiling over {len(ceiling)} surrogate(s) of RESAMPLED HISTORY, not "
+        "noise - blocks run as long as the grid's longest lookback, so each is a "
+        "verbatim stretch of the real series. See docs/decisions/0008. "
         f"median {finite.quantile(0.50):.3f}, 90th {finite.quantile(0.90):.3f}, "
         f"95th {finite.quantile(0.95):.3f}, max {finite.max():.3f}"
     )

@@ -169,9 +169,9 @@ FAILED_PREFIX = "failed:"
 #: alone learns why the field is empty.
 NOISE_CEILING_ABSENT_NOTE = (
     "Not computed: this search was run without --trials, so no Sharpe here has "
-    "been compared against what the same grid achieves on surrogate series with "
-    "no edge in them. The best of ninety cells on noise is well above zero. "
-    "Treat every figure in this file as unbenchmarked."
+    "been compared against what the same grid achieves on resampled history. "
+    "The best of ninety cells on a series with no exploitable structure is well "
+    "above zero. Treat every figure in this file as unbenchmarked."
 )
 
 

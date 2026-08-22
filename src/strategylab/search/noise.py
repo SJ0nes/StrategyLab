@@ -1,10 +1,20 @@
-"""The noise ceiling: what the same search achieves on data with no edge in it.
+"""The noise ceiling: what the same search achieves without real history to help.
 
 The best of ninety combinations on real data must be compared against the best
-of ninety on noise. Without that number a winning Sharpe is not evidence of
-anything, because the expected maximum across ninety draws of noise is well
-above zero - and a search that reports only its winner is reporting that
-maximum without saying so.
+of ninety on something that is not the real series. Without that number a
+winning Sharpe is not evidence of anything, because the expected maximum across
+ninety draws is well above zero - and a search that reports only its winner is
+reporting that maximum without saying so.
+
+"NOISE" IS THE PROJECT'S WORD FOR IT AND IT IS NOT ACCURATE. The surrogates
+:mod:`strategylab.search.surrogate` builds are block-resampled real history,
+with blocks as long as the grid's longest lookback, so each is a verbatim
+stretch of the real series at a rescaled price level. What this ceiling measures
+is a REORDERING OF THE SAME MARKET'S REGIMES - a harder and narrower test than
+noise, and not the one ``CLAUDE.md`` describes. The name is kept because it is
+the name the protocol and the roadmap use; every place that reports a figure
+says what it actually is. ``docs/decisions/0008`` argues out why no block length
+avoids the trade.
 
 WHAT THIS COSTS, because it decides how the component is used. One ceiling trial
 runs the ENTIRE grid, so the work is ``n_trials`` times a full search. The
