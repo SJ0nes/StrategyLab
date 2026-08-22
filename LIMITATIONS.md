@@ -59,7 +59,7 @@ are stubs — and no validator.
 diffable - that is what makes `strategylab diff` possible at all. But
 `logging/` is a stub, and `run_backtest` needed somewhere to put its per-bar
 records now, so it emits an ad-hoc seven-column frame while `DecisionRecord`
-declares fifteen fields nobody writes. Nothing is wrong today because nothing
+declares sixteen fields nobody writes. Nothing is wrong today because nothing
 reads either one. The moment `logging/` is built they must converge on its
 schema, and until then the "defined once" rule is aspirational rather than
 enforced.
@@ -74,8 +74,11 @@ hidden. The last bar's signal is recorded and never filled.
 
 412 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, the backtest engine, and grid expansion. Nothing else has
-tests because nothing else has code.
+performance metrics, the backtest engine, and grid expansion. Three things have
+code and no tests, and none of them is a stub: the `status` and `fetch` commands
+in `cli.py`, the venue interface in `execution/venue.py`, and `YFinanceSource`'s
+fetch path, which by policy no test may call. Everything else without tests is a
+`NotImplementedError`.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
@@ -284,6 +287,13 @@ day is therefore unmodelled.
   bar. That second check exists for a spec built by hand rather than read from a
   config, which is the only way to reach the grid without passing the loader
   first.
+- **A wiped-out account raises instead of reporting a total loss.** `max_drawdown`
+  refuses a non-positive equity, because a drawdown is a fraction of a peak, so an
+  account driven to zero or below propagates a `ValueError` out of `run_backtest`
+  rather than reporting a hundred percent drawdown. The engine's own docstring
+  calls this a real limitation and not a considered decision, and it matters for
+  the search: a cell that blows up does not score badly, it fails, and nothing yet
+  decides what a search should do with one.
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.

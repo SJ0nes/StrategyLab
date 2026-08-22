@@ -94,7 +94,7 @@ class BacktestResult:
             not yet agree. ``docs/architecture.md`` says the schema is defined
             once, in ``logging/decisions.py``, so that a backtest log and a live
             log can be diffed - which is the whole reason ``strategylab diff``
-            can exist. ``DecisionRecord`` there carries fifteen fields including
+            can exist. ``DecisionRecord`` there carries sixteen fields including
             the ticker, the risk verdict, the protocol version and the indicator
             values; this frame carries seven and is built ad hoc. Both are
             stubs of the same idea, and one of them has a body. When

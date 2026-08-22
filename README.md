@@ -162,13 +162,14 @@ currently feed the pass decision.
 
 ## How this was built
 
-This repository was built in a single supervised session, pair-working with an
-AI assistant. That is visible in `git log` if you look at the timestamps — the
-whole history spans one sitting of a few hours, and
-`git log --format=%ad --date=iso` will show you exactly how long. It is stated
-here rather than left to be inferred. No figure is quoted because it grows with
-every commit: the one time a precise span was written down it was already stale
-at the commit that introduced it, so the command is the only honest form.
+This repository was built in supervised sessions, pair-working with an AI
+assistant. That is visible in `git log` if you look at the timestamps, and
+`git log --format=%ad --date=iso` will show you exactly when the work happened —
+including that it is more than one sitting, with a long gap in the middle. It is
+stated here rather than left to be inferred. No figure is quoted because it grows
+with every commit: twice now a written-down span has been stale or wrong by the
+time it was read, most recently a claim of "one sitting of a few hours" that the
+command cited beside it disproved. The command is the only honest form.
 
 What that does and does not mean:
 
