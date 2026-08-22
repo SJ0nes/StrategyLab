@@ -9,8 +9,8 @@ produces. Nothing here is a footnote.
 Nine modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
 `core/config.py`, `core/strategy.py`, `search/grid.py`, and the `status` and
-`fetch` commands in `cli.py`. Twenty-two `NotImplementedError` bodies remain,
-across 9 files. Two
+`fetch` commands in `cli.py`. Nineteen `NotImplementedError` bodies remain,
+across 8 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its
 data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
@@ -72,7 +72,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-412 tests pass (`uv run pytest`). They cover the protocol loader, the data
+459 tests pass (`uv run pytest`). They cover the protocol loader, the data
 layer, the cost model, the strategy-config loader, strategy evaluation, the
 performance metrics, the backtest engine, and grid expansion.
 
