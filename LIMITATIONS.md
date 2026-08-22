@@ -6,10 +6,10 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Nine modules have working bodies: `protocol.py`, `data/source.py`,
+Ten modules have working bodies: `protocol.py`, `data/source.py`,
 `backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
-`core/config.py`, `core/strategy.py`, `search/grid.py`, and the `status` and
-`fetch` commands in `cli.py`. Nineteen `NotImplementedError` bodies remain,
+`core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`, and
+the `status` and `fetch` commands in `cli.py`. Nineteen `NotImplementedError` bodies remain,
 across 8 files. Two
 further modules are mostly types rather than behaviour: `core/types.py` holds the
 shared value types, and `execution/venue.py` holds the venue interface and its

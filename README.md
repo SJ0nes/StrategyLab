@@ -127,11 +127,14 @@ window is meant to increment a counter, because the split degrades with use and
 that degradation should be visible rather than forgotten. *The counter is built
 and tested but nothing calls it yet, because nothing reads that window yet.*
 
-**Plateaus over peaks.** *Grid expansion is built; the scoring on top of it is
-not.* The best single cell in a parameter grid is usually the luckiest one. Candidates are scored by the median of their parameter
+**Plateaus over peaks.** *Built and tested; nothing calls it yet, because there
+is no search loop to call it.* The best single cell in a parameter grid is
+usually the luckiest one. Candidates are scored by the median of their parameter
 neighbourhood; winners sitting on a grid boundary are rejected as walls rather
-than optima; and flatness caused by parameters doing nothing is flagged rather
-than reported as robustness.
+than optima — measured against the highest value the grid actually reaches,
+which is not always the declared maximum; and flatness caused by parameters
+doing nothing is flagged rather than reported as robustness, by comparing trade
+sets rather than trade counts.
 
 **The noise ceiling.** *Not yet implemented.* The expected maximum across 90
 draws from noise is well above zero, so the best of 90 parameter combinations
