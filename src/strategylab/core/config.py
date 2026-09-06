@@ -17,15 +17,21 @@ through the file; a failure in the file itself - missing, unreadable, unparseabl
 
 What this module does NOT do is resolve ``$placeholder`` periods. It checks that
 every placeholder has somewhere to get a value from, and that every searched
-parameter is actually used, but the substitution itself belongs with the grid,
-which does not exist yet. A :class:`StrategyDef` returned from here is validated
-and not yet evaluable.
+parameter is actually used, but the substitution itself belongs with
+:mod:`strategylab.search.grid`, which produces the ``params`` mapping that
+:func:`~strategylab.core.strategy.evaluate` resolves each placeholder against,
+once per bar. A :class:`StrategyDef` returned from here is validated and carries
+its placeholders unresolved by design - one parsed definition serves every cell
+of a grid.
 
 One honest caveat about the vocabulary. The rule is that every name in it is one
-the engine implements and tests. :func:`strategylab.core.strategy.evaluate` now
+the engine implements and tests. :func:`strategylab.core.strategy.evaluate`
 implements exactly these names and refuses any other, so the two agree - but
-they agree because both were written to this list, not because any code path
-yet loads a config and evaluates it. Nothing calls both.
+they agree because both were written to this list, and NOTHING COMPARES THE TWO
+LISTS. ``strategylab search`` does now load a config and evaluate it, in one
+chain, so a divergence would surface as a failing cell rather than as a silent
+wrong answer; what is still missing is a check that would name the divergence
+instead. ``LIMITATIONS.md`` records that gap.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from strategylab.core.types import Condition, IndicatorRef, StrategyDef
+from strategylab.core.types import Condition, IndicatorRef, StrategyDef, reference_name
 
 # The schema this loader understands. A file declaring anything else is refused
 # rather than read under rules that may no longer be its own.
@@ -489,6 +495,13 @@ def _conditions(raw: Any, source: str, where: str) -> tuple[Condition, ...]:
         StrategyConfigError: If the value is not a list, is empty, or any
             condition in it is invalid. An empty list is refused because a rule
             no condition constrains fires on every bar.
+
+            Also if two conditions in this list compare against literal targets
+            that render identically at six significant figures AND ARE NOT
+            EQUAL. The same literal twice is accepted - the key carries the
+            number it already had - so only a genuinely lost value is refused.
+            See the comment on that check for why a decision log makes this a
+            config-level error.
     """
     items = _as_list(raw, source, where)
     if not items:
@@ -505,18 +518,22 @@ def _conditions(raw: Any, source: str, where: str) -> tuple[Condition, ...]:
     # the evaluation compared against would be missing from the record.
     #
     # `core.strategy` refuses it too, and deliberately - that guard covers a
-    # StrategyDef built in code, which tests do constantly. This is the same
-    # arrangement `protocol.py` uses for the window-overlap rule: the file is
-    # refused at load, and the type refuses it again for anyone who builds one
-    # by hand. The difference that makes the loader check necessary rather than
-    # redundant is WHEN it fires: the strategy module tests the entry list only
-    # on a bar where no exit condition holds, so a collision there could sit
-    # undetected through every exiting bar of a run.
+    # StrategyDef built in code, which tests do constantly.
+    #
+    # The arrangement RESEMBLES `protocol.py`'s window-overlap rule, which is
+    # refused by `load_protocol` and again by `Windows.__post_init__`, but it is
+    # weaker in one way worth naming: that second guard is a TYPE INVARIANT, so
+    # no overlapping `Windows` can exist at all. This one is not. A colliding
+    # `StrategyDef` can be constructed and held; it raises only when a list
+    # holding the pair is evaluated, and the entry list is evaluated only on a
+    # bar where no exit condition holds - so a collision there could sit
+    # undetected through every exiting bar of a run. That is precisely why the
+    # check belongs here as well, where no branch can hide it.
     seen: dict[str, float] = {}
     for index, condition in enumerate(conditions):
         if isinstance(condition.right, IndicatorRef):
             continue
-        key = f"{condition.right:.6g}"
+        key = reference_name(condition.right)
         if key in seen and seen[key] != condition.right:
             raise _fail(
                 source,
@@ -718,8 +735,11 @@ def load_strategy(path: Path) -> StrategyDef:
     returns: the schema is closed, conditions are flat and AND-combined, every
     indicator and operator is in the vocabulary this module declares, every
     ``$placeholder`` has a parameter behind it, every searched parameter is used,
-    and every parameter a condition uses as a period is a whole number of bars of
-    at least one - across the whole of its range, not merely at its start.
+    every parameter a condition uses as a period is a whole number of bars of
+    at least one - across the whole of its range, not merely at its start - and
+    no two conditions in one list compare against distinct literal targets that
+    render identically at six significant figures, which a decision log would
+    key alike and so record only one of.
 
     Periods are counts of bars, both in a condition and in a ``search`` range.
     ``$placeholder`` periods are NOT resolved here - the returned definition

@@ -34,8 +34,15 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from strategylab.core.strategy import evaluate, reference_name
-from strategylab.core.types import Action, Condition, IndicatorRef, Intent, StrategyDef
+from strategylab.core.strategy import evaluate
+from strategylab.core.types import (
+    Action,
+    Condition,
+    IndicatorRef,
+    Intent,
+    StrategyDef,
+    reference_name,
+)
 
 # The close series every unit test below is built on. Chosen so that a 2-bar and
 # a 3-bar SMA cross exactly once, at a bar far enough in to be evaluable:

@@ -23,7 +23,14 @@ from typing import NamedTuple
 
 import pandas as pd
 
-from strategylab.core.types import Action, Condition, IndicatorRef, Intent, StrategyDef
+from strategylab.core.types import (
+    Action,
+    Condition,
+    IndicatorRef,
+    Intent,
+    StrategyDef,
+    reference_name,
+)
 from strategylab.data.source import REQUIRED_COLUMNS
 
 # Operators that read the bar before the current one as well as the current one.
@@ -207,45 +214,6 @@ def required_history(definition: StrategyDef, params: dict[str, int]) -> int:
         if condition.operator in _CROSSING_OPERATORS:
             crossing = True
     return longest + (1 if crossing else 0)
-
-
-def reference_name(ref: IndicatorRef | float) -> str:
-    """Render one side of a condition as the name a decision log uses for it.
-
-    PUBLIC, AND USED FOR TWO THINGS THAT MUST AGREE: the rendered condition
-    lines in :attr:`~strategylab.core.types.Intent.conditions_met`, and the KEYS
-    of :attr:`~strategylab.core.types.Intent.indicator_values`. It was a nested
-    helper inside :func:`_render`; a second implementation would have let a
-    log's keys drift from the strings beside them, and a reader could not then
-    tell which value belonged to which condition.
-
-    It is public rather than private so that whatever builds a decision record
-    can name things the same way. NOTHING OUTSIDE THIS MODULE IMPORTS IT YET -
-    the emitter does not exist - so that is a reason for the visibility rather
-    than a description of current callers.
-
-    THE PLACEHOLDER IS NOT RESOLVED. A searched period renders as
-    ``sma($fast)`` rather than ``sma(10)``, because the parsed definition is
-    never rewritten - one definition serves every cell of a grid, and the
-    values live in the ``params`` mapping that travels with it. A reader
-    resolves the name against the parameters in the same record.
-
-    Args:
-        ref: The indicator reference, or a bare number in the units of whatever
-            it is compared against.
-
-    Returns:
-        ``indicator(period)`` for a resolved reference, ``indicator($name)``
-        for an unresolved one, ``indicator`` for one taking no period, and six
-        significant figures for a literal.
-    """
-    if not isinstance(ref, IndicatorRef):
-        return f"{ref:.6g}"
-    if ref.period is not None:
-        return f"{ref.indicator}({ref.period})"
-    if ref.period_param is not None:
-        return f"{ref.indicator}(${ref.period_param})"
-    return ref.indicator
 
 
 def _render(condition: Condition, left: float, right: float) -> str:
@@ -480,28 +448,46 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
         the question a reader of the log is asking is why nothing was bought.
 
     Raises:
-        ValueError: If either condition list is empty, since an empty AND-list
-            holds on every bar and would fire on every bar; if ``bars`` is
-            empty, is not sorted ascending, carries duplicate timestamps, lacks
-            a required column, or holds fewer rows
-            than the longest lookback needs; if ``params`` omits a placeholder
-            the definition references, OR SUPPLIES ONE THAT IS NOT a whole
-            number of bars of at least one; if a condition names an indicator or
-            operator this module does not implement; if a value needed for a
-            comparison is not finite; if the strategy can enter but does not
-            declare ``fixed.position_size_pct``, OR DECLARES ONE outside the
-            range above zero and at most one hundred; or if two conditions in
-            the list being evaluated compare against literals that render
-            identically at six significant figures.
+        ValueError: Checked BEFORE any condition is evaluated, so these raise
+            on every bar: either condition list is empty, since an empty
+            AND-list holds on every bar and would fire on every bar; ``bars`` is
+            empty, is not sorted ascending, carries duplicate timestamps, or
+            lacks a required column; the frame holds fewer rows than the longest
+            lookback needs; a period a condition references is supplied by
+            NEITHER ``params`` NOR the definition's ``fixed`` block - both are
+            consulted, in that order - or is supplied by one of them and is not
+            a whole number of bars of at least one; or a condition names an
+            indicator this module does not implement.
 
-            THAT LAST CAUSE IS CONDITIONAL ON THE BRANCH, and the wording
-            elsewhere reads as though it were not. The exit list is evaluated
-            on every bar, so a collision there raises on every bar; the entry
-            list is evaluated only when at least one exit condition fails, so a
-            collision there cannot be detected on a bar that exits.
-            :func:`~strategylab.core.config.load_strategy` refuses the same
-            pair at load time, which is where a config file meets it - this
-            guard is the backstop for a definition built in code.
+            RAISED ONLY IF THE CONDITION CARRYING THEM IS ACTUALLY EVALUATED,
+            which is not every condition on every bar: the exit list is tested
+            first and on every bar, and the ENTRY list is tested only when at
+            least one exit condition failed. So a fault in the entry list is
+            invisible on a bar that exits. Those causes are: a condition names
+            an operator this module does not implement; a value needed for a
+            comparison is not finite, at the latest bar or at the one before it;
+            two conditions in the SAME list compare against literals that render
+            identically at six significant figures AND ARE NOT EQUAL - the same
+            literal twice is fine, because the key carries the number it already
+            had; and, on the entry branch alone, the strategy can enter but does
+            not declare ``fixed.position_size_pct``, or declares one outside the
+            range above zero and at most one hundred.
+
+            :func:`~strategylab.core.config.load_strategy` refuses the literal
+            collision at load time, which is where a config file meets it and
+            where no branch can hide it. The guard here is the backstop for a
+            definition built in code.
+        AssertionError: If an ``sma`` reference reaches
+            :func:`_series` with no resolved period. Unreachable through the
+            documented path - the loader requires ``sma`` to carry one and
+            :func:`_resolve_period` raises before this - so it is an internal
+            consistency check rather than a caller's error, and it is named here
+            only because this clause claims to be exhaustive.
+        TypeError: Propagated from :class:`float` if a required column holds a
+            value that is not numeric. ``bars`` is validated for column
+            PRESENCE and ordering, not for dtype, so a column of strings reaches
+            the comparison and fails there rather than in
+            :func:`_validate_frame`.
     """
     _validate_frame(bars)
 

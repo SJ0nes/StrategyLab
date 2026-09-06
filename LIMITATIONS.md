@@ -179,9 +179,17 @@ but `core/` now produces one, and `Intent`'s docstring is where it is written
 down.
 
 **A literal comparand is a threshold, not an indicator value**, and two literals
-that render identically at six significant figures are REFUSED rather than
-silently merged. That refusal is reachable: the config loader accepts a bare
-number as a condition's `target` today, so `close above 400` is expressible now.
+that render identically at six significant figures but differ in value are
+REFUSED rather than silently merged. That refusal is reachable: the config
+loader accepts a bare number as a condition's `target` today, so `close above
+400` is expressible now.
+
+The refusal lives in TWO PLACES on purpose. `load_strategy` refuses the pair
+when a config file is read, which is where validation is declared complete;
+`core.evaluate` refuses it again for a `StrategyDef` built in code. The loader
+is the one that matters, because the evaluator inspects the entry list only on
+a bar where no exit condition holds - so a collision there could otherwise sit
+undetected through every exiting bar of a run.
 
 **The engine's fill convention is a decision, not a detail.** A signal computed
 from bar `t`'s close is filled at bar `t+1`'s OPEN. Filling at the same close

@@ -96,10 +96,18 @@ class BacktestResult:
             log can be diffed - which is the whole reason ``strategylab diff``
             can exist. ``DecisionRecord`` there carries sixteen fields including
             the ticker, the risk verdict, the protocol version and the indicator
-            values; this frame carries seven and is built ad hoc. Both are
-            stubs of the same idea, and one of them has a body. When
-            ``logging/`` is built these must converge on ITS schema, not on
-            this one.
+            values; this frame carries seven and is built ad hoc.
+
+            ``logging/`` IS NOW BUILT, tested and reachable, and this frame has
+            not converged on it. The obligation is unchanged and its direction
+            is unchanged - these must converge on THAT schema, not on this one -
+            but the reason they have not is no longer that one of them is
+            missing. What blocks it is that ``risk_verdict``, ``risk_reason``
+            and ``approved_size_pct`` describe a gate ``risk/limits.py`` does
+            not yet implement, and this frame carries three columns
+            ``DecisionRecord`` deliberately does not: the position, the cash and
+            the equity, which are account state rather than a decision.
+            ``LIMITATIONS.md`` records both.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a

@@ -74,6 +74,47 @@ class IndicatorRef:
             )
 
 
+def reference_name(ref: IndicatorRef | float) -> str:
+    """Render one side of a condition as the name a decision log uses for it.
+
+    ONE FUNCTION, THREE CALLERS THAT MUST AGREE: the rendered condition lines in
+    :attr:`Intent.conditions_met`; the KEYS of :attr:`Intent.indicator_values`
+    and :attr:`Intent.thresholds`; and the loader's refusal of two literals that
+    would share a key. It lived in :mod:`strategylab.core.strategy` and the
+    loader open-coded its literal branch, which put a second implementation
+    beside it - the exact drift this function was made public to prevent. It
+    lives here because ``types`` is what both of those modules already import.
+
+    THE PLACEHOLDER IS NOT RESOLVED. A searched period renders as ``sma($fast)``
+    rather than ``sma(10)``, because the parsed definition is never rewritten -
+    one definition serves every cell of a grid - and the values live in the
+    ``params`` mapping that travels with it. A reader resolves the name against
+    the parameters in the same record.
+
+    SIX SIGNIFICANT FIGURES IS NOT INJECTIVE over floats, so two distinct
+    literals can render alike. That is a real hazard for a mapping keyed by this
+    function, and it is refused rather than tolerated - by
+    :func:`~strategylab.core.config.load_strategy` for a config file, and by
+    :func:`~strategylab.core.strategy.evaluate` for a definition built in code.
+
+    Args:
+        ref: The indicator reference, or a bare number in the units of whatever
+            it is compared against.
+
+    Returns:
+        ``indicator(period)`` for a resolved reference, ``indicator($name)`` for
+        an unresolved one, ``indicator`` for one taking no period, and six
+        significant figures for a literal.
+    """
+    if not isinstance(ref, IndicatorRef):
+        return f"{ref:.6g}"
+    if ref.period is not None:
+        return f"{ref.indicator}({ref.period})"
+    if ref.period_param is not None:
+        return f"{ref.indicator}(${ref.period_param})"
+    return ref.indicator
+
+
 @dataclass(frozen=True)
 class Condition:
     """One condition from a strategy's flat, AND-combined condition list.
@@ -183,8 +224,14 @@ class Intent:
             not support.
 
             Two literals that render identically at six significant figures
-            would share a key, and :func:`~strategylab.core.strategy.evaluate`
-            REFUSES that rather than letting one replace the other.
+            would share a key, and that is REFUSED rather than tolerated - in
+            two places, deliberately. A config file meets
+            :func:`~strategylab.core.config.load_strategy`, which is where
+            validation is declared complete; a definition built in code meets
+            :func:`~strategylab.core.strategy.evaluate`, which is the backstop.
+            The loader is the one that matters in practice, because the
+            evaluator inspects the entry list only on a bar where no exit
+            condition holds.
     """
 
     action: Action
