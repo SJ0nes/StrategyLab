@@ -95,10 +95,10 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
 | `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 52 |
 | `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 41 |
-| `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. NOTHING EMITS IT YET. | 104 |
+| `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. NOTHING EMITS IT YET. | 143 |
 | `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**875 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 104. Run `uv run pytest` to see the
+**914 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

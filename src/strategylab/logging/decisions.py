@@ -34,14 +34,18 @@ refuse what the other would not have produced. A reader looser than its writer
 is a reader that accepts logs this project cannot have written, and then ``diff``
 compares one of them against a real one.
 
-TWO DELIBERATE DIVERGENCES FROM :mod:`strategylab.search.graveyard`, the other
+ONE DELIBERATE DIVERGENCE FROM :mod:`strategylab.search.graveyard`, the other
 append-only JSON Lines writer here, stated because a reader of both will
-otherwise assume they agree. A non-finite metric there becomes JSON ``null`` and
-is argued for; a non-finite float HERE is refused, because a metric that could
-not be computed is a fact worth recording while an indicator value that is not a
-number means the evaluation read garbage and no decision should have followed.
-Key sorting is the same in both, for the same reason: the bytes of a line are a
-function of the record alone.
+otherwise assume they agree throughout. A non-finite metric THERE becomes JSON
+``null`` and is argued for; a non-finite float HERE is refused, because a metric
+that could not be computed is a fact worth recording, while an indicator value
+that is not a number means the evaluation read garbage and no decision should
+have followed it.
+
+Everything else the two once differed on now agrees, and deliberately: keys are
+sorted in both, so the bytes of a line are a function of the record alone, and
+both translate a value json cannot represent into a ``ValueError`` rather than
+letting a ``TypeError`` escape a clause that does not admit it.
 
 WHAT IT DOES NOT GUARANTEE. It does not decide how ``indicator_values`` and
 ``thresholds`` are KEYED - it serialises whatever mapping it is handed. The
@@ -82,6 +86,29 @@ SCHEMA_VERSION: int = 1
 #: write: ``diff`` pairs a backtest log against a live one, and a third value
 #: appearing would mean one side of that pair was something nobody designed for.
 SOURCES: frozenset[str] = frozenset({"backtest", "live"})
+
+#: Every field a line carries besides ``schema_version``, which is handled
+#: separately because it gates everything else. Named once and used twice - for
+#: the presence check and for the unknown-key refusal - so a field added to
+#: :class:`DecisionRecord` and forgotten here fails both ways rather than
+#: silently becoming optional in one direction and forbidden in the other.
+_FIELDS: tuple[str, ...] = (
+    "bar_timestamp",
+    "recorded_at",
+    "source",
+    "ticker",
+    "action",
+    "indicator_values",
+    "thresholds",
+    "conditions_met",
+    "conditions_failed",
+    "requested_size_pct",
+    "approved_size_pct",
+    "risk_verdict",
+    "risk_reason",
+    "params",
+    "protocol_version",
+)
 
 
 @dataclass(frozen=True)
@@ -200,6 +227,145 @@ def _payload(record: DecisionRecord) -> dict[str, Any]:
     }
 
 
+def _finite_number(value: Any, field: str) -> None:
+    """Refuse anything that is not a finite real number.
+
+    Not ``float(value)``: ``float(True)`` is ``1.0`` and ``float("95.0")`` is
+    ``95.0``, so coercing accepts values the reader refuses.
+
+    ``math.isfinite`` is applied only to floats. An ``int`` is always finite,
+    and calling it on a very large one raises ``OverflowError`` - a type
+    neither this module's contracts nor its callers admit.
+
+    Args:
+        value: The value to check.
+        field: Field name, for the message.
+
+    Raises:
+        ValueError: If it is a bool, is not a number, or is not finite.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"'{field}' is {value!r}, which is not a number")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(
+            f"'{field}' is {value}, which is not finite; a decision made on a value that "
+            "is not a number is not a decision"
+        )
+
+
+def _validate(record: DecisionRecord) -> None:
+    """Refuse any record the reader would not accept back.
+
+    THE WRITE PATH MIRRORS THE READ PATH FIELD FOR FIELD, and an earlier version
+    did not. The reader was hardened first and the writer was left with three
+    guards, so it would cleanly write seven kinds of value its own reader then
+    refused - a ``ticker`` of ``5``, a ``protocol_version`` of ``1.9``, a
+    ``schema_version`` of ``True``. A writer that can produce a log its reader
+    rejects is a writer that can strand a run's decisions in an unreadable file,
+    which is the one outcome an append-only log has no recovery from.
+
+    The tuple check is the fourth round-trip breaker. ``conditions_met=["a"]``
+    is constructible - the dataclass annotation stops nothing at runtime -
+    writes cleanly, and reads back as ``("a",)``, which compares unequal to what
+    went in. That is the exact failure :func:`_strings` exists to prevent,
+    arriving from the other side.
+
+    Args:
+        record: The record to check.
+
+    Raises:
+        ValueError: On the first field that would not survive the round trip or
+            that the reader would refuse. Every message names the field and the
+            offending value.
+    """
+    if isinstance(record.schema_version, bool) or not isinstance(record.schema_version, int):
+        raise ValueError(
+            f"schema_version is {record.schema_version!r}, which is not an integer. "
+            "`True == 1` in Python, so an equality test alone would let it through here "
+            "and the reader would then refuse the line this wrote"
+        )
+    if record.schema_version != SCHEMA_VERSION:
+        raise ValueError(
+            f"schema_version is {record.schema_version}, and this build writes version "
+            f"{SCHEMA_VERSION}. Writing a version this code does not produce would put two "
+            "shapes in one append-only file"
+        )
+
+    for field, value in (
+        ("source", record.source),
+        ("ticker", record.ticker),
+        ("risk_verdict", record.risk_verdict),
+        ("risk_reason", record.risk_reason),
+    ):
+        if not isinstance(value, str):
+            raise ValueError(f"'{field}' is {value!r}, which is not a string")
+
+    # Checked AFTER the type check above, because `SOURCES` is a frozenset and
+    # an unhashable source - a list, say - would raise TypeError on the
+    # membership test before any guard could name the field.
+    if record.source not in SOURCES:
+        raise ValueError(
+            f"source is {record.source!r}, which is not one of {sorted(SOURCES)}; `diff` "
+            "pairs a backtest log against a live one and has no third case"
+        )
+
+    if not isinstance(record.action, Action):
+        raise ValueError(
+            f"action is {record.action!r}, which is not an Action; the record would fail "
+            "on the way to JSON with an error naming neither the field nor the log"
+        )
+
+    for field, stamps in (
+        ("bar_timestamp", record.bar_timestamp),
+        ("recorded_at", record.recorded_at),
+    ):
+        if not isinstance(stamps, datetime):
+            raise ValueError(f"'{field}' is {stamps!r}, which is not a datetime")
+
+    for field, conditions in (
+        ("conditions_met", record.conditions_met),
+        ("conditions_failed", record.conditions_failed),
+    ):
+        if not isinstance(conditions, tuple):
+            raise ValueError(
+                f"'{field}' is a {type(conditions).__name__}, not a tuple. JSON has one "
+                "array type, so a list would be written and read back as a tuple - and the "
+                "record would compare unequal to the one written"
+            )
+        for item in conditions:
+            if not isinstance(item, str):
+                raise ValueError(f"'{field}' holds {item!r}, which is not a string")
+
+    _finite_number(record.requested_size_pct, "requested_size_pct")
+    _finite_number(record.approved_size_pct, "approved_size_pct")
+
+    if isinstance(record.protocol_version, bool) or not isinstance(record.protocol_version, int):
+        raise ValueError(
+            f"protocol_version is {record.protocol_version!r}, which is not an integer"
+        )
+
+    for field, mapping in (
+        ("indicator_values", record.indicator_values),
+        ("thresholds", record.thresholds),
+        ("params", record.params),
+    ):
+        if not isinstance(mapping, dict):
+            raise ValueError(f"'{field}' is a {type(mapping).__name__}, not a mapping")
+        _string_keys(mapping, field)
+
+    for field, mapping in (
+        ("indicator_values", record.indicator_values),
+        ("thresholds", record.thresholds),
+    ):
+        for name, price in mapping.items():
+            _finite_number(price, f"{field}.{name}")
+
+    for name, period in record.params.items():
+        _finite_number(period, f"params.{name}")
+        if period != int(period):
+            raise ValueError(f"'params.{name}' is {period!r}, which is not a whole number of bars")
+
+
 def _string_keys(mapping: dict[str, Any], field: str) -> None:
     """Refuse a mapping whose keys are not all strings.
 
@@ -280,25 +446,12 @@ def _line(record: DecisionRecord) -> str:
             a ``TypeError`` and is re-raised as a ``ValueError`` rather than
             escaping a clause that does not admit it.
     """
-    if record.source not in SOURCES:
-        raise ValueError(
-            f"source is {record.source!r}, which is not one of {sorted(SOURCES)}; `diff` "
-            "pairs a backtest log against a live one and has no third case"
-        )
-    if record.schema_version != SCHEMA_VERSION:
-        raise ValueError(
-            f"schema_version is {record.schema_version}, and this build writes version "
-            f"{SCHEMA_VERSION}. Writing a version this code does not produce would put two "
-            "shapes in one append-only file"
-        )
-    # Checked rather than trusted: the dataclass is not runtime-typed, so
-    # `action="hold"` is constructible and would reach `.value` as an
-    # AttributeError - a type this function's contract does not admit.
-    if not isinstance(record.action, Action):
-        raise ValueError(
-            f"action is {record.action!r}, which is not an Action; the record would fail "
-            "on the way to JSON with an error naming neither the field nor the log"
-        )
+    # Every field is checked against what the reader will accept, before
+    # anything here touches an attribute. `_validate` is where the write path
+    # and the read path are kept in step; this function adds only the checks
+    # that are about the LOG rather than about the record - the two timestamp
+    # frames, and the precision a line of text can carry.
+    _validate(record)
 
     # The two frames, checked rather than assumed. A naive `recorded_at` cannot
     # be compared against another machine's, and an aware `bar_timestamp` would
@@ -379,11 +532,17 @@ def write_decision(record: DecisionRecord, path: Path = DEFAULT_DECISION_LOG_PAT
         None.
 
     Raises:
-        ValueError: If ``record.source`` is neither ``backtest`` nor ``live``,
-            if ``record.schema_version`` does not match :data:`SCHEMA_VERSION`,
-            if ``recorded_at`` is timezone-naive or ``bar_timestamp`` is
-            timezone-aware, or if the record holds a non-finite float. Nothing
-            is written in any of these cases.
+        ValueError: On any record :func:`read_decisions` would refuse to read
+            back, which is the whole of what :func:`_validate` checks - a
+            ``source`` outside :data:`SOURCES`, a ``schema_version`` that is not
+            exactly :data:`SCHEMA_VERSION` as an ``int``, a field of the wrong
+            type, a condition list that is not a tuple of strings, a mapping
+            with a non-string key, a non-finite number, or a ``params`` value
+            that is not a whole number of bars. Also on the two frame rules:
+            ``recorded_at`` must be timezone-aware AND at UTC, and
+            ``bar_timestamp`` must be naive; and on a timestamp carrying
+            precision finer than a microsecond. NOTHING IS WRITTEN in any of
+            these cases - the line is rendered before the file is opened.
         OSError: Propagated unchanged if the file cannot be written.
     """
     write_decisions((record,), path)
@@ -475,7 +634,9 @@ def _number(payload: dict[str, Any], key: str, line_number: int) -> float:
     value = payload[key]
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a number")
-    if not math.isfinite(value):
+    # Only floats. An int is always finite, and `math.isfinite` on a JSON
+    # integer literal too large for a float raises OverflowError.
+    if isinstance(value, float) and not math.isfinite(value):
         raise ValueError(
             f"line {line_number}: '{key}' is {value}, which is not finite; the writer "
             "refuses to produce one, so a log carrying it was not written by this project"
@@ -502,7 +663,14 @@ def _whole(payload: dict[str, Any], key: str, line_number: int) -> int:
         ValueError: If it is not a whole number.
     """
     value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a whole number")
+    # BEFORE `int(value)`, which raises OverflowError on an infinity and a
+    # line-less ValueError on a NaN - two types this module's contracts do not
+    # admit. `json.loads` accepts both tokens, so both are reachable.
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"line {line_number}: '{key}' is {value}, which is not finite")
+    if value != int(value):
         raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a whole number")
     return int(value)
 
@@ -537,6 +705,21 @@ def _stamp(payload: dict[str, Any], key: str, line_number: int, *, aware: bool) 
         stamp = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise ValueError(f"line {line_number}: '{key}' is not ISO 8601: {exc}") from exc
+
+    # THE READ-SIDE COUNTERPART TO `_round_trippable`. On Python 3.11+
+    # `fromisoformat` accepts a fractional part longer than six digits and
+    # TRUNCATES it rather than raising, so a hand-edited or foreign log carrying
+    # nanoseconds would read back silently short - the exact thing the writer
+    # refuses, arriving through the door the writer does not guard. The
+    # fractional part is measured rather than the whole string compared, so a
+    # legitimate `Z` suffix is still accepted.
+    fraction = raw.partition(".")[2]
+    digits = len(fraction) - len(fraction.lstrip("0123456789")) if fraction else 0
+    if digits > 6:
+        raise ValueError(
+            f"line {line_number}: '{key}' carries {digits} fractional digits and a "
+            "datetime holds six; reading it would truncate the value silently"
+        )
 
     if aware:
         if stamp.tzinfo is None:
@@ -576,7 +759,7 @@ def _floats(raw: Any, field: str, line_number: int) -> dict[str, float]:
             raise ValueError(
                 f"line {line_number}: '{field}.{name}' is {value!r}, which is not a number"
             )
-        if not math.isfinite(value):
+        if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(
                 f"line {line_number}: '{field}.{name}' is {value}, which is not finite. "
                 "The writer refuses to produce one - an indicator value that is not a "
@@ -642,29 +825,23 @@ def _record(payload: Any, line_number: int) -> DecisionRecord:
             f"version {SCHEMA_VERSION}"
         )
 
-    missing = [
-        key
-        for key in (
-            "bar_timestamp",
-            "recorded_at",
-            "source",
-            "ticker",
-            "action",
-            "indicator_values",
-            "thresholds",
-            "conditions_met",
-            "conditions_failed",
-            "requested_size_pct",
-            "approved_size_pct",
-            "risk_verdict",
-            "risk_reason",
-            "params",
-            "protocol_version",
-        )
-        if key not in payload
-    ]
+    missing = [key for key in _FIELDS if key not in payload]
     if missing:
         raise ValueError(f"line {line_number}: missing field(s) {missing}")
+
+    # UNKNOWN KEYS ARE REFUSED, NOT IGNORED. `_payload`'s contract says the two
+    # halves must stay in step, and a reader that drops what it does not
+    # recognise keeps that promise in one direction only: a field added to the
+    # writer and not here would vanish from every record with nothing said. The
+    # version gate above is what makes this safe - a future shape arrives with a
+    # different `schema_version` and is refused by that, not by this.
+    unknown = sorted(set(payload) - set(_FIELDS) - {"schema_version"})
+    if unknown:
+        raise ValueError(
+            f"line {line_number}: unexpected field(s) {unknown}. This build reads schema "
+            f"version {SCHEMA_VERSION}, whose fields are fixed; a line carrying more was "
+            "not written by it"
+        )
 
     try:
         action = Action(payload["action"])
@@ -682,7 +859,15 @@ def _record(payload: Any, line_number: int) -> DecisionRecord:
         raise ValueError(f"line {line_number}: 'params' is not an object")
     params: dict[str, int] = {}
     for name, value in params_raw.items():
-        if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError(
+                f"line {line_number}: 'params.{name}' is {value!r}, which is not a whole "
+                "number of bars"
+            )
+        # Before int(), for the reason `_whole` gives.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"line {line_number}: 'params.{name}' is {value}, which is not finite")
+        if value != int(value):
             raise ValueError(
                 f"line {line_number}: 'params.{name}' is {value!r}, which is not a whole "
                 "number of bars"

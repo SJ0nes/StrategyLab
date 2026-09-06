@@ -46,8 +46,15 @@ RECORDED = datetime(2024, 3, 15, 21, 5, 30, 123456, tzinfo=UTC)
 # value at six significant figures, the operator, the same for the right side.
 # 412.3456 at `:.6g` is 412.346, which is why the string and the mapping below
 # differ in their last digit.
+# HOLD: the crossover holds (412.346 > 405.125) and the trend filter does not
+# (414 is not above 418.5), which is why the record is a HOLD and not an entry.
 CROSSOVER = "sma(10)=412.346 crosses_above sma(80)=405.125"
-TREND_FILTER = "close=414 above sma(150)=418.5"
+TREND_FILTER_FAILED = "close=414 above sma(150)=418.5"
+# ENTER_LONG: the same crossover, and a trend filter that actually passes -
+# 422 IS above 418.5. The entry list is AND-combined, so every string in
+# `conditions_met` has to be a comparison that holds.
+TREND_FILTER_MET = "close=422 above sma(150)=418.5"
+# EXIT_LONG: the fast average below the slow one, 401.5 < 405.125.
 EXIT_CROSSOVER = "sma(10)=401.5 crosses_below sma(80)=405.125"
 
 
@@ -82,7 +89,7 @@ def _record(**overrides: Any) -> DecisionRecord:
         },
         "thresholds": {"sma_fast": 405.125, "close": 418.5},
         "conditions_met": (CROSSOVER,),
-        "conditions_failed": (TREND_FILTER,),
+        "conditions_failed": (TREND_FILTER_FAILED,),
         # Zero on a HOLD, per `Intent.size_pct`: "Zero when action is HOLD or
         # EXIT_LONG".
         "requested_size_pct": 0.0,
@@ -104,38 +111,88 @@ def _for_action(action: Action) -> DecisionRecord:
     nothing in their list failed; HOLD is the branch that carries failures.
     """
     if action is Action.ENTER_LONG:
+        # `close` rises to 422 so the trend filter genuinely passes. Carrying
+        # the HOLD's 414 while claiming the condition was met was the defect
+        # here: 414 is not above 418.5, and the guard below now says so.
         return _record(
             action=action,
-            conditions_met=(CROSSOVER, TREND_FILTER),
+            indicator_values={
+                "sma_fast": 412.3456,
+                "sma_slow": 405.125,
+                "close": 422.0,
+                "sma_trend": 418.5,
+            },
+            conditions_met=(CROSSOVER, TREND_FILTER_MET),
             conditions_failed=(),
             requested_size_pct=95.0,
             approved_size_pct=95.0,
         )
     if action is Action.EXIT_LONG:
+        # The fast average has fallen through the slow one, so `sma_fast` is
+        # 401.5 here and not the 412.3456 the other two carry.
         return _record(
             action=action,
+            indicator_values={
+                "sma_fast": 401.5,
+                "sma_slow": 405.125,
+                "close": 414.0,
+                "sma_trend": 418.5,
+            },
             conditions_met=(EXIT_CROSSOVER,),
             conditions_failed=(),
         )
     return _record()
 
 
+def _comparison(rendered: str) -> tuple[float, str, float]:
+    """Pull the two values and the operator out of a rendered condition.
+
+    `core.strategy._render` writes `name=value operator name=value`, so the
+    numbers a condition was decided on are recoverable from the string a log
+    carries. That is what makes the guard below able to check the arithmetic
+    rather than only the shape.
+    """
+    left, operator, right = rendered.split(" ")
+    return float(left.split("=")[1]), operator, float(right.split("=")[1])
+
+
 def test_the_fixtures_are_records_evaluate_could_actually_return() -> None:
     # Guards the worked example against drifting back into an impossible shape.
-    # An ENTER_LONG beside a failed AND-ed entry condition is the case this
-    # caught, and it is the schema's only illustration in the repository.
+    # It is the schema's only illustration in the repository, and it has been
+    # wrong twice: first an ENTER_LONG beside a failed AND-ed entry condition,
+    # then an ENTER_LONG whose "met" condition read `close=414 above
+    # sma(150)=418.5` - which is false. The first version of this guard checked
+    # WHICH LIST was empty and never the numbers in it, so it was green on the
+    # second defect. It now checks both.
     for action in Action:
         record = _for_action(action)
         assert record.action is action
+
         if action is Action.HOLD:
             assert record.conditions_failed, "a HOLD is explained by its failures"
-            assert record.requested_size_pct == 0.0
         else:
             assert not record.conditions_failed, (
                 "evaluate reaches this branch only when nothing in the list failed"
             )
-        if action is Action.EXIT_LONG:
-            assert record.requested_size_pct == 0.0
+        if action is not Action.ENTER_LONG:
+            assert record.requested_size_pct == 0.0, "size is zero on a HOLD and an exit"
+
+        # THE ARITHMETIC, not just the shape. A rendered condition carries the
+        # two values it was decided on, so a string filed under `conditions_met`
+        # must state a comparison that actually holds - and one under
+        # `conditions_failed` must state one that does not.
+        for rendered in record.conditions_met:
+            left, operator, right = _comparison(rendered)
+            if operator == "crosses_below":
+                assert left < right, f"{rendered!r} is filed as met and does not hold"
+            else:
+                assert left > right, f"{rendered!r} is filed as met and does not hold"
+        for rendered in record.conditions_failed:
+            left, operator, right = _comparison(rendered)
+            if operator == "crosses_below":
+                assert not left < right, f"{rendered!r} is filed as failed and holds"
+            else:
+                assert not left > right, f"{rendered!r} is filed as failed and holds"
 
 
 # --------------------------------------------------------------------------
@@ -167,24 +224,27 @@ def test_the_line_on_disk_is_exactly_this(tmp_path: Path) -> None:
     path = tmp_path / "decisions.jsonl"
     write_decision(_record(), path)
 
-    assert path.read_text(encoding="utf-8") == (
-        '{"action": "hold", '
-        '"approved_size_pct": 0.0, '
-        '"bar_timestamp": "2024-03-15T00:00:00", '
-        '"conditions_failed": ["close=414 above sma(150)=418.5"], '
-        '"conditions_met": ["sma(10)=412.346 crosses_above sma(80)=405.125"], '
-        '"indicator_values": {"close": 414.0, "sma_fast": 412.3456, '
-        '"sma_slow": 405.125, "sma_trend": 418.5}, '
-        '"params": {"fast": 10, "slow": 80, "trend": 150}, '
-        '"protocol_version": 1, '
-        '"recorded_at": "2024-03-15T21:05:30.123456+00:00", '
-        '"requested_size_pct": 0.0, '
-        '"risk_reason": "no limit bound", '
-        '"risk_verdict": "allow", '
-        '"schema_version": 1, '
-        '"source": "backtest", '
-        '"thresholds": {"close": 418.5, "sma_fast": 405.125}, '
-        '"ticker": "SPY"}\n'
+    # BYTES, not text: `read_text` translates CRLF to LF on Windows and would
+    # hide a wrong line terminator - which is part of the on-disk format this
+    # test exists to pin.
+    assert path.read_bytes() == (
+        b'{"action": "hold", '
+        b'"approved_size_pct": 0.0, '
+        b'"bar_timestamp": "2024-03-15T00:00:00", '
+        b'"conditions_failed": ["close=414 above sma(150)=418.5"], '
+        b'"conditions_met": ["sma(10)=412.346 crosses_above sma(80)=405.125"], '
+        b'"indicator_values": {"close": 414.0, "sma_fast": 412.3456, '
+        b'"sma_slow": 405.125, "sma_trend": 418.5}, '
+        b'"params": {"fast": 10, "slow": 80, "trend": 150}, '
+        b'"protocol_version": 1, '
+        b'"recorded_at": "2024-03-15T21:05:30.123456+00:00", '
+        b'"requested_size_pct": 0.0, '
+        b'"risk_reason": "no limit bound", '
+        b'"risk_verdict": "allow", '
+        b'"schema_version": 1, '
+        b'"source": "backtest", '
+        b'"thresholds": {"close": 418.5, "sma_fast": 405.125}, '
+        b'"ticker": "SPY"}\n'
     )
 
 
@@ -468,16 +528,145 @@ def test_an_action_that_is_not_an_action_is_refused(tmp_path: Path) -> None:
         write_decision(_record(action="hold"), path)
 
 
-def test_a_value_json_cannot_represent_is_refused_as_a_value_error(
+def test_a_value_json_cannot_represent_is_refused_by_its_own_field_check(
     tmp_path: Path,
 ) -> None:
-    # json.dumps raises TypeError for a set, a Decimal, an enum. Translated
-    # rather than propagated, as graveyard.py does, so it does not escape a
-    # Raises clause that admits only ValueError and OSError.
+    # A set in a string field would raise TypeError out of json.dumps. It never
+    # gets there: the field type check refuses it first, and names the field,
+    # which json's own message does not.
+    #
+    # The `except (TypeError, ValueError)` around json.dumps is now a BACKSTOP
+    # that `_validate` should make unreachable - every field is type-checked
+    # before it. An unreachable branch cannot be tested without breaking the
+    # thing that makes it unreachable, so this test pins the reachable
+    # behaviour and says why the other is not pinned.
     path = tmp_path / "decisions.jsonl"
 
-    with pytest.raises(ValueError, match="not serialisable as JSON"):
+    with pytest.raises(ValueError, match="is not a string"):
         write_decision(_record(risk_reason={"unserialisable"}), path)
+
+
+# --------------------------------------------------------------------------
+# The write path mirrors the read path. It did not: the reader was hardened
+# first, so the writer would cleanly emit seven kinds of value its own reader
+# then refused - which strands a run's decisions in an unreadable file.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_a_schema_version_equal_to_one_by_coercion_is_refused_on_write(
+    tmp_path: Path, version: Any
+) -> None:
+    # `True != 1` is False, so an equality test alone let this through the
+    # WRITER while the reader refused the very line it produced. The argument
+    # was written down on one side only.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not an integer"):
+        write_decision(_record(schema_version=version), path)
+
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("field", ["source", "ticker", "risk_verdict", "risk_reason"])
+@pytest.mark.parametrize("value", [None, 5, ["backtest"]])
+def test_a_text_field_that_is_not_a_string_is_refused_on_write(
+    tmp_path: Path, field: str, value: Any
+) -> None:
+    # `["backtest"]` is the sharp one: `SOURCES` is a frozenset, so an
+    # unhashable source raised TypeError on the membership test before any
+    # guard could name the field.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="is not a string"):
+        write_decision(_record(**{field: value}), path)
+
+
+@pytest.mark.parametrize("field", ["conditions_met", "conditions_failed"])
+def test_a_condition_list_that_is_not_a_tuple_is_refused(tmp_path: Path, field: str) -> None:
+    # THE FOURTH ROUND-TRIP BREAKER. A list writes cleanly and reads back as a
+    # tuple, so the record compares unequal to itself - the exact failure the
+    # reader's tuple conversion exists to prevent, arriving from the other side.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a tuple"):
+        write_decision(_record(**{field: ["close above sma"]}), path)
+
+
+def test_a_condition_list_holding_a_non_string_is_refused_on_write(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="is not a string"):
+        write_decision(_record(conditions_met=("fine", 7)), path)
+
+
+@pytest.mark.parametrize("value", [1.9, True, "1", None])
+def test_a_protocol_version_that_is_not_an_integer_is_refused_on_write(
+    tmp_path: Path, value: Any
+) -> None:
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not an integer"):
+        write_decision(_record(protocol_version=value), path)
+
+
+@pytest.mark.parametrize("value", [True, "95.0", None])
+def test_a_size_that_is_not_a_number_is_refused_on_write(tmp_path: Path, value: Any) -> None:
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a number"):
+        write_decision(_record(requested_size_pct=value), path)
+
+
+def test_a_fractional_parameter_is_refused_on_write(tmp_path: Path) -> None:
+    # `params` is annotated dict[str, int] and documented as bars. The writer
+    # accepted 1.5 bars; the reader did not.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a whole number of bars"):
+        write_decision(_record(params={"fast": 1.5}), path)
+
+
+@pytest.mark.parametrize("field", ["indicator_values", "thresholds"])
+def test_a_non_numeric_indicator_value_is_refused_on_write(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a number"):
+        write_decision(_record(**{field: {"sma_fast": "412.3"}}), path)
+
+
+@pytest.mark.parametrize("field", ["indicator_values", "thresholds", "params"])
+def test_a_mapping_that_is_not_a_mapping_is_refused(tmp_path: Path, field: str) -> None:
+    # `dict(5)` raises TypeError - "'int' object is not iterable" - from
+    # outside the block that translates it.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a mapping"):
+        write_decision(_record(**{field: 5}), path)
+
+
+@pytest.mark.parametrize("field", ["bar_timestamp", "recorded_at"])
+def test_a_timestamp_that_is_not_a_datetime_is_refused(tmp_path: Path, field: str) -> None:
+    # A string would reach `.tzinfo` as an AttributeError, a type the contract
+    # does not admit.
+    path = tmp_path / "decisions.jsonl"
+
+    with pytest.raises(ValueError, match="not a datetime"):
+        write_decision(_record(**{field: "2024-03-15"}), path)
+
+
+def test_a_record_the_writer_accepts_is_always_readable(tmp_path: Path) -> None:
+    # THE PROPERTY ALL OF THE ABOVE EXIST FOR, stated once as a test. Every
+    # record that survives the writer must survive the reader; an append-only
+    # log has no recovery from a line it cannot read back.
+    path = tmp_path / "decisions.jsonl"
+    records = [_for_action(action) for action in Action]
+
+    write_decisions(records, path)
+
+    assert read_decisions(path) == records
 
 
 def test_one_bad_record_in_a_batch_writes_none_of_them(tmp_path: Path) -> None:
@@ -770,6 +959,66 @@ def test_a_schema_version_equal_to_one_by_coercion_is_refused(tmp_path: Path, ve
     # and the reader would launder them into the int 1.
     with pytest.raises(ValueError, match="schema_version"):
         read_decisions(_corrupt(tmp_path, schema_version=version))
+
+
+def test_an_unexpected_field_in_a_log_is_refused(tmp_path: Path) -> None:
+    # Ignored silently before. `_payload`'s contract says the writer and the
+    # reader must stay in step, and a reader that drops what it does not know
+    # keeps that in one direction only - a field added to the writer and not
+    # the reader would vanish from every record with nothing said. The version
+    # gate is what makes refusing safe: a future shape arrives with a different
+    # schema_version and is caught by that instead.
+    with pytest.raises(ValueError, match="unexpected field"):
+        read_decisions(_corrupt(tmp_path, surprise="extra"))
+
+
+def test_a_sub_microsecond_timestamp_in_a_log_is_refused(tmp_path: Path) -> None:
+    # MEASURED: on Python 3.11+ `fromisoformat` accepts more than six fractional
+    # digits and TRUNCATES rather than raising, so this read back silently short
+    # - the exact thing the writer refuses, arriving through the door the writer
+    # does not guard.
+    with pytest.raises(ValueError, match="fractional digits"):
+        read_decisions(_corrupt(tmp_path, bar_timestamp="2024-03-15T00:00:00.000000001"))
+
+
+def test_a_z_suffixed_timestamp_is_still_accepted(tmp_path: Path) -> None:
+    # The precision guard measures the fractional part rather than comparing the
+    # whole string, so a legitimate `Z` is not collateral damage.
+    path = _corrupt(tmp_path, recorded_at="2024-03-15T21:05:30.123456Z")
+
+    assert read_decisions(path)[0].recorded_at == RECORDED
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity"])
+def test_a_non_finite_protocol_version_is_refused_without_crashing(
+    tmp_path: Path, token: str
+) -> None:
+    # `int(inf)` raises OverflowError and `int(nan)` raises a ValueError with no
+    # line number - two types read_decisions does not admit. Both tokens are
+    # reachable because json.loads accepts them.
+    sentinel = "-987654"
+    payload = json.loads(_line_of(_record(protocol_version=int(sentinel))))
+    text = json.dumps(payload)
+    assert sentinel in text
+
+    path = tmp_path / "decisions.jsonl"
+    path.write_text(text.replace(sentinel, token) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not finite"):
+        read_decisions(path)
+
+
+def test_a_non_finite_parameter_is_refused_without_crashing(tmp_path: Path) -> None:
+    sentinel = "-987654"
+    payload = json.loads(_line_of(_record(params={"fast": int(sentinel)})))
+    text = json.dumps(payload)
+    assert sentinel in text
+
+    path = tmp_path / "decisions.jsonl"
+    path.write_text(text.replace(sentinel, "NaN") + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not finite"):
+        read_decisions(path)
 
 
 def _line_of(record: DecisionRecord) -> str:
