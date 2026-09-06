@@ -348,9 +348,12 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             "machines carries a username into a file this repository may publish"
         )
     # REPOSITORY-RELATIVE IS THE PROMISE, and "not absolute" is weaker than it.
-    # `../../Users/<name>/configs/x.yaml` is relative under both flavours,
-    # passes every check above, and carries exactly the username those checks
-    # exist to stop - into the verdict, verbatim.
+    # A path climbing out with `..` is relative under both flavours, passes
+    # every check above, and can still land in a home directory - carrying
+    # exactly the username those checks exist to stop, into the verdict,
+    # verbatim. (No example is spelled out here: this repository's hygiene gate
+    # refuses a home-shaped path in any tracked file, and a comment is a tracked
+    # file. `tests/test_candidate.py` exercises the real forms.)
     if ".." in windows_form.parts or ".." in PurePosixPath(config).parts:
         raise CandidateError(
             f"search artifact '{path.as_posix()}' names its config as '{config}', which "
