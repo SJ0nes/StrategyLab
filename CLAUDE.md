@@ -43,13 +43,25 @@ strategy — there will never be enough live trades to judge a strategy.
 ## Units — the rule that has already caused one bug
 Rates cross a unit boundary exactly once, and the boundary is `load_protocol`.
 
+**The boundary applies to the `costs:` block. It does not apply to `validation:`.**
+The rule is about RATES becoming fractions, and the two percentage thresholds in
+`validation:` are not rates — nothing multiplies them by a price. State the scope
+before the rule, because "every `_pct` key is divided by 100" is the reading that
+turns a 25% drawdown ceiling into 0.25 and rejects everything.
+
 - `protocol.yaml` stores **percentages** under `_pct` keys. `commission_pct: 0.05`
   means 0.05%, five basis points.
-- Everything downstream carries **fractions** under `_frac` names.
+- Everything downstream of `costs:` carries **fractions** under `_frac` names.
   `commission_frac` is `0.0005`. `CostModel` holds fractions; `apply_costs` never
   sees a percentage.
-- `load_protocol` divides by 100, once. `commission_min_flat` is a cash amount,
-  not a rate, and is never converted.
+- `load_protocol` divides by 100, once, and only for the rates under `costs:`.
+- **Two exemptions, and each is exempt for its own reason.**
+  `commission_min_flat` is a cash amount, not a rate.
+  `validation.max_drawdown_ceiling_pct` IS a percentage and stays one: it is
+  compared against `max_drawdown`, which returns a percentage, so converting it
+  would break the comparison. It keeps its `_pct` suffix downstream for exactly
+  that reason — the suffix is the signal that it was not converted.
+  `tests/test_protocol.py` asserts it survives `load_protocol` as `25.0`.
 
 State which of the two a number is in **every** docstring that touches a rate,
 and state the units of every numeric argument — a rate of `0.05` means nothing

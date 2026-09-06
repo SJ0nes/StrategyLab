@@ -118,13 +118,22 @@ schedule or a defensible estimate, record where they came from, and leave them a
 
 Rates cross a unit boundary exactly once, and the boundary is `load_protocol`.
 
+**This is a rule about the `costs:` block.** A rate is a number something multiplies a price by.
+`protocol.yaml` also carries percentages under `validation:` that are not rates and are not
+converted — see the exemptions below. Read "every `_pct` key is divided by 100" as the rule and
+a 25% drawdown ceiling becomes 0.25, which rejects every candidate ever tested.
+
 - **In `protocol.yaml` they are PERCENTAGES**, under `_pct` keys: `commission_pct: 0.05` means
   0.05%. The file says percent because that is what a broker's published schedule says, and a
   key named `_pct` holding a fraction would be a lie in the name.
 - **Everywhere downstream they are FRACTIONS**, under `_frac` names: `commission_frac` is
   `0.0005`. `CostModel` carries fractions; `apply_costs` never sees a percentage.
-- **`load_protocol` divides by 100, once.** That is the only conversion in the system.
-  `commission_min_flat` is a cash amount, not a rate, and is never converted.
+- **`load_protocol` divides by 100, once**, for the rates under `costs:`. That is the only
+  conversion in the system.
+- **Two exemptions.** `commission_min_flat` is a cash amount, not a rate.
+  `validation.max_drawdown_ceiling_pct` is a percentage that STAYS a percentage, because it is
+  compared against `max_drawdown`, which returns one. It keeps its `_pct` suffix downstream, and
+  that suffix is the signal that it was not converted — a `_frac` name would mean it had been.
 
 Say which of the two a number is in every docstring that touches a rate. A rate read as `0.05`
 when `0.0005` was meant is a hundred-fold error that still produces plausible-looking output,
