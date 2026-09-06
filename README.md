@@ -118,7 +118,7 @@ Full version, with every module marked built or stubbed, in
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run with an empty `data/` cache:
+were last run against a fresh clone of `139a94d` with an empty `data/` cache:
 **771 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
