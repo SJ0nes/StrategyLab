@@ -59,17 +59,18 @@ README.**
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter | |
+| The decision-log schema — append-only JSON Lines, exact round trip *(nothing emits it yet)* | |
 | `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
 
-**771 tests pass** — verify with `uv run pytest`. They cover the protocol
+**820 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
-loop, the noise ceiling, the reports, walk-forward validation and the candidate
-reader — sixteen areas, one per test file.
+loop, the noise ceiling, the reports, walk-forward validation, the candidate
+reader and the decision log — seventeen areas, one per test file.
 The five CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 12 of them across 4
+docstring contract with a `raise NotImplementedError` body — 10 of them across 3
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -118,14 +119,14 @@ Full version, with every module marked built or stubbed, in
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run against a fresh clone of `139a94d` with an empty `data/` cache:
-**771 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+were last run with an empty `data/` cache:
+**820 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 771 tests, none touching the network
+uv run pytest                   # 820 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

@@ -51,7 +51,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
      ┌────────────────┐            ┌─────────────────┐
      │   validate/    │            │    logging/     │
      │ walkforward    │            │ decisions.py    │
-     │        BUILT   │            │          STUB   │
+     │        BUILT   │            │         BUILT   │
      │ candidate.py   │            │                 │
      │        BUILT   │            │                 │
      └───────┬────────┘            └────────┬────────┘
@@ -95,9 +95,10 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
 | `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 52 |
 | `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 41 |
+| `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. NOTHING EMITS IT YET. | 49 |
 | `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**771 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41. Run `uv run pytest` to see the
+**820 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 49. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -107,12 +108,10 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **12
-`NotImplementedError` bodies across 4 files:**
+session builds against a fixed interface rather than inventing one. **10
+`NotImplementedError` bodies across 3 files:**
 
-`cli.py` (2 — `run` and `diff`) · `execution/t212.py` (6) ·
-`logging/decisions.py` (2) ·
-`risk/limits.py` (2).
+`cli.py` (2 — `run` and `diff`) · `execution/t212.py` (6) · `risk/limits.py` (2).
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
 list and contains no `NotImplementedError`. It is a `typing.Protocol` — a

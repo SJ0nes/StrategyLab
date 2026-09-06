@@ -6,22 +6,23 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Nineteen modules have working bodies: `protocol.py`, `windows.py`,
+Twenty modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
 `search/surrogate.py`, `search/noise.py`, `report/render.py`,
 `report/surface.py`, `report/palette.py`, `validate/walkforward.py`,
-`validate/candidate.py`, and the `status`, `fetch`, `search`, `report` and
-`validate` commands in `cli.py`. Twelve `NotImplementedError` bodies remain,
-across 4 files. Two further modules are mostly types rather than behaviour:
+`validate/candidate.py`, `logging/decisions.py`, and the `status`, `fetch`, `search`, `report` and
+`validate` commands in `cli.py`. Ten `NotImplementedError` bodies remain,
+across 3 files. Two further modules are mostly types rather than behaviour:
 `core/types.py` holds the shared value types, and `execution/venue.py` holds the
 venue interface and its data classes. `venue.py` has no tests; the one guard in
 `types.py` is covered by `tests/test_strategy_config.py`.
 
-**What is left is the live half.** `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, and the `run` and `diff` commands. The research pipeline —
-fetch, search, report, validate — runs end to end.
+**What is left is the live half.** `risk/limits.py`, `execution/t212.py`, and
+the `run` and `diff` commands - plus the wiring that would make anything emit
+the decision schema now that it exists. The research pipeline — fetch, search,
+report, validate — runs end to end.
 
 **A strategy config can now be read, expanded, backtested and scored — by the
 product, not only by a test.**
@@ -138,16 +139,42 @@ index, which a long-only trend strategy on the S&P 500 must beat to be worth
 anything. A `pass` from this validator means "cleared a pre-registered Sharpe
 bar", not "beat the index".
 
-**There are two decision-log shapes and the design says there should be one.**
-`docs/architecture.md` states the schema is defined once, in
+**There are still two decision-log shapes, and now one of them is built and
+unused.** `docs/architecture.md` states the schema is defined once, in
 `logging/decisions.py`, because a backtest log and a live log have to be
-diffable - that is what makes `strategylab diff` possible at all. But
-`logging/` is a stub, and `run_backtest` needed somewhere to put its per-bar
-records now, so it emits an ad-hoc seven-column frame while `DecisionRecord`
-declares sixteen fields nobody writes. Nothing is wrong today because nothing
-reads either one. The moment `logging/` is built they must converge on its
-schema, and until then the "defined once" rule is aspirational rather than
-enforced.
+diffable - that is what makes `strategylab diff` possible at all. That module is
+now built, tested and reachable: `DecisionRecord` round-trips through
+`write_decisions`/`read_decisions` exactly. **Nothing emits it.** `run_backtest`
+still writes its ad-hoc seven-column frame, and the live worker does not exist.
+
+So the "defined once" rule is no longer aspirational in the sense that the one
+definition is missing - it is aspirational in the sense that nobody has adopted
+it. That is a smaller gap and a different one, and it is worth being precise
+about which: the risk was that two shapes would drift apart, and it is now that
+one shape sits unused beside another that is in use.
+
+**Two things block the backtester adopting it**, both real rather than
+scheduling:
+
+- `DecisionRecord.indicator_values` and `thresholds` need the numbers each
+  condition was decided on, keyed by name. `core.evaluate` computes them - it
+  renders them into strings like `sma(10)=412.346` - but returns only the
+  rendered strings, so `Intent` carries no structured values. Emitting the full
+  record means `core/` returning them, and `core/` is the shared brain.
+- `risk_verdict`, `risk_reason` and `approved_size_pct` describe a gate that
+  does not exist. `risk/limits.py` is still a stub. A backtest recording
+  `allow` there would log a gate that never ran as having passed, which is
+  exactly the inference `RiskVerdict`'s own docstring says the field exists to
+  prevent.
+
+**The keying of `indicator_values` is not settled.** The contract says "keyed by
+indicator name", which is unambiguous only while no strategy names the same
+indicator twice. `close above sma(150)` and `close above sma(50)` in one
+condition list collide under any naming by indicator alone, and the committed
+config is one condition away from that. `logging/` deliberately does not invent
+a convention - it serialises whatever mapping it is handed - because the emitter
+does not exist and a convention chosen in advance is one the emitter will
+contradict. Whoever builds the emitter settles it.
 
 **The engine's fill convention is a decision, not a detail.** A signal computed
 from bar `t`'s close is filled at bar `t+1`'s OPEN. Filling at the same close
@@ -157,12 +184,12 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-771 tests pass (`uv run pytest`). They cover the protocol loader, the window
+820 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
-walk-forward validation and the candidate reader — sixteen areas, one per test
-file.
+walk-forward validation, the candidate reader and the decision log — seventeen
+areas, one per test file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
