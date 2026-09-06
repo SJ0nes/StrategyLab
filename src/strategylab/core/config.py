@@ -493,7 +493,41 @@ def _conditions(raw: Any, source: str, where: str) -> tuple[Condition, ...]:
     items = _as_list(raw, source, where)
     if not items:
         raise _fail(source, where, "must hold at least one condition; an empty list fires always")
-    return tuple(_condition(item, source, f"{where}[{index}]") for index, item in enumerate(items))
+    conditions = tuple(
+        _condition(item, source, f"{where}[{index}]") for index, item in enumerate(items)
+    )
+
+    # A CONFIG-LEVEL PROPERTY, CHECKED WHERE VALIDATION IS DECLARED COMPLETE.
+    # A decision log keys a literal comparand by its rendering at six
+    # significant figures, and that rendering is not injective over floats:
+    # 400.0000001 and 400.0000009 are both "400". Two conditions in one list
+    # comparing against such a pair would share a key, and one of the numbers
+    # the evaluation compared against would be missing from the record.
+    #
+    # `core.strategy` refuses it too, and deliberately - that guard covers a
+    # StrategyDef built in code, which tests do constantly. This is the same
+    # arrangement `protocol.py` uses for the window-overlap rule: the file is
+    # refused at load, and the type refuses it again for anyone who builds one
+    # by hand. The difference that makes the loader check necessary rather than
+    # redundant is WHEN it fires: the strategy module tests the entry list only
+    # on a bar where no exit condition holds, so a collision there could sit
+    # undetected through every exiting bar of a run.
+    seen: dict[str, float] = {}
+    for index, condition in enumerate(conditions):
+        if isinstance(condition.right, IndicatorRef):
+            continue
+        key = f"{condition.right:.6g}"
+        if key in seen and seen[key] != condition.right:
+            raise _fail(
+                source,
+                f"{where}[{index}].target",
+                f"is {condition.right!r}, which renders identically at six significant "
+                f"figures ('{key}') to the {seen[key]!r} an earlier condition in this list "
+                "compares against. A decision log keys a literal by that rendering, so one "
+                "of the two numbers would be missing from every record",
+            )
+        seen[key] = condition.right
+    return conditions
 
 
 def _search(raw: Any, source: str) -> dict[str, dict[str, float]]:

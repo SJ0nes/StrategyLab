@@ -485,10 +485,23 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
             empty, is not sorted ascending, carries duplicate timestamps, lacks
             a required column, or holds fewer rows
             than the longest lookback needs; if ``params`` omits a placeholder
-            the definition references; if a condition names an indicator or
+            the definition references, OR SUPPLIES ONE THAT IS NOT a whole
+            number of bars of at least one; if a condition names an indicator or
             operator this module does not implement; if a value needed for a
-            comparison is not finite; or if the strategy can enter but does not
-            declare ``fixed.position_size_pct``.
+            comparison is not finite; if the strategy can enter but does not
+            declare ``fixed.position_size_pct``, OR DECLARES ONE outside the
+            range above zero and at most one hundred; or if two conditions in
+            the list being evaluated compare against literals that render
+            identically at six significant figures.
+
+            THAT LAST CAUSE IS CONDITIONAL ON THE BRANCH, and the wording
+            elsewhere reads as though it were not. The exit list is evaluated
+            on every bar, so a collision there raises on every bar; the entry
+            list is evaluated only when at least one exit condition fails, so a
+            collision there cannot be detected on a bar that exits.
+            :func:`~strategylab.core.config.load_strategy` refuses the same
+            pair at load time, which is where a config file meets it - this
+            guard is the backstop for a definition built in code.
     """
     _validate_frame(bars)
 

@@ -69,10 +69,14 @@ def _record(**overrides: Any) -> DecisionRecord:
     record no run can produce. A HOLD is the one action that carries both
     condition lists non-empty, and it is also the commonest row in a real log.
 
-    The `thresholds` keying here - the left indicator's name, holding the value
-    of the right-hand side it was compared against - is ILLUSTRATIVE. The
-    schema deliberately does not settle it; see the module docstring of
-    `logging/decisions.py`.
+    THE KEYING HERE IS NOT THE ONE `core/` PRODUCES, and that is a property of
+    this fixture rather than of the schema. `Intent` keys by REFERENCE -
+    `sma($fast)`, `close` - so a real emitter's mappings look like that. This
+    fixture predates that convention and keys by indicator name, which the
+    schema tolerates because `logging/` serialises whatever mapping it is
+    handed and enforces nothing about the keys. It is left as it is so these
+    tests exercise the serialiser rather than the emitter, and it is called out
+    so nobody reads it as an example of what an emitter should produce.
     """
     fields: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

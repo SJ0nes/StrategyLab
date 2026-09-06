@@ -772,3 +772,54 @@ def test_a_non_numeric_fixed_value_is_refused(tmp_path: Path) -> None:
 def test_an_indicator_ref_cannot_be_resolved_and_unresolved_at_once() -> None:
     with pytest.raises(ValueError, match="both a period"):
         IndicatorRef(indicator="sma", period=50, period_param="fast")
+
+
+LITERAL_TARGETS = """
+name: literal_targets
+version: 1
+description: "Test fixture. Mechanism: none, this file exists to be parsed."
+entry:
+  - {indicator: close, operator: above, target: 400.0000001}
+  - {indicator: close, operator: above, target: SECOND}
+exit:
+  - {indicator: close, operator: above, target: 1000000000.0}
+fixed:
+  position_size_pct: 95.0
+"""
+
+
+def test_two_literals_that_render_alike_in_one_list_are_refused(tmp_path: Path) -> None:
+    # A CONFIG-LEVEL PROPERTY, CAUGHT WHERE VALIDATION IS DECLARED COMPLETE.
+    # A decision log keys a literal comparand by its rendering at six
+    # significant figures, and that rendering is not injective over floats.
+    #
+    # `core.strategy` refuses the pair too, and that guard is the backstop for a
+    # StrategyDef built in code. It is not sufficient on its own: it tests the
+    # ENTRY list only on a bar where no exit condition holds, so a collision
+    # there could sit undetected through every exiting bar of a run. The loader
+    # has no such branch.
+    assert f"{400.0000001:.6g}" == f"{400.0000009:.6g}" == "400"
+    path = write_config(tmp_path, LITERAL_TARGETS.replace("SECOND", "400.0000009"))
+
+    with pytest.raises(StrategyConfigError, match="renders identically at six significant"):
+        load_strategy(path)
+
+
+def test_the_same_literal_twice_in_one_list_is_accepted(tmp_path: Path) -> None:
+    # Not a lost value: the key carries the number it already had. Refusing this
+    # would reject a legitimate config, which is what a guard stricter than the
+    # thing it guards does.
+    path = write_config(tmp_path, LITERAL_TARGETS.replace("SECOND", "400.0000001"))
+
+    assert len(load_strategy(path).entry) == 2
+
+
+def test_colliding_literals_in_different_lists_are_accepted(tmp_path: Path) -> None:
+    # The two lists are evaluated separately and reported separately, so their
+    # thresholds never share a mapping. Refusing across lists would reject a
+    # config from which nothing can be lost.
+    text = LITERAL_TARGETS.replace("SECOND", "13.5").replace(
+        "target: 1000000000.0", "target: 400.0000009"
+    )
+
+    assert load_strategy(write_config(tmp_path, text)).name == "literal_targets"

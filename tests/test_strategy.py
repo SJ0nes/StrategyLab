@@ -591,9 +591,11 @@ def test_an_intent_is_not_hashable_now_that_it_carries_mappings() -> None:
 
 
 def test_thresholds_are_empty_when_every_condition_compares_two_indicators() -> None:
-    # Which is every condition the committed config expresses, so this field is
-    # empty in practice today. It is not dead weight: `close above 400` is one
-    # config change away, and that number is not an indicator value.
+    # Which is every condition the COMMITTED CONFIG expresses - not every
+    # condition the vocabulary can express. The loader accepts a bare number as
+    # a target today, so `close above 400` is loadable now; an earlier comment
+    # here said it was one config change away, and that was a claim about the
+    # loader the loader does not support.
     intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
 
     assert intent.thresholds == {}
