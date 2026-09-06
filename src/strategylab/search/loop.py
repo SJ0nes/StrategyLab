@@ -190,8 +190,9 @@ class SearchError(Exception):
     Raised from THREE places, and each covers what the others cannot.
     :func:`_check_inputs` refuses a bad definition or an unslicable frame before
     the first cell runs. :func:`_check_window` refuses a window whose values the
-    engine cannot use, and :func:`_in_sample_window` a frame with no bar inside
-    the window at all. :func:`run_search` raises after the loop when EVERY cell
+    engine cannot use, and :func:`~strategylab.windows.in_sample_bars` a frame
+    with no bar inside the window at all - as a ``WindowError``, which
+    :func:`run_search` translates. :func:`run_search` raises after the loop when EVERY cell
     failed, which catches the causes the checks do not know about and, unlike a
     list of checks, cannot fall behind the engine. Without that last one, a
     fault in the definition or the data returns ninety ordinary-looking failures
@@ -676,7 +677,7 @@ def _check_window(window: pd.DataFrame) -> None:
 
     Args:
         window: The bars inside ``protocol.windows.in_sample``, as
-            :func:`_in_sample_window` returns them.
+            :func:`~strategylab.windows.in_sample_bars` returns them.
 
     Returns:
         None.
@@ -1003,7 +1004,8 @@ def run_search(
             bad definition or an unslicable frame BEFORE any cell runs, and
             :func:`_check_window` refuses a window whose values the engine
             cannot use - see their docstrings for the lists.
-            :func:`_in_sample_window` refuses a frame with no bar in the window.
+            :func:`~strategylab.windows.in_sample_bars` refuses a frame with no
+            bar in the window, as a ``WindowError`` this function translates.
             This function raises again AFTER the loop if every cell failed,
             which is the guarantee proper: it catches the causes the checks do
             not know about, at the cost of a less specific message.

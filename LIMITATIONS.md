@@ -550,7 +550,7 @@ exactly one consumer is guarded.**
 `fetch` downloads 2005-01-01 through 2024-12-31 in one request and writes one
 parquet file. Nothing partitions it, and the whole 5,033-bar frame is what
 `run_search` is handed. The split is this project's central claim, and it is now
-enforced for the search by `loop._in_sample_window`, which cuts the frame from
+enforced for the search by `windows.in_sample_bars`, which cuts the frame from
 `protocol.windows.in_sample` and from nothing else, with a test that corrupts
 every bar after the window's end and asserts no cell's result moves.
 
@@ -566,8 +566,9 @@ that a corrupted held-back bar produces a byte-identical surface. The general
 lesson is the one this file keeps relearning: the leak arrived in code written
 to make the system safer.
 
-That is one consumer, not a chokepoint. `_in_sample_window` is private to the
-search loop. **That is now fixed rather than pending:** `windows.py` owns both
+That WAS one consumer and not a chokepoint, while the slicer was a private
+helper inside the search loop. **That is now fixed rather than pending:**
+`windows.py` owns both
 accessors, the loop's private copy is deleted, and any future component asks the
 same function. Reading the held-back window additionally increments the
 protocol's counter and cannot be made not to — there is no dry run, because a

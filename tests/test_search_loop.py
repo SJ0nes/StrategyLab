@@ -7,7 +7,10 @@ implementation printed.
 **The window guard is the test that matters.** `strategylab fetch` caches
 2005-2024 in one parquet file and nothing partitions it, so the in-sample /
 walk-forward split - this project's central methodological claim - is enforced
-by `_in_sample_window` and by nothing else.
+by `windows.in_sample_bars`, which this loop calls and which the validator
+calls too. It was once a private helper here named `_in_sample_window`; that
+copy is gone, and the accessor is shared precisely so the two consumers cannot
+drift apart.
 `test_bars_outside_the_window_cannot_change_any_cell` corrupts every bar after
 the window's end, passes the frame in INTACT, and asserts both that the bar
 COUNT is the in-window count and that every cell's result is unchanged.
