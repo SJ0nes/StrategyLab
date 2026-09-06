@@ -19,6 +19,7 @@ replaying 2005 and by a live worker looking at this morning.
 from __future__ import annotations
 
 import math
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -208,6 +209,41 @@ def required_history(definition: StrategyDef, params: dict[str, int]) -> int:
     return longest + (1 if crossing else 0)
 
 
+def reference_name(ref: IndicatorRef | float) -> str:
+    """Render one side of a condition as the name a decision log uses for it.
+
+    PUBLIC, AND USED FOR TWO THINGS THAT MUST AGREE: the rendered condition
+    lines in :attr:`~strategylab.core.types.Intent.conditions_met`, and the KEYS
+    of :attr:`~strategylab.core.types.Intent.indicator_values`. It was a nested
+    helper inside :func:`_render` until the decision log needed the same names;
+    a second implementation would have let a log's keys drift from the strings
+    beside them, and a reader could not then tell which value belonged to which
+    condition.
+
+    THE PLACEHOLDER IS NOT RESOLVED. A searched period renders as
+    ``sma($fast)`` rather than ``sma(10)``, because the parsed definition is
+    never rewritten - one definition serves every cell of a grid, and the
+    values live in the ``params`` mapping that travels with it. A reader
+    resolves the name against the parameters in the same record.
+
+    Args:
+        ref: The indicator reference, or a bare number in the units of whatever
+            it is compared against.
+
+    Returns:
+        ``indicator(period)`` for a resolved reference, ``indicator($name)``
+        for an unresolved one, ``indicator`` for one taking no period, and six
+        significant figures for a literal.
+    """
+    if not isinstance(ref, IndicatorRef):
+        return f"{ref:.6g}"
+    if ref.period is not None:
+        return f"{ref.indicator}({ref.period})"
+    if ref.period_param is not None:
+        return f"{ref.indicator}(${ref.period_param})"
+    return ref.indicator
+
+
 def _render(condition: Condition, left: float, right: float) -> str:
     """Render one evaluated condition for a decision log.
 
@@ -224,31 +260,10 @@ def _render(condition: Condition, left: float, right: float) -> str:
     Returns:
         A single line naming both sides, their values, and the operator.
     """
-
-    def name(ref: IndicatorRef | float) -> str:
-        """Render one side of a condition for the log line.
-
-        Args:
-            ref: The indicator reference, or a bare number in the units of
-                whatever it is compared against.
-
-        Returns:
-            ``indicator(period)`` for a resolved reference, ``indicator($name)``
-            for an unresolved one, ``indicator`` for one taking no period, and
-            six significant figures for a literal.
-        """
-        if not isinstance(ref, IndicatorRef):
-            return f"{ref:.6g}"
-        if ref.period is not None:
-            return f"{ref.indicator}({ref.period})"
-        if ref.period_param is not None:
-            return f"{ref.indicator}(${ref.period_param})"
-        return ref.indicator
-
     return (
-        f"{name(condition.left)}={left:.6g} "
+        f"{reference_name(condition.left)}={left:.6g} "
         f"{condition.operator} "
-        f"{name(condition.right)}={right:.6g}"
+        f"{reference_name(condition.right)}={right:.6g}"
     )
 
 
@@ -309,14 +324,38 @@ def _holds(
     )
 
 
+class _Evaluated(NamedTuple):
+    """What evaluating one AND-combined condition list produced.
+
+    Attributes:
+        met: Rendered lines for the conditions that held, in config order.
+        failed: The same for those that did not.
+        values: Every indicator reference read, keyed by
+            :func:`reference_name` and valued at the latest bar, in price
+            units. The same names the rendered lines use.
+        thresholds: Every LITERAL compared against, keyed by its own rendering.
+            Empty unless a condition compares an indicator to a bare number.
+    """
+
+    met: tuple[str, ...]
+    failed: tuple[str, ...]
+    values: dict[str, float]
+    thresholds: dict[str, float]
+
+
 def _test_all(
     conditions: tuple[Condition, ...], bars: pd.DataFrame, resolved: dict[int, pd.Series | float]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> _Evaluated:
     """Evaluate a whole AND-combined condition list.
 
     Every condition is evaluated, including the ones after the first failure.
     Short-circuiting would be faster and would leave the decision log unable to
     say which of three rules blocked an entry.
+
+    THE VALUES ARE COLLECTED AS WELL AS RENDERED, because a decision log needs
+    them as numbers and a string is not a number. They are keyed by
+    :func:`reference_name`, the same function that names them inside the
+    rendered lines, so a reader can match a value to the condition it decided.
 
     Args:
         conditions: The list to evaluate, combined with AND.
@@ -324,11 +363,12 @@ def _test_all(
         resolved: Precomputed series, keyed by ``id()`` of each reference.
 
     Returns:
-        Rendered lines for the conditions that held and for those that did not,
-        each in the order the config gives them.
+        The rendered lines, and the numbers behind them.
     """
     met: list[str] = []
     failed: list[str] = []
+    values: dict[str, float] = {}
+    thresholds: dict[str, float] = {}
     for condition in conditions:
         left = resolved[id(condition.left)]
         right = (
@@ -336,9 +376,18 @@ def _test_all(
             if isinstance(condition.right, IndicatorRef)
             else float(condition.right)
         )
-        line = _render(condition, _value_at(left, 0), _value_at(right, 0))
+        left_value, right_value = _value_at(left, 0), _value_at(right, 0)
+        values[reference_name(condition.left)] = left_value
+        # A literal right-hand side is a THRESHOLD, not an indicator value: it
+        # was never read from the bars, and it carries whatever unit the config
+        # author meant rather than a price.
+        if isinstance(condition.right, IndicatorRef):
+            values[reference_name(condition.right)] = right_value
+        else:
+            thresholds[reference_name(condition.right)] = right_value
+        line = _render(condition, left_value, right_value)
         (met if _holds(condition, bars, resolved) else failed).append(line)
-    return tuple(met), tuple(failed)
+    return _Evaluated(tuple(met), tuple(failed), values, thresholds)
 
 
 def _size_pct(definition: StrategyDef) -> float:
@@ -455,19 +504,39 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
                 period = _resolve_period(side, definition, params)
                 resolved[id(side)] = _series(side, period, bars)
 
-    exit_met, exit_failed = _test_all(definition.exit, bars, resolved)
-    if not exit_failed:
-        return Intent(action=Action.EXIT_LONG, size_pct=0.0, conditions_met=exit_met)
-
-    entry_met, entry_failed = _test_all(definition.entry, bars, resolved)
-    if not entry_failed:
+    # THE MAPPINGS CARRY WHAT THIS CALL ACTUALLY READ, which differs by branch.
+    # An exit returns before the entry conditions are looked at, so its record
+    # holds the exit references alone; the other two branches evaluated both
+    # lists and carry both. A record claiming values the evaluation never read
+    # would be the same kind of lie as a record rebuilt after the fact.
+    exits = _test_all(definition.exit, bars, resolved)
+    if not exits.failed:
         return Intent(
-            action=Action.ENTER_LONG, size_pct=_size_pct(definition), conditions_met=entry_met
+            action=Action.EXIT_LONG,
+            size_pct=0.0,
+            conditions_met=exits.met,
+            indicator_values=exits.values,
+            thresholds=exits.thresholds,
+        )
+
+    entries = _test_all(definition.entry, bars, resolved)
+    values = {**exits.values, **entries.values}
+    thresholds = {**exits.thresholds, **entries.thresholds}
+
+    if not entries.failed:
+        return Intent(
+            action=Action.ENTER_LONG,
+            size_pct=_size_pct(definition),
+            conditions_met=entries.met,
+            indicator_values=values,
+            thresholds=thresholds,
         )
 
     return Intent(
         action=Action.HOLD,
         size_pct=0.0,
-        conditions_met=entry_met,
-        conditions_failed=entry_failed,
+        conditions_met=entries.met,
+        conditions_failed=entries.failed,
+        indicator_values=values,
+        thresholds=thresholds,
     )

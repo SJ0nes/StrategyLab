@@ -136,9 +136,38 @@ class Intent:
         conditions_failed: The same for each condition that did not pass. A
             ``HOLD`` is explained by this field, which is why rejections are
             worth as much log space as entries.
+        indicator_values: Every indicator this evaluation actually read, keyed
+            by the SAME name the rendered conditions use - ``sma($fast)``,
+            ``close`` - and valued in price units at the bar evaluated.
+
+            KEYED BY REFERENCE, NOT BY INDICATOR. Two conditions on different
+            averages give ``sma($fast)`` and ``sma($slow)``, which do not
+            collide; keying by indicator alone would have merged them and lost
+            one of the two values. The placeholder is kept rather than resolved
+            because that is what the rendered strings say, and the parameters
+            that resolve it travel in the same decision record.
+
+            ONLY WHAT WAS READ. An ``EXIT_LONG`` returns before the entry
+            conditions are evaluated, so its mapping holds the exit
+            references and nothing else. The field is a record of the
+            evaluation that happened, not of the strategy's whole vocabulary.
+        thresholds: Every LITERAL a condition compared against, keyed by its
+            own rendering, in whatever units the config author meant. Empty
+            whenever every condition compares one indicator against another,
+            which is true of every condition the current vocabulary can
+            express - so this is empty today and is not dead weight: the
+            comparison ``close above 400`` is one config change away, and a
+            number compared against is not an indicator value.
     """
 
     action: Action
     size_pct: float = 0.0
     conditions_met: tuple[str, ...] = ()
     conditions_failed: tuple[str, ...] = ()
+    # NOT HASHABLE from here on. A frozen dataclass generates ``__hash__`` from
+    # its fields, and a dict is not hashable, so hashing an Intent now raises.
+    # Nothing does; this is stated rather than worked around, because the
+    # alternative - a tuple of pairs - would make every consumer rebuild the
+    # mapping the decision record wants.
+    indicator_values: dict[str, float] = field(default_factory=dict)
+    thresholds: dict[str, float] = field(default_factory=dict)

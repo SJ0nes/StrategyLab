@@ -34,7 +34,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from strategylab.core.strategy import evaluate
+from strategylab.core.strategy import evaluate, reference_name
 from strategylab.core.types import Action, Condition, IndicatorRef, Intent, StrategyDef
 
 # The close series every unit test below is built on. Chosen so that a 2-bar and
@@ -366,6 +366,137 @@ def test_a_literal_right_hand_side_is_compared_as_a_constant() -> None:
         fixed={"position_size_pct": 50.0},
     )
     assert evaluate(definition_high, frame(V_SHAPE), {}).action is Action.HOLD
+
+
+# --------------------------------------------------------------------------
+# The numbers behind the rendered conditions. A decision log needs them as
+# numbers; a string is not a number, and `diff` cannot compare one.
+# --------------------------------------------------------------------------
+
+
+def _numbers_in(rendered: str) -> dict[str, float]:
+    """Pull `name=value` pairs out of a rendered condition line."""
+    left, _, right = rendered.split(" ")
+    return {side.split("=")[0]: float(side.split("=")[1]) for side in (left, right)}
+
+
+def test_the_indicator_values_are_keyed_the_way_the_rendered_lines_name_them() -> None:
+    # The keys and the strings come from one function, `reference_name`, so a
+    # reader can match a value to the condition it decided. A second renderer
+    # would let the two drift and nothing would say which value was which.
+    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+
+    named = set()
+    for rendered in intent.conditions_met + intent.conditions_failed:
+        named |= set(_numbers_in(rendered))
+
+    assert named <= set(intent.indicator_values), (
+        "every name in a rendered line must be a key in indicator_values"
+    )
+
+
+def test_the_indicator_values_agree_with_the_rendered_lines() -> None:
+    # The strings show six significant figures; the mapping carries the full
+    # double. They must agree to that precision, or the log's prose and its
+    # numbers describe different bars.
+    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+
+    for rendered in intent.conditions_met + intent.conditions_failed:
+        for name, shown in _numbers_in(rendered).items():
+            assert f"{intent.indicator_values[name]:.6g}" == f"{shown:.6g}"
+
+
+def test_a_searched_period_is_keyed_by_its_placeholder_not_its_value() -> None:
+    # The parsed definition is never rewritten - one definition serves every
+    # cell of a grid - so `sma($fast)` is what the log says, and `params` in the
+    # same record is what resolves it.
+    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+
+    assert "sma($fast)" in intent.indicator_values
+    assert "sma(2)" not in intent.indicator_values
+
+
+def test_an_exit_carries_only_the_references_it_actually_read() -> None:
+    # `evaluate` returns on the exit branch before the entry conditions are
+    # looked at. A record claiming values that evaluation never read would be
+    # the same kind of lie as one rebuilt after the fact.
+    definition = StrategyDef(
+        name="exit-only",
+        version=1,
+        description="Test fixture.",
+        entry=(
+            Condition(
+                left=IndicatorRef(indicator="sma", period=2),
+                operator="above",
+                right=IndicatorRef(indicator="sma", period=3),
+            ),
+        ),
+        exit=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=1.0),),
+        search={},
+        fixed={"position_size_pct": 50.0},
+    )
+
+    intent = evaluate(definition, frame(V_SHAPE), {})
+
+    assert intent.action is Action.EXIT_LONG
+    assert set(intent.indicator_values) == {"close"}, "the entry references were never read"
+
+
+def test_a_hold_carries_the_references_from_both_lists() -> None:
+    # The exit list was evaluated and failed, then the entry list was evaluated
+    # and failed. Both were read, so both are recorded.
+    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+
+    assert intent.action is Action.HOLD
+    assert {"sma($fast)", "sma($slow)"} <= set(intent.indicator_values)
+
+
+def test_a_literal_comparand_is_a_threshold_and_not_an_indicator_value() -> None:
+    # A literal was never read from the bars and carries whatever unit the
+    # config author meant, so it is not a price. The two mappings keep that
+    # distinction rather than merging it.
+    definition = StrategyDef(
+        name="literal",
+        version=1,
+        description="Test fixture.",
+        entry=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=13.5),),
+        exit=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=1e9),),
+        search={},
+        fixed={"position_size_pct": 50.0},
+    )
+
+    intent = evaluate(definition, frame(V_SHAPE), {})
+
+    # BOTH literals, because both lists were evaluated: the exit was tested
+    # first and failed, then the entry was tested and passed. The mapping
+    # records what the evaluation read, and it read both.
+    assert intent.thresholds == {"13.5": 13.5, "1e+09": 1e9}
+    assert intent.indicator_values == {"close": 14.0}
+
+
+def test_thresholds_are_empty_when_every_condition_compares_two_indicators() -> None:
+    # Which is every condition the committed config expresses, so this field is
+    # empty in practice today. It is not dead weight: `close above 400` is one
+    # config change away, and that number is not an indicator value.
+    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+
+    assert intent.thresholds == {}
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        (IndicatorRef(indicator="close"), "close"),
+        (IndicatorRef(indicator="sma", period=20), "sma(20)"),
+        (IndicatorRef(indicator="sma", period_param="fast"), "sma($fast)"),
+        (13.5, "13.5"),
+        (1000000.0, "1e+06"),
+    ],
+)
+def test_a_reference_renders_to_the_name_a_log_uses(
+    ref: IndicatorRef | float, expected: str
+) -> None:
+    assert reference_name(ref) == expected
 
 
 def test_a_fixed_parameter_can_supply_a_period() -> None:
