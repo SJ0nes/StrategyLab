@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1534,6 +1534,46 @@ def test_a_naive_generated_at_is_refused(fixture_bars: pd.DataFrame, tmp_path: P
     )
     with pytest.raises(ValueError, match="timezone-naive"):
         write_search_result(result, datetime(2026, 8, 22, 13, 5, 0), tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("offset_hours", "hour", "expected_name", "expected_stamp"),
+    [
+        # BOTH CROSS MIDNIGHT, in opposite directions. A same-day offset would
+        # leave the date in the filename identical whether the conversion
+        # happened or not, so an implementation that converted the time and took
+        # the date from the unconverted stamp would pass.
+        (5, 2, "search-20260821T213005Z.json", "2026-08-21T21:30:05+00:00"),
+        (-5, 22, "search-20260823T033005Z.json", "2026-08-23T03:30:05+00:00"),
+    ],
+)
+def test_a_non_utc_generated_at_is_converted_rather_than_stamped_with_a_lying_z(
+    fixture_bars: pd.DataFrame,
+    tmp_path: Path,
+    offset_hours: int,
+    hour: int,
+    expected_name: str,
+    expected_stamp: str,
+) -> None:
+    # The filename ends in a literal Z, and only tz-AWARENESS was checked. A
+    # +05:00 stamp therefore produced `search-...T140000Z.json` beside a payload
+    # reading `"+05:00"` - the file's name asserting a UTC time its own contents
+    # contradict, which is precisely what this function's docstring says cannot
+    # happen.
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    stamp = datetime(2026, 8, 22, hour, 30, 5, tzinfo=timezone(timedelta(hours=offset_hours)))
+
+    path = write_search_result(result, stamp, tmp_path)
+
+    assert path.name == expected_name
+    assert json.loads(path.read_text(encoding="utf-8"))["generated_at"] == expected_stamp
 
 
 def test_the_only_cell_that_can_win_a_three_by_three_grid_is_its_centre(

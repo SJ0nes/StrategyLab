@@ -61,7 +61,7 @@ README.**
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter | |
 | `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
 
-**769 tests pass** — verify with `uv run pytest`. They cover the protocol
+**771 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -118,14 +118,14 @@ Full version, with every module marked built or stubbed, in
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run against a fresh clone of `0849fbe` with an empty `data/` cache:
-**769 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+were last run with an empty `data/` cache:
+**771 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 769 tests, none touching the network
+uv run pytest                   # 771 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

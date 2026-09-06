@@ -64,7 +64,7 @@ import json
 import math
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1311,7 +1311,9 @@ def write_search_result(
     should read this file positionally; every field is named.
 
     - ``schema_version`` — :data:`SEARCH_SCHEMA_VERSION`.
-    - ``generated_at`` — ISO 8601, timezone-aware, as supplied.
+    - ``generated_at`` — ISO 8601, always at offset ``+00:00``. Any timezone-aware
+      argument is converted to UTC first, so this is not necessarily the offset
+      the caller passed.
     - ``protocol_version`` — schema version of the protocol, NOT its values.
     - ``strategy``, ``config`` — the strategy's name and the relative path it
       was loaded from.
@@ -1344,9 +1346,13 @@ def write_search_result(
 
     Args:
         result: The search to record.
-        generated_at: When the search ran, timezone-aware and in UTC. Used both
-            in the filename and in the payload, so the file's name and its
-            contents cannot disagree.
+        generated_at: When the search ran. Must be timezone-aware; any offset is
+            accepted and CONVERTED to UTC, and the converted value is what
+            appears both in the filename and in the payload, so the file's name
+            and its contents cannot disagree. Converting rather than merely
+            requiring UTC is what makes that promise true: the filename ends in
+            a literal ``Z``, and a ``+05:00`` argument would otherwise produce a
+            name asserting a UTC time the payload contradicts.
         directory: Where to write. Created along with its parents if absent. A
             relative path resolves against the WORKING DIRECTORY, which is the
             repository root for every documented command in this project.
@@ -1365,6 +1371,7 @@ def write_search_result(
             "generated_at is timezone-naive; a search artifact records when it ran and "
             "an unqualified timestamp cannot be compared against another machine's"
         )
+    generated_at = generated_at.astimezone(UTC)
 
     parameters = [
         str(column) for column in result.results.columns if column not in _NON_PARAMETER_COLUMNS
