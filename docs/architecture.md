@@ -93,11 +93,11 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 48 |
 | `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. | in the 48 |
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
-| `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 48 |
-| `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 34 |
+| `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 52 |
+| `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 41 |
 | `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**758 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 36 + 16 + 48 + 34. Run `uv run pytest` to see the
+**769 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 36 + 16 + 52 + 41. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

@@ -552,13 +552,17 @@ def walk_forward(
         The verdict and the per-fold evidence behind it.
 
     Raises:
-        ValueError: If ``params`` omits a placeholder the definition
-            references; if ``protocol.windows.fold_months`` is below one, which
+        ValueError: If any of ``min_sharpe``, ``pass_margin`` or
+            ``max_drawdown_ceiling_pct`` is not finite, because a comparison
+            against a non-finite threshold never binds and the criterion would
+            be reported as applied while not applying; if ``params`` omits a
+            placeholder the definition references; if
+            ``protocol.windows.fold_months`` is below one, which
             ``load_protocol`` refuses from a FILE but ``Windows`` does not
             refuse from code; if the walk-forward window is shorter than one
             fold; or if the in-sample window does not lie entirely before the
             held-back one - a warm-up drawn from bars dated AFTER the window
-            being judged would be lookahead. All four are raised before any
+            being judged would be lookahead. All five are raised before any
             touch.
 
             It also propagates, unchanged, the ValueErrors of the engine it
@@ -591,6 +595,29 @@ def walk_forward(
             and the second is the dangerous one. Restore ``protocol.yaml`` from
             version control, which is where its authoritative copy lives.
     """
+    # A NON-FINITE THRESHOLD IS REFUSED BEFORE ANYTHING IS SPENT, because a
+    # verdict measured against one is not a verdict. `load_protocol` checks
+    # `max_drawdown_ceiling_pct` only for being positive and `min_sharpe` not at
+    # all, so `.inf` loads happily; the drawdown test is then
+    # `drawdown > inf`, which is never true, so the ceiling silently stops
+    # applying and a PASS can be returned on a criterion nobody applied.
+    #
+    # Checked HERE rather than left to `write_validation_result`, where
+    # `allow_nan=False` would eventually raise on the same figure. That happens
+    # after the verdict has been computed, printed and endorsed - the loud
+    # failure arrives too late to stop anyone reading the PASS.
+    for name, value in (
+        ("min_sharpe", protocol.validation.min_sharpe),
+        ("pass_margin", protocol.validation.pass_margin),
+        ("max_drawdown_ceiling_pct", protocol.validation.max_drawdown_ceiling_pct),
+    ):
+        if not math.isfinite(value):
+            raise ValueError(
+                f"protocol.validation.{name} is {value}, which is not finite; a comparison "
+                "against it silently never binds, so the criterion would be reported as "
+                "applied and would not be"
+            )
+
     # Raises for a placeholder `params` does not supply, which is this
     # function's own contract and costs nothing to discover.
     warmup = required_history(definition, params)

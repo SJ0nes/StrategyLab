@@ -332,16 +332,39 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
     # `Path("C:\\Users\\<user>\\x.yaml").is_absolute()` is False. An artifact
     # written on one platform and validated on the other would otherwise carry
     # exactly the username this guard exists to stop.
-    if PurePosixPath(config).is_absolute() or PureWindowsPath(config).is_absolute():
+    windows_form = PureWindowsPath(config)
+    if (
+        PurePosixPath(config).is_absolute()
+        or windows_form.is_absolute()
+        # DRIVE-RELATIVE, which `is_absolute()` calls relative: "C:configs/x.yaml"
+        # has a drive and no root, so PureWindowsPath says False while
+        # `ntpath.isabs` says True. It still resolves against a drive's current
+        # directory rather than against this repository.
+        or windows_form.drive != ""
+    ):
         raise CandidateError(
             f"search artifact '{path.as_posix()}' names its config by the absolute path "
             f"'{config}'. A verdict records that path, and an absolute path on most "
             "machines carries a username into a file this repository may publish"
         )
+    # REPOSITORY-RELATIVE IS THE PROMISE, and "not absolute" is weaker than it.
+    # `../../Users/<name>/configs/x.yaml` is relative under both flavours,
+    # passes every check above, and carries exactly the username those checks
+    # exist to stop - into the verdict, verbatim.
+    if ".." in windows_form.parts or ".." in PurePosixPath(config).parts:
+        raise CandidateError(
+            f"search artifact '{path.as_posix()}' names its config as '{config}', which "
+            "climbs out of the repository with '..'. A verdict records the path verbatim, "
+            "and a path that escapes upwards can name anything on the machine"
+        )
 
-    # `degenerate` is type-checked rather than coerced. `bool("false")` is True,
-    # so a flag the search wrote as a string would read as "flagged" or "not
-    # flagged" according to nothing but truthiness.
+    # NOTHING IS COERCED, and an earlier version type-checked only this one.
+    # `bool("false")` is True, so a flag written as a string would read as
+    # "flagged" or "not flagged" by truthiness alone - but `str(["ma"])` is
+    # `"['ma']"` just as silently, and `protocol.py` already took this project's
+    # position on that exact coercion: it "deliberately does NOT accept a list,
+    # mapping, or None by stringifying it", because such a value fails much
+    # later somewhere that names neither the field nor the file.
     degenerate = _required(winner, "degenerate", "winner", path)
     if not isinstance(degenerate, bool):
         raise CandidateError(
@@ -349,10 +372,20 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             "which is not a boolean; coercing it would decide the plateau flag by "
             "truthiness rather than by what the search found"
         )
+    strings: dict[str, str] = {}
+    for key, where in (("strategy", "top level"), ("noise_ceiling_note", "top level")):
+        value = _required(artifact, key, where, path)
+        if not isinstance(value, str):
+            raise CandidateError(
+                f"search artifact '{path.as_posix()}' carries a '{key}' of {value!r}, which "
+                "is not a string. Stringifying it would record a list or a number in the "
+                "verdict as though it were the text the search wrote"
+            )
+        strings[key] = value
 
     return CandidateRef(
         source=path,
-        strategy=str(_required(artifact, "strategy", "top level", path)),
+        strategy=strings["strategy"],
         config_path=config_path,
         params=_params(winner.get("params")),
         data_content_hash=data_content_hash,
@@ -360,5 +393,5 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
         search_sharpe=_number(winner, "sharpe", path),
         search_plateau_score=_number(winner, "plateau_score", path),
         degenerate=degenerate,
-        noise_ceiling_note=str(_required(artifact, "noise_ceiling_note", "top level", path)),
+        noise_ceiling_note=strings["noise_ceiling_note"],
     )

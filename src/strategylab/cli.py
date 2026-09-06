@@ -571,6 +571,12 @@ def validate(
     counter on every run, including runs that end in insufficient_data: looking
     at held-back data costs a touch whether or not the look produced a verdict.
 
+    WRITES `state/validation-<stamp>.json`, and the file is the point rather
+    than a side effect: re-deriving a verdict costs another permanent read of
+    the held-back window, so a verdict that lived only in this terminal would
+    guarantee somebody spent one. It is written AFTER the verdict is printed,
+    so a failure to write costs the file and never the answer.
+
     THE ARGUMENT IS A SEARCH ARTIFACT, NOT A SEPARATE CANDIDATE FILE. This
     command's help text used to name ``state/candidate.json``, and nothing has
     ever written one: the search loop deliberately declined to invent that
@@ -669,10 +675,10 @@ def validate(
     started = datetime.now(UTC)
     # Every exception type `walk_forward` documents is caught, because a
     # traceback carries the absolute path of the file that raised and on most
-    # machines that contains a username. Four of its ValueErrors are raised
+    # machines that contains a username. Five of its ValueErrors are raised
     # BEFORE the touch, and the WindowError on the in-sample cut is too; the
-    # rest, and the OSError, arrive after it. The message hedges accordingly
-    # rather than asserting which happened.
+    # rest arrive after it. The message hedges accordingly rather than asserting
+    # which happened.
     try:
         verdict = walk_forward(definition, candidate.params, bars, protocol)
     except (ValueError, WindowError, ProtocolError) as exc:
@@ -683,18 +689,21 @@ def validate(
         )
         raise typer.Exit(code=1) from exc
     except OSError as exc:
-        # The one failure mode that can DAMAGE the pre-registration. The counter
-        # rewrite is not atomic and its write is not wrapped, so a failure
-        # between the truncate and the write leaves protocol.yaml holding
-        # neither the old count nor the new one. Telling the operator to go and
-        # read a counter line in that file would be advice about a file that may
-        # no longer have one.
+        # The one failure mode that can DAMAGE the pre-registration - but only
+        # one of its causes actually does. A read-only file or a permission
+        # denial fails at `open("w")`, before any truncation: protocol.yaml is
+        # byte-for-byte intact and NO touch was charged. A failure part-way
+        # through the write is the damaging one, because the rewrite is not
+        # atomic. Which happened is not knowable from here, so both are named
+        # rather than the worse one being asserted.
         err_console.print(f"[bold red]the protocol file could not be rewritten[/bold red] {exc}")
         err_console.print(
-            "The walk-forward counter is rewritten in place and NOT atomically, so "
-            "protocol.yaml may now be damaged. Check it, and restore it from version "
-            "control if the access_log block is incomplete - that is where its "
-            "authoritative copy lives."
+            "If the file could not be opened for writing at all - read-only, permission "
+            "denied - then protocol.yaml is untouched and NO walk-forward read was "
+            "charged. If the write failed part-way, the counter is rewritten in place and "
+            "NOT atomically, so the access_log block may be incomplete. Check it, and "
+            "restore from version control if it is - that is where its authoritative copy "
+            "lives."
         )
         raise typer.Exit(code=1) from exc
 
@@ -746,25 +755,34 @@ def validate(
     console.print(
         f"\n  held-back window read [bold]{verdict.walk_forward_touches}[/bold] time(s) in total"
     )
+    # PRINTED BEFORE THE WRITE, so it survives a failed one. This sentence is
+    # the caveat `candidate.py` promises "travels into the verdict rather than
+    # being dropped at the boundary", and on the write-failure path the terminal
+    # is the only place it can reach.
+    console.print(f"\n[dim]{candidate.noise_ceiling_note}[/dim]")
 
     # THE ARTIFACT IS WRITTEN LAST, AFTER THE VERDICT HAS BEEN PRINTED. An
     # earlier version wrote it inside the same try as `walk_forward` and exited
     # on failure, which threw away a verdict a permanent touch had already been
     # spent on - the exact loss the artifact exists to prevent, caused by the
     # error handling around it. Now a failed write costs the file and not the
-    # answer: the operator has the verdict on screen, and is told to copy it.
+    # answer: the operator has the verdict on screen, and is told what the
+    # screen does NOT have.
     try:
         artifact = write_validation_result(verdict, candidate, protocol, started)
     except (ValueError, OSError) as exc:
         err_console.print(f"\n[bold red]the verdict could not be written[/bold red] {exc}")
         err_console.print(
-            "The touch HAS been charged and the verdict above is the only copy. Re-running "
-            "would spend another read of the held-back window, so save what is printed "
-            "above before you do anything else."
+            "The touch HAS been charged and what is printed above is the only copy. "
+            "Re-running would spend another read of the held-back window, so save it now."
+        )
+        err_console.print(
+            "The artifact would also have recorded the schema and protocol versions, the "
+            "warm-up length, and every cost parameter the run was charged. Those are not "
+            "on screen; take them from protocol.yaml and the search artifact."
         )
         raise typer.Exit(code=1) from exc
     console.print(f"  verdict  {artifact.as_posix()}")
-    console.print(f"\n[dim]{candidate.noise_ceiling_note}[/dim]")
 
 
 @app.command()

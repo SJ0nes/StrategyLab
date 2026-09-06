@@ -704,8 +704,17 @@ def increment_walk_forward_touches(path: Path = DEFAULT_PROTOCOL_PATH) -> int:
         The new count, after incrementing.
 
     Raises:
-        ProtocolError: If the file is missing or carries no
-            ``access_log.walk_forward_touches`` line.
+        ProtocolError: If the file is missing, unreadable, or carries no
+            ``access_log.walk_forward_touches`` line. All three are detected
+            during the READ, which is wrapped.
+        OSError: If the REWRITE fails - a read-only file, a permission denial, a
+            full disk. That write is deliberately not wrapped, because a caller
+            deciding what to catch needs to see it: the two callers in this
+            project both document propagating it. Note which cases damage the
+            file and which do not. A failure to OPEN leaves the file untouched
+            and the count unchanged; a failure part-way through the write leaves
+            it holding neither the old count nor the new one, per the
+            non-atomicity described above.
     """
     text = _read_preserving_newlines(path)
     match = _find_touch_line(text)

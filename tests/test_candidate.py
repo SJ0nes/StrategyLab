@@ -325,6 +325,56 @@ def test_an_absolute_config_path_is_refused(tmp_path: Path, absolute: str) -> No
         read_candidate(_written(tmp_path, _artifact(config=absolute)), _protocol(), HASH)
 
 
+def test_a_drive_relative_windows_path_is_refused(tmp_path: Path) -> None:
+    # "C:configs/x.yaml" has a drive and no root, so PureWindowsPath.is_absolute
+    # says False while ntpath.isabs says True. It resolves against that drive's
+    # current directory, which is not this repository.
+    with pytest.raises(CandidateError, match="absolute path"):
+        read_candidate(
+            _written(tmp_path, _artifact(config="C:configs/ma_crossover.yaml")),
+            _protocol(),
+            HASH,
+        )
+
+
+@pytest.mark.parametrize(
+    "traversal",
+    [
+        "../../configs/ma_crossover.yaml",
+        "configs/../../../etc/ma_crossover.yaml",
+    ],
+)
+def test_a_config_path_that_climbs_out_of_the_repository_is_refused(
+    tmp_path: Path, traversal: str
+) -> None:
+    # "Not absolute" is weaker than "repository-relative", which is what the
+    # returned field is documented as. A `..` path is relative under both
+    # flavours, passes every absoluteness check, and can still name anything on
+    # the machine - including a home directory, verbatim, in the verdict.
+    with pytest.raises(CandidateError, match="climbs out of the repository"):
+        read_candidate(_written(tmp_path, _artifact(config=traversal)), _protocol(), HASH)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("strategy", ["ma_crossover"]),
+        ("strategy", 7),
+        ("noise_ceiling_note", 123),
+        ("noise_ceiling_note", {"note": "x"}),
+    ],
+)
+def test_a_non_string_text_field_is_refused_rather_than_stringified(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    # `str(["ma_crossover"])` is "['ma_crossover']" and would be recorded as the
+    # strategy's name; `str(123)` would be written as the search's own sentence
+    # and printed as the verdict's closing line. protocol.py already took this
+    # project's position on that coercion for exactly this reason.
+    with pytest.raises(CandidateError, match="is not a string"):
+        read_candidate(_written(tmp_path, _artifact(**{field: value})), _protocol(), HASH)
+
+
 @pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note"])
 def test_a_null_top_level_field_is_refused_rather_than_stringified(
     tmp_path: Path, field: str

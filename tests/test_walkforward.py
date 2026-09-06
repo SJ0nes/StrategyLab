@@ -303,6 +303,17 @@ def test_both_missed_criteria_are_named() -> None:
     assert "Sharpe" in reason
 
 
+def test_the_trade_floor_is_tested_before_the_finiteness_guard() -> None:
+    # Both would give INSUFFICIENT_DATA, so the outcome cannot tell them apart -
+    # the REASON is what says which criterion bound, and it is the reason an
+    # operator reads. Pinned because two fixtures have now carried a reason
+    # string nobody checked.
+    _, reason = _verdict(float("nan"), float("nan"), 0, _validation())
+
+    assert "below the floor of 30" in reason
+    assert "not a finite number" not in reason
+
+
 def test_too_few_pooled_trades_is_insufficient_data_not_a_fail() -> None:
     # 29 against a floor of 30, with a Sharpe that would otherwise pass easily.
     # Calling this a FAIL would discard a candidate nothing has refuted.
@@ -425,6 +436,36 @@ def test_an_in_sample_window_after_the_held_back_one_is_refused(
 
     with pytest.raises(ValueError, match="not before the held-back window"):
         walk_forward(_definition(), PARAMS, bars, protocol, protocol_path=protocol_copy)
+
+    assert load_protocol(protocol_copy).walk_forward_touches == 0
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        _validation(max_drawdown_ceiling_pct=float("inf")),
+        _validation(min_sharpe=float("inf")),
+        _validation(pass_margin=float("nan")),
+    ],
+    ids=["infinite ceiling", "infinite floor", "nan margin"],
+)
+def test_a_non_finite_threshold_is_refused_before_any_touch(
+    bars: pd.DataFrame, protocol_copy: Path, criteria: Validation
+) -> None:
+    # `load_protocol` checks max_drawdown_ceiling_pct only for being positive
+    # and min_sharpe not at all, so `.inf` loads. The drawdown test is then
+    # `drawdown > inf`, which never binds - the ceiling silently stops applying
+    # and a PASS can be returned on a criterion nobody applied. Refused up
+    # front, so that verdict is never computed, never printed, and never
+    # written.
+    with pytest.raises(ValueError, match="not finite"):
+        walk_forward(
+            _definition(),
+            PARAMS,
+            bars,
+            _protocol(validation=criteria),
+            protocol_path=protocol_copy,
+        )
 
     assert load_protocol(protocol_copy).walk_forward_touches == 0
 
@@ -932,16 +973,27 @@ def test_a_non_finite_fold_metric_is_written_as_null_not_zero(tmp_path: Path) ->
         trade_count=0,
         outcome=Outcome.INSUFFICIENT_DATA,
     )
+    # Outcome and reason DERIVED rather than typed out. The guard test above
+    # covers `_result()` and caught a truncated reason there; this fixture is
+    # the one it does not cover, and it carried the same truncation. Taking both
+    # from `_verdict` makes them correct by construction, and it also settles
+    # which criterion binds when several could: the pooled trade floor is tested
+    # before the finiteness guard, so a run with no trades and no measurable
+    # Sharpe reports the floor.
+    criteria = _validation()
+    outcome, reason = _verdict(float("nan"), float("nan"), 0, criteria)
+    assert outcome is Outcome.INSUFFICIENT_DATA
+
     unmeasurable = ValidationResult(
-        outcome=Outcome.INSUFFICIENT_DATA,
+        outcome=outcome,
         folds=(empty,),
         pooled_sharpe=float("nan"),
         pooled_max_drawdown_pct=float("nan"),
         total_trades=0,
         bars_used=0,
         warmup_bars=WARMUP,
-        threshold=1.2,
-        reason="0 round-trip trade(s) pooled across all folds, below the floor of 30",
+        threshold=criteria.effective_sharpe_bar,
+        reason=reason,
         walk_forward_touches=1,
     )
 
