@@ -7,6 +7,7 @@ arrives with its own tests rather than as part of a large unreviewable change.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -35,6 +36,13 @@ from strategylab.search.loop import (
     write_search_result,
 )
 from strategylab.search.noise import trials_note
+from strategylab.validate.candidate import CandidateError, read_candidate
+from strategylab.validate.walkforward import (
+    Outcome,
+    walk_forward,
+    write_validation_result,
+)
+from strategylab.windows import WindowError
 
 DATA_DIR = Path("data")
 STATE_DIR = Path("state")
@@ -43,6 +51,19 @@ STATE_DIR = Path("state")
 #: a ninety-row table in a terminal is unreadable and would bury the caveat
 #: underneath it, which is the one line of that output that must be read.
 TOP_CELLS_SHOWN = 10
+
+#: Printed in place of a metric that could not be computed. Never a zero: a
+#: Sharpe of 0.000 in a table reads as "measured, and no edge", which is a claim
+#: nobody made about a fold holding too few returns to have a deviation.
+METRIC_ABSENT = "n/a"
+
+#: How each verdict is coloured. A validation is read at a glance and the three
+#: outcomes mean very different things, so they must not look alike.
+VERDICT_STYLE = {
+    Outcome.PASS: "green",
+    Outcome.FAIL: "red",
+    Outcome.INSUFFICIENT_DATA: "yellow",
+}
 
 console = Console()
 err_console = Console(stderr=True)
@@ -84,11 +105,17 @@ app = typer.Typer(
 def status() -> None:
     """Report where the project is and which command comes next.
 
-    Reads the protocol, checks whether price data is cached, counts the
-    searches run so far, and reports the pass criteria and how many times the
-    held-back window has been read. Names the next command
-    but NEVER runs it - a status command that changes state cannot be run
-    freely, and one that cannot be run freely does not get run.
+    Reads the protocol, checks whether price data is cached, counts the searches
+    AND the validations run so far, and reports the pass criteria and how many
+    times the held-back window has been read. Names the next command but NEVER
+    runs it - a status command that changes state cannot be run freely, and one
+    that cannot be run freely does not get run.
+
+    The validation count is what selects the suggested next command: with a
+    search on disk and no validation beside it, this points at `validate` and
+    says what that costs. It counts artifacts in state/, not touches - the two
+    can differ, because a validation that fails after the window is read spends
+    a touch and writes nothing.
     """
     protocol = _load_or_exit()
 
@@ -127,7 +154,9 @@ def status() -> None:
         table.add_row("data", "[yellow]not cached[/yellow]")
 
     searches = len(list(STATE_DIR.glob("search-*.json"))) if STATE_DIR.exists() else 0
+    validations = len(list(STATE_DIR.glob("validation-*.json"))) if STATE_DIR.exists() else 0
     table.add_row("searches run", str(searches))
+    table.add_row("validations run", str(validations))
     table.add_row(
         "walk-forward reads",
         f"{protocol.walk_forward_touches}"
@@ -157,14 +186,24 @@ def status() -> None:
         console.print("       state/. Takes a few minutes.")
         return
 
-    console.print("Next:  [bold]uv run strategylab report[/bold]")
-    console.print("       Draws each stored search as a self-contained page in reports/.")
-    console.print("       Recomputes nothing and reads no window.")
+    if validations == 0:
+        latest = sorted(STATE_DIR.glob("search-*.json"))[-1]
+        console.print(f"Next:  [bold]uv run strategylab validate {latest.as_posix()}[/bold]")
+        console.print("       Walks that search's candidate through the held-back window.")
+        console.print(
+            "       [yellow]This spends a walk-forward read and records it permanently.[/yellow]"
+        )
+        console.print("       [bold]uv run strategylab report[/bold] draws the searches first,")
+        console.print("       recomputing nothing and reading no window.")
+    else:
+        console.print("Next:  [bold]uv run strategylab report[/bold]")
+        console.print("       Draws each stored search as a self-contained page in reports/.")
+        console.print("       Recomputes nothing and reads no window.")
     console.print()
     console.print(
         "[yellow]A search reports a noise ceiling only when given --trials[/yellow]; "
-        "without one, nothing it printed is evidence of an edge.\nThe validator is not "
-        "built at all, so no candidate has been tested on the held-back window."
+        "without one, nothing it printed is evidence of an edge - and the validator "
+        "does not gate on the ceiling either way."
     )
 
 
@@ -296,6 +335,25 @@ def _report_ceiling(result: SearchResult) -> None:
                 "size finds on data with no edge in it.[/yellow]"
             )
     console.print(f"[dim]{trials_note(len(ceiling))}[/dim]")
+
+
+def _metric(value: float, digits: int) -> str:
+    """Render a metric for a table, or say plainly that there is none.
+
+    A fold too short to have a standard deviation has no Sharpe, and printing
+    ``0.000`` there would state a result nobody measured. This prints
+    :data:`METRIC_ABSENT` instead.
+
+    Args:
+        value: The metric, in whatever unit that metric carries.
+        digits: Decimal places to show.
+
+    Returns:
+        The formatted number, or :data:`METRIC_ABSENT` if it is not finite.
+    """
+    if not math.isfinite(value):
+        return METRIC_ABSENT
+    return f"{value:.{digits}f}"
 
 
 def _repository_relative(path: Path) -> Path:
@@ -535,8 +593,143 @@ def validate(
     seconds. That is a deliberate friction rather than an oversight - a
     parameter set nobody's search chose is not a candidate, it is a guess, and
     the held-back window is too expensive to spend on guesses.
+
+    THERE IS NO CONFIRMATION PROMPT, and there is no dry run. Typing this
+    command IS the decision to spend a touch; a prompt would only be a second
+    place to change one's mind, and a mode that showed what validation would do
+    without paying for it is the loophole the counter exists to close. What this
+    command does instead is say the cost out loud before it is incurred, and
+    again afterwards.
     """
-    raise NotImplementedError
+    protocol = _load_or_exit()
+
+    if not result.is_file():
+        err_console.print(f"[bold red]no such search result[/bold red] {result.as_posix()}")
+        err_console.print(f"Look in {STATE_DIR.as_posix()}/ for a search-*.json file.")
+        raise typer.Exit(code=1)
+
+    ticker = protocol.instruments.research
+    if not is_cached(ticker, DATA_DIR):
+        err_console.print(f"[bold red]{ticker} is not cached[/bold red]")
+        err_console.print("Run [bold]uv run strategylab fetch[/bold] first.")
+        raise typer.Exit(code=1)
+    try:
+        bars, entry = cache_read(ticker, DATA_DIR)
+    except DataQualityError as exc:
+        err_console.print(f"[bold red]the cached snapshot is unusable[/bold red] {exc}")
+        err_console.print("Re-download with [bold]uv run strategylab fetch --force[/bold].")
+        raise typer.Exit(code=1) from exc
+
+    # Every refusal below happens BEFORE the held-back window is read, which is
+    # the point of doing them here rather than discovering them mid-run.
+    try:
+        candidate = read_candidate(result, protocol, entry.content_hash)
+    except CandidateError as exc:
+        err_console.print(f"[bold red]nothing to validate[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    try:
+        definition = load_strategy(candidate.config_path)
+    except StrategyConfigError as exc:
+        err_console.print(f"[bold red]config error[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    cell = ", ".join(f"{name}={value}" for name, value in candidate.params.items())
+    console.print(f"Validating [bold]{definition.name}[/bold]  {cell}")
+    header = Table(show_header=False, box=None, pad_edge=False)
+    header.add_column(style="dim", no_wrap=True)
+    header.add_column()
+    header.add_row("from", result.as_posix())
+    header.add_row("config", candidate.config_path.as_posix())
+    header.add_row("snapshot", f"{ticker}, hash {entry.content_hash[:12]}")
+    header.add_row(
+        "window",
+        f"{protocol.windows.walk_forward.start} to {protocol.windows.walk_forward.end}, "
+        f"folds of {protocol.windows.fold_months} month(s)",
+    )
+    header.add_row(
+        "bar",
+        f"Sharpe {protocol.validation.effective_sharpe_bar:.2f} "
+        f"({protocol.validation.min_sharpe:.2f} + {protocol.validation.pass_margin:.2f} "
+        f"margin), drawdown ceiling "
+        f"{protocol.validation.max_drawdown_ceiling_pct:.0f}%, "
+        f"{protocol.validation.min_trades_pooled} trades pooled",
+    )
+    console.print(header)
+    console.print(
+        f"\n[bold yellow]This reads the held-back window.[/bold yellow] It has been read "
+        f"{protocol.walk_forward_touches} time(s) before; this run makes it "
+        f"{protocol.walk_forward_touches + 1}, recorded permanently in protocol.yaml.\n"
+    )
+
+    started = datetime.now(UTC)
+    # Every exception type `walk_forward` documents, and every one
+    # `write_validation_result` documents, is caught here. A traceback would
+    # carry the absolute path of the file that raised, which on most machines
+    # contains a username - and these two calls are the ones that can fail AFTER
+    # the touch has been charged, which is the worst moment to hand somebody a
+    # stack trace instead of a sentence.
+    try:
+        verdict = walk_forward(definition, candidate.params, bars, protocol)
+        artifact = write_validation_result(verdict, candidate, protocol, started)
+    except (ValueError, WindowError, ProtocolError, OSError) as exc:
+        err_console.print(f"[bold red]validation could not run[/bold red] {exc}")
+        err_console.print(
+            "Check access_log.walk_forward_touches in protocol.yaml: if the failure came "
+            "after the window was read, the touch has been charged and no verdict was "
+            "written."
+        )
+        raise typer.Exit(code=1) from exc
+
+    folds = Table(title="Folds", title_justify="left")
+    folds.add_column("#", justify="right")
+    folds.add_column("from")
+    folds.add_column("to")
+    folds.add_column("sharpe", justify="right")
+    folds.add_column("drawdown %", justify="right")
+    folds.add_column("trades", justify="right")
+    folds.add_column("outcome")
+    for fold in verdict.folds:
+        folds.add_row(
+            str(fold.index),
+            str(fold.start),
+            str(fold.end),
+            _metric(fold.sharpe, 3),
+            _metric(fold.max_drawdown_pct, 2),
+            str(fold.trade_count),
+            fold.outcome.value,
+        )
+    console.print()
+    if verdict.folds:
+        console.print(folds)
+        console.print(
+            "[dim]Per-fold outcomes are advisory. The decision below is made on the folds "
+            "pooled together, which is the less noisy statistic.[/dim]"
+        )
+
+    console.print()
+    console.print(f"[bold {VERDICT_STYLE[verdict.outcome]}]{verdict.outcome.value.upper()}[/]")
+    console.print(f"  {verdict.reason}")
+    console.print(
+        f"  pooled over {verdict.bars_used} held-back bar(s): "
+        f"Sharpe {_metric(verdict.pooled_sharpe, 3)}, "
+        f"drawdown {_metric(verdict.pooled_max_drawdown_pct, 2)}%, "
+        f"{verdict.total_trades} trade(s)"
+    )
+    console.print(
+        f"  in-sample, for comparison: Sharpe {_metric(candidate.search_sharpe, 3)} "
+        f"(plateau {_metric(candidate.search_plateau_score, 3)})"
+    )
+    if candidate.degenerate:
+        console.print(
+            "  [yellow]the search flagged this plateau as degenerate[/yellow] - its "
+            "neighbours executed the same trades"
+        )
+
+    console.print(f"\n  verdict  {artifact.as_posix()}")
+    console.print(
+        f"  held-back window read [bold]{verdict.walk_forward_touches}[/bold] time(s) in total"
+    )
+    console.print(f"\n[dim]{candidate.noise_ceiling_note}[/dim]")
 
 
 @app.command()

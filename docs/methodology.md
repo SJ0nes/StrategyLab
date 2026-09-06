@@ -1,25 +1,28 @@
 # Methodology
 
-> **Status: the search half of this document is built and running. The half that
-> decides whether a search result means anything is not.**
+> **Status: the whole research half of this document is built and running. The
+> live half is not, and two of the corrections described below inform a human
+> rather than gating anything.**
 >
-> The split is now enforced for the one component that reads bars.
-> `load_protocol` refuses a protocol whose two windows overlap *as declared*,
-> and `search/loop.py` cuts its bars from `protocol.windows.in_sample` and from
-> nothing else, with a test that corrupts the future and asserts no result
-> moves. `fetch` still caches both windows in a single file, so the guarantee
-> protects that one code path rather than the repository: a second component
-> that slices the cached frame itself would break it exactly as before.
+> The split is enforced by `windows.py`, which both components that read bars go
+> through. `load_protocol` refuses a protocol whose two windows overlap *as
+> declared*; `in_sample_bars` cuts from `protocol.windows.in_sample` and from
+> nothing else; `walk_forward_bars` cannot return a held-back bar without
+> incrementing the access counter, and there is no dry run. `fetch` still caches
+> both windows in a single file, so the guarantee lives in that accessor rather
+> than in the data on disk — but there is now one accessor rather than a private
+> helper per component.
 >
 > Grid expansion, plateau scoring, the edge check, the degeneracy check, the
-> graveyard, the loop that joins them, the noise ceiling and the surface report
-> are built, tested, and reachable as `strategylab search` and `strategylab
-> report`. **Walk-forward validation is still a stub**, so a search can nominate
-> a candidate and benchmark it against noise, and nothing yet establishes that
-> it survives unseen data. The ceiling is also REPORTED rather than enforced:
-> nothing rejects a candidate for sitting inside it. Sentences below about
-> validation and live trading describe a design rather than a running system. See [architecture.md](architecture.md) for what exists
-> and [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
+> graveyard, the loop that joins them, the noise ceiling, the surface report and
+> **walk-forward validation** are built, tested, and reachable as `strategylab
+> search`, `report` and `validate`. What is NOT built: anything computing
+> buy-and-hold, and any rejection on the noise ceiling — both corrections are
+> REPORTED rather than enforced, so a candidate can pass validation while
+> sitting inside the noise distribution and while losing to simply owning the
+> index. Sentences below about live trading describe a design rather than a
+> running system. See [architecture.md](architecture.md) for what exists and
+> [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 
 Why this project is arranged the way it is. Every rule below exists because the
 obvious alternative produces a number that looks good and means nothing.
@@ -60,6 +63,15 @@ observations is a noisier statistic than one computed on all the trades
 together. Per-fold consistency is reported, and it matters: it shows whether a
 pass came from one lucky year or from behaviour that persisted.
 
+The engine runs **once** over the held-back window and the folds are date slices
+of that single run, so a position is never forced flat at a boundary and the
+pooled drawdown can see a decline spanning two folds. It is warmed up on the
+last `warmup - 1` in-sample bars, so the equity curve starts on the window's
+first day rather than seven months into it — a held-back evaluation reading its
+own past, which is the opposite direction from the leak this split exists to
+prevent. Both choices, and the two others the contract left open, are argued out
+in [decisions/0009](decisions/0009-how-the-held-back-window-is-run.md).
+
 ### The access counter
 
 Every walk-forward run increments `access_log.walk_forward_touches`. This is
@@ -92,6 +104,13 @@ A trend strategy on daily bars trades rarely. `insufficient_data` is expected to
 be common. If it is the *only* answer this design ever returns, that is a finding
 about the design, recorded in `LIMITATIONS.md` — not a reason to lower a
 threshold after seeing the counts.
+
+**That is what happened.** The committed candidate took 8 round-trip trades
+across the whole held-back window against a pooled floor of 30, so this design
+as pre-registered cannot test this strategy. A ninth position was still open
+when the window ended, paying no exit cost and counted in no fold while still
+sitting inside the pooled Sharpe. `LIMITATIONS.md` records both figures and the
+three honest routes out, none of which is moving the floor.
 
 ## Plateaus over peaks
 

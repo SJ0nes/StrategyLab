@@ -115,8 +115,13 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: :func:`write_search_result` enumerates the current fields.
 SEARCH_SCHEMA_VERSION = 4
 
-#: Where a search artifact is written. ``cli.status`` counts ``search-*.json``
-#: here to report how many searches have been run.
+#: Where a search artifact is written, and - since ``validate/`` was built - the
+#: default directory for a validation artifact too. ``cli.status`` counts
+#: ``search-*.json`` and ``validation-*.json`` here to report how many of each
+#: have been run. Named once and imported by
+#: :func:`~strategylab.validate.walkforward.write_validation_result` rather than
+#: redeclared there, so the two artifact kinds cannot end up in different
+#: directories.
 DEFAULT_RESULTS_DIR = Path("state")
 
 #: The ``fixed`` key naming position size, checked before a search starts.

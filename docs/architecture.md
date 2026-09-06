@@ -51,7 +51,9 @@ signature and a docstring contract but a `raise NotImplementedError` body.
      ┌────────────────┐            ┌─────────────────┐
      │   validate/    │            │    logging/     │
      │ walkforward    │            │ decisions.py    │
-     │         STUB   │            │          STUB   │
+     │        BUILT   │            │          STUB   │
+     │ candidate.py   │            │                 │
+     │        BUILT   │            │                 │
      └───────┬────────┘            └────────┬────────┘
              │                              │
              └──────────────┬───────────────┘
@@ -66,7 +68,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 ```
 
 `cli.py` sits across the top of all of it. **BUILT:** `status`, `fetch`,
-`search`, `report`. **STUB:** `validate`, `run`, `diff`.
+`search`, `report`, `validate`. **STUB:** `run`, `diff`.
 
 ## What is built
 
@@ -91,9 +93,11 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 48 |
 | `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. | in the 48 |
 | `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
-| `cli.py` | `status`, `fetch`, `search` and `report`. | none |
+| `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 46 |
+| `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 24 |
+| `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**676 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 36 + 16. Run `uv run pytest` to see the
+**746 tests pass** — 34 + 40 + 81 + 81 + 41 + 28 + 33 + 74 + 51 + 33 + 80 + 48 + 36 + 16 + 46 + 24. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -103,13 +107,12 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **14
-`NotImplementedError` bodies across 5 files:**
+session builds against a fixed interface rather than inventing one. **12
+`NotImplementedError` bodies across 4 files:**
 
-`cli.py` (3 — three of the seven commands) · `execution/t212.py` (6) ·
+`cli.py` (2 — `run` and `diff`) · `execution/t212.py` (6) ·
 `logging/decisions.py` (2) ·
-`risk/limits.py` (2) ·
-`validate/walkforward.py`.
+`risk/limits.py` (2).
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
 list and contains no `NotImplementedError`. It is a `typing.Protocol` — a
@@ -130,11 +133,12 @@ these exist:
   yet be compared against simply owning the index. This is the largest remaining
   hole in the search output: `search` now prints a Sharpe with no benchmark and
   no noise ceiling beside it.
-- **Any caller of `increment_walk_forward_touches`** — the counter is built and
-  tested and wired to nothing, because walk-forward validation does not exist.
-  The counter reads zero because nothing has read the held-back window, and that
-  is now guaranteed by `loop._in_sample_window` rather than by there being no
-  reader at all.
+- **Any comparison of a verdict against a benchmark or a ceiling.** The counter
+  now has a caller — `windows.walk_forward_bars`, reached by
+  `validate.walk_forward` — so the held-back window is readable and read. What
+  is still missing is anything to read the verdict *against*: no buy-and-hold,
+  and no rejection on the noise ceiling. A `pass` would mean "cleared a
+  pre-registered Sharpe bar", not "beat owning the index".
 - **A noise ceiling by default.** `search` computes one only when given
   `--trials`, because each trial costs a full grid. Without it the artifact
   records `"noise_ceiling": null` and every output says nothing it printed is
@@ -166,21 +170,32 @@ handed to `run_search`.
 
 The in-sample/walk-forward split is this project's central methodological claim.
 Until the search loop existed it was enforced by the absence of anything that
-could violate it. It is now enforced by `loop._in_sample_window`, which cuts the
+could violate it. It is now enforced by `windows.in_sample_bars`, which cuts the
 frame down from `protocol.windows.in_sample` and from nothing else — not from
 the frame it was handed, not from an argument a caller could widen — and by
 `tests/test_search_loop.py`, which corrupts every bar after the window's end,
 passes the frame in intact, and asserts no cell's result moves.
 
-**That chokepoint now exists.** `windows.py` owns both accessors and every
-component asks it for bars. `in_sample_bars` is a plain slice; `walk_forward_bars`
-CANNOT BE CALLED WITHOUT INCREMENTING the protocol's touch counter, and takes the
-protocol file it will increment so tests and development can point it at a copy.
-There is deliberately no dry run: a mode returning held-back bars without
-charging for them is the loophole that would make the counter meaningless.
+**That chokepoint now exists, and it now has two consumers rather than one.**
+`windows.py` owns both accessors and every component asks it for bars.
+`in_sample_bars` is a plain slice; `walk_forward_bars` CANNOT BE CALLED WITHOUT
+INCREMENTING the protocol's touch counter, and takes the protocol file it will
+increment so tests and development can point it at a copy. There is deliberately
+no dry run: a mode returning held-back bars without charging for them is the
+loophole that would make the counter meaningless.
 
 The search loop's private `_in_sample_window` is gone rather than kept beside
 it, so there is one slicer and it cannot drift.
+
+**`validate.walk_forward` is the second consumer, and it uses BOTH accessors.**
+It reads the held-back window through the paid one, and the tail of the in-sample
+window through the free one — `warmup - 1` bars of it, so the equity curve starts
+on the held-back window's first bar rather than seven months into it. That is a
+warm-up, not a leak: the rule is that the search must not see the future, and
+this is a held-back evaluation reading its own past. `docs/decisions/0009` argues
+it out, and `tests/test_walkforward.py` corrupts the bars on BOTH sides of what
+the validator may read — the future beyond the window's end, and the in-sample
+past beyond the warm-up — and asserts no fold moves.
 
 ## Design rules the structure encodes
 

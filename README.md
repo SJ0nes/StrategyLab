@@ -27,47 +27,62 @@ surrogate series and reports where the candidate sits in that distribution —
 the comparison without which a winning Sharpe is a selection artefact rather
 than a finding.
 
-**What is still missing is the part that tests a candidate on unseen data.**
-`validate/` is a stub, nothing has read the held-back window, and nothing
-computes a buy-and-hold benchmark. **No strategy has been validated, and no
-figure from a search appears in this README.**
+**The part that tests a candidate on unseen data now exists too.**
+`strategylab validate state/search-<stamp>.json` walks that search's winner
+through 2019–2024 in folds, pools the result, and returns pass, fail, or
+`insufficient_data` against thresholds fixed before anything ran. Every run
+increments `access_log.walk_forward_touches`, permanently, because the split
+degrades with use.
+
+**The repository's own counter still reads 0, and no strategy has been
+validated here.** The command was exercised end to end against a *copy* of
+`protocol.yaml`, `configs/` and `data/` in a scratch directory, so nothing in
+this repository has read the held-back window. There is no CLI flag for that —
+`validate` takes no options — it is done by running the command somewhere else;
+the `protocol_path` argument that makes it possible belongs to the library
+function `validate.walk_forward`, which is what the tests use. The first real
+run is the operator's to make. **No figure from a search appears in this
+README.**
 
 | Built | Not built |
 |---|---|
-| Protocol loader and validator | Walk-forward validation — no candidate has been tested on unseen data |
-| Price data layer — validation, provenance, parquet cache | Any benchmark — nothing computes buy-and-hold |
-| Cost model — hand-verified arithmetic | The noise band drawn on the figure's own axis |
-| Strategy-config loader — closed schema, closed vocabulary | Decision logging, risk limits, venue adapters |
-| The noise ceiling — block-resampled surrogates, `--trials` | Rejection *on* the ceiling — it informs, it does not gate |
+| Protocol loader and validator | Any benchmark — nothing computes buy-and-hold |
+| Price data layer — validation, provenance, parquet cache | The noise band drawn on the figure's own axis |
+| Cost model — hand-verified arithmetic | Rejection *on* the ceiling — it informs, it does not gate |
+| Strategy-config loader — closed schema, closed vocabulary | Fold panels in a report — a verdict is JSON, invisible in every figure |
+| The noise ceiling — block-resampled surrogates, `--trials` | Decision logging, risk limits, venue adapters, the live worker |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
-| Backtest engine and metrics, with the determinism test | |
+| Backtest engine and metrics, with the determinism test | A hash on the strategy config — only the price snapshot is checked |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
 | Plateau scoring, the edge check, the degeneracy check | |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
-| `status`, `fetch`, `search` and `report` commands *(untested)* | |
+| Walk-forward validation — folds, three outcomes, the pass margin, the access counter | |
+| `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
 
-**676 tests pass** — verify with `uv run pytest`. They cover the protocol
-loader, the data layer, the cost model, the strategy-config loader, strategy
-evaluation, the performance metrics, the backtest engine, grid expansion,
-plateau scoring, the graveyard, the search loop, the noise ceiling and the reports — thirteen
-areas, one per test file.
-The four CLI commands have no tests, and neither does the vendor fetch path,
+**746 tests pass** — verify with `uv run pytest`. They cover the protocol
+loader, the window accessors, the data layer, the cost model, the
+strategy-config loader, strategy evaluation, the performance metrics, the
+backtest engine, grid expansion, plateau scoring, the graveyard, the search
+loop, the noise ceiling, the reports, walk-forward validation and the candidate
+reader — sixteen areas, one per test file.
+The five CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 14 of them across 5
+docstring contract with a `raise NotImplementedError` body — 12 of them across 4
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
-**The split now has a guard, not just an absence.** `fetch` caches 2005–2024 in
-one file and hands all of it to the search; the search cuts it down from
-`protocol.windows.in_sample` and from nothing else.
-`tests/test_search_loop.py` corrupts every bar after the window's end, passes
-the frame in intact, and asserts both the bar count and that no cell's result
-moves. The count assertion is not decoration: an audit showed the corruption
-alone is blind to a one-bar leak on this fixture, and `LIMITATIONS.md` says why.
-The guard protects one consumer — the next component that reads bars will need
-the same treatment, and `docs/architecture.md` says how.
+**The split now has a guard, not just an absence, and the guard has two
+consumers.** `fetch` caches 2005–2024 in one file and hands all of it to
+whoever asks; `windows.py` is the one place either component decides which bars
+it may see. Reading the in-sample window is free; reading the held-back window
+cannot be done without the counter moving, and there is deliberately no dry run.
+`tests/test_search_loop.py` corrupts every bar after the in-sample window's end,
+passes the frame in intact, and asserts both the bar count and that no cell's
+result moves. `tests/test_walkforward.py` does the same on both sides of the
+validator's entitlement — the future beyond the held-back window, and the
+in-sample past beyond its warm-up.
 
 Both guarantees this project rests on now have tests.
 **Strategy evaluation cannot read past the current bar** — the lookahead
@@ -103,35 +118,44 @@ Full version, with every module marked built or stubbed, in
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
-were last run against a fresh clone of `541c2ee` with an empty `data/` cache:
-**672 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
-The clone and the first `uv run` need the network to fetch dependencies; **the
-test suite itself makes no network call**, which is the property that matters.
+were last run with an empty `data/` cache: **746 passed**, and `status` reported
+`data  not cached` and pointed at `fetch`. The clone and the first `uv run` need
+the network to fetch dependencies; **the test suite itself makes no network
+call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 676 tests, none touching the network
+uv run pytest                   # 746 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
 `status` reads the protocol and reports where the project is. It never changes
 anything, so it is safe to run at any time.
 
-Three further commands do the work. `fetch` is **the only command that touches
+Four further commands do the work. `fetch` is **the only command that touches
 the network**, so unlike the others it can fail for reasons outside this
-repository. `search` needs `fetch` to have run, and `report` needs `search`:
+repository. `search` needs `fetch` to have run; `report` and `validate` need
+`search`:
 
 ```bash
 uv run strategylab fetch                              # caches SPY, with provenance
 uv run strategylab search configs/ma_crossover.yaml   # ~4 min; writes state/search-*.json
 uv run strategylab search configs/ma_crossover.yaml --trials 100   # + noise ceiling; hours
 uv run strategylab report                             # renders those to reports/*.html
+uv run strategylab validate state/search-<stamp>.json # SPENDS A HELD-BACK READ
 ```
 
 `search` reads only 2005–2018, whatever the cache holds. `report` recomputes
 nothing — it re-renders what is already on disk, so changing a template costs no
-protocol access. Both report no noise ceiling, because that component is not
-built.
+protocol access.
+
+**`validate` is the one command that is not free to re-run.** It reads
+2019–2024, increments `access_log.walk_forward_touches` in `protocol.yaml`
+before it is handed a single bar, and writes its verdict to
+`state/validation-<stamp>.json` so the answer never has to be re-derived. There
+is no dry run and no confirmation prompt: typing the command is the decision.
+Development and tests point the counter at a temporary copy of the protocol,
+which is why this repository's counter still reads 0.
 
 Run every command from the repository root — paths in the protocol are relative
 to the working directory.
@@ -143,9 +167,10 @@ The full argument is in [docs/methodology.md](docs/methodology.md). In short:
 **The split.** Parameter search may look at 2005–2018 and nothing else.
 2019–2024 is held back and used only to test a candidate already chosen. The
 loader refuses a protocol whose windows overlap. Every read of the held-back
-window is meant to increment a counter, because the split degrades with use and
-that degradation should be visible rather than forgotten. *The counter is built
-and tested but nothing calls it yet, because nothing reads that window yet.*
+window increments a counter, because the split degrades with use and that
+degradation should be visible rather than forgotten. *`validate` is the caller;
+`windows.walk_forward_bars` is the only way in, and it charges before it
+returns. This repository's counter reads 0 because nobody has spent it here.*
 
 **Plateaus over peaks.** *Built, tested, and now applied to a decision rather
 than merely computed.* The best single cell in a parameter grid is usually the
@@ -185,10 +210,25 @@ describe. And **the ceiling informs; it does not gate**: `select_candidate`
 never sees it, so a candidate can be nominated while sitting inside the
 distribution.
 
-**Three outcomes, not two.** *Not yet implemented.* Validation returns pass,
-fail, or `insufficient_data`. The third is not a soft failure — it means the strategy was
-never really tested. Conflating it with failure throws away a candidate that was
-never refuted.
+**Three outcomes, not two.** *Built and tested.* Validation returns pass, fail,
+or `insufficient_data`. The third is not a soft failure — it means the strategy
+was never really tested. Conflating it with failure throws away a candidate that
+was never refuted, and the two have separate pre-registered floors:
+`min_trades_per_fold` decides whether one fold reports a verdict,
+`min_trades_pooled` whether the validation as a whole does. The pass bar is
+`min_sharpe + pass_margin`, additive, so a marginal pass is a fail; a pooled
+Sharpe that is not a finite number is `insufficient_data` rather than a silent
+pass. The held-back window is run as **one continuous backtest sliced into
+folds**, warmed up on in-sample bars so the curve starts on the window's first
+day — argued out in
+[docs/decisions/0009](docs/decisions/0009-how-the-held-back-window-is-run.md).
+
+**Expect `insufficient_data` from the committed config, and do not fix it by
+lowering the floor.** A 150-bar trend filter takes one or two round trips a
+year; six years of held-back data cannot reach thirty trades. The run also ends
+holding a position that pays no exit cost and is missing from the trade count
+while still moving the pooled Sharpe. [LIMITATIONS.md](LIMITATIONS.md) records
+both, and what the honest routes out are.
 
 ## Results
 
@@ -222,8 +262,11 @@ version in force, and the content hash of the data it used.
 the only time such a document gets written honestly. The most important entries:
 the strategy is searched on `SPY` but would be traded as `VUAG.L`, which did not
 exist for most of the in-sample window; the cost model's minimum-commission and
-FX-conversion terms are both configured to zero; and the noise ceiling does not
-currently feed the pass decision.
+FX-conversion terms are both configured to zero; the noise ceiling does not feed
+the pass decision; nothing computes a buy-and-hold benchmark; and the committed
+strategy trades too rarely for the pre-registered trade floors to be reachable,
+which is a finding about the validation design rather than a reason to move a
+threshold.
 
 ## How this was built
 

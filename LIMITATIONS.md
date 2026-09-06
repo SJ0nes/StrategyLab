@@ -6,17 +6,22 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Sixteen modules have working bodies: `protocol.py`, `data/source.py`,
-`backtest/costs.py`, `backtest/metrics.py`, `backtest/engine.py`,
-`core/config.py`, `core/strategy.py`, `search/grid.py`, `search/plateau.py`,
-`search/graveyard.py`, `search/loop.py`, `search/surrogate.py`,
-`search/noise.py`, `report/render.py`, `report/surface.py`,
-`report/palette.py`, and the `status`, `fetch`, `search` and `report` commands
-in `cli.py`. Fourteen `NotImplementedError` bodies remain, across 5 files. Two
-further modules are mostly types rather than behaviour: `core/types.py` holds the
-shared value types, and `execution/venue.py` holds the venue interface and its
-data classes. `venue.py` has no tests; the one guard in `types.py` is covered by
-`tests/test_strategy_config.py`.
+Nineteen modules have working bodies: `protocol.py`, `windows.py`,
+`data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
+`backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
+`search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
+`search/surrogate.py`, `search/noise.py`, `report/render.py`,
+`report/surface.py`, `report/palette.py`, `validate/walkforward.py`,
+`validate/candidate.py`, and the `status`, `fetch`, `search`, `report` and
+`validate` commands in `cli.py`. Twelve `NotImplementedError` bodies remain,
+across 4 files. Two further modules are mostly types rather than behaviour:
+`core/types.py` holds the shared value types, and `execution/venue.py` holds the
+venue interface and its data classes. `venue.py` has no tests; the one guard in
+`types.py` is covered by `tests/test_strategy_config.py`.
+
+**What is left is the live half.** `logging/decisions.py`, `risk/limits.py`,
+`execution/t212.py`, and the `run` and `diff` commands. The research pipeline —
+fetch, search, report, validate — runs end to end.
 
 **A strategy config can now be read, expanded, backtested and scored — by the
 product, not only by a test.**
@@ -39,6 +44,33 @@ in it will not find one.
 2005-2018, scores the surface by neighbourhood median, rejects edge winners and
 drawdown breaches into the graveyard, and writes every cell to
 `state/search-<stamp>.json`. No number from it is quoted here or in the README.
+
+**Validation now runs, and the repository's own held-back window is still
+unread.** `strategylab validate state/search-<stamp>.json` walks a search's
+candidate through 2019-2024 and writes a verdict. `access_log.walk_forward_touches`
+reads **0**, and no validation artifact is committed, because `state/` is
+gitignored and nothing has been validated against the repository's own
+`protocol.yaml`. The command was exercised end to end against a COPY of the
+protocol and a copy of the data — which is what `walk_forward`'s `protocol_path`
+argument exists for — so the counter that copy carries is the only one that
+moved. The first real run is the operator's to make, and it is permanent.
+
+**A verdict does not check the config it validates.** `read_candidate` compares
+the search artifact's schema version, protocol version and price-snapshot
+content hash against the ones in force, and refuses on any mismatch before a
+touch is charged. It does NOT hash the strategy config: it loads
+`configs/ma_crossover.yaml` from the path the artifact names, and a config edited
+between the search and the validation would load silently. The verdict would then
+describe a strategy no search ever nominated, and nothing in either file would
+say so.
+
+**A validated candidate starts flat.** The held-back run is warmed up on
+`warmup - 1` in-sample bars but enters the window with no position, so a
+strategy that would already have been long on 2019-01-02 is credited with
+entering later. Carrying a position across the boundary is the alternative and
+it is worse — an entry decided on in-sample data would appear as a held-back
+result — but the approximation is real and it costs the first trade of the
+window. See [docs/decisions/0009](docs/decisions/0009-how-the-held-back-window-is-run.md).
 
 **The noise ceiling is off by default, which diverges from a rule `CLAUDE.md`
 calls non-negotiable.** That rule reads "Every search reports its noise
@@ -99,11 +131,12 @@ reproducible from this repository alone — regenerating one needs a `fetch`
 against a vendor that revises history. What IS reproducible is the run against a
 given cached snapshot: the artifact records that snapshot's content hash.
 
-**There is still no validation outcome and no benchmark.** `validate/` is a
-stub, nothing has read the held-back window, and nothing anywhere computes
-buy-and-hold — so no search result can yet be compared against simply owning the
+**There is a validation outcome and still no benchmark.** `validate/` is built
+and `strategylab validate` runs, but nothing anywhere computes buy-and-hold — so
+no result, in-sample or held-back, can be compared against simply owning the
 index, which a long-only trend strategy on the S&P 500 must beat to be worth
-anything.
+anything. A `pass` from this validator means "cleared a pre-registered Sharpe
+bar", not "beat the index".
 
 **There are two decision-log shapes and the design says there should be one.**
 `docs/architecture.md` states the schema is defined once, in
@@ -124,27 +157,39 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-676 tests pass (`uv run pytest`). They cover the protocol loader, the data
-layer, the cost model, the strategy-config loader, strategy evaluation, the
-performance metrics, the backtest engine, grid expansion, plateau scoring,
-the graveyard, the search loop, the noise ceiling and the reports — thirteen
-areas, one per test file.
+746 tests pass (`uv run pytest`). They cover the protocol loader, the window
+accessors, the data layer, the cost model, the strategy-config loader, strategy
+evaluation, the performance metrics, the backtest engine, grid expansion,
+plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
+walk-forward validation and the candidate reader — sixteen areas, one per test
+file.
 
 What has no tests is not only the stub bodies, and an earlier version of this
-paragraph said it was. Three FINISHED areas are untested: **the CLI**, all four
-of `status`, `fetch`, `search` and `report`; the venue interface in
+paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
+of `status`, `fetch`, `search`, `report` and `validate`; the venue interface in
 `execution/venue.py`; and `YFinanceSource`'s fetch path, which by policy no test
-may call. The CLI is the one that keeps growing — `search` and `report` together
-are a few hundred lines of argument handling, error paths and output formatting,
-and every failure branch in them is unexercised: a missing config, an
-unparseable one, an uncached instrument, an unreadable snapshot, an artifact
-that will not render. The functions beneath are covered; the commands wrapping
-them are not. Untested too is every type
-definition the stub modules carry beside their `NotImplementedError` bodies —
-`DecisionRecord`'s sixteen fields, `RiskLimits`, `PortfolioState`, `FoldResult`,
-`ValidationResult`, the `Verdict` and `Outcome` enums, `T212Error`, and the
-default paths. Those are real code, some of it load-bearing for a later
-component's schema, and nothing exercises any of it.
+may call. The CLI is the one that keeps growing — `search`, `report` and
+`validate` together are several hundred lines of argument handling, error paths
+and output formatting, and every failure branch in them is unexercised: a
+missing config, an unparseable one, an uncached instrument, an unreadable
+snapshot, an artifact that will not render, a candidate from the wrong snapshot.
+The functions beneath are covered; the commands wrapping them are not.
+
+**`validate` is the one where that gap costs something.** Its failure branches
+are the only ones in this project that can be re-entered only at the price of a
+permanent touch, and they are the branches nothing exercises. The refusals that
+happen BEFORE the read are covered — `tests/test_candidate.py` drives every one
+of them through `read_candidate` — but the wiring that calls it, and the error
+handling around the two calls that can fail after the touch is charged, is not.
+
+Untested too is every type definition the remaining stub modules carry beside
+their `NotImplementedError` bodies — `DecisionRecord`'s sixteen fields,
+`RiskLimits`, `PortfolioState`, the `Verdict` enum, `T212Error`, and the default
+paths. Those are real code, some of it load-bearing for a later component's
+schema, and nothing exercises any of it. `FoldResult`, `ValidationResult` and
+`Outcome` were on that list until this session and are not any more: they are in
+the built `validate/walkforward.py` and exercised throughout
+`tests/test_walkforward.py`.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
@@ -287,19 +332,57 @@ search when asked for, so it can inform which candidate a human chooses.
 `walk_forward` never receives it, and neither does `select_candidate`. A
 candidate can therefore be nominated by the search AND pass validation while
 sitting inside the noise distribution, and nothing in the code will stop that at
-either stage. The ceiling is a number a person must read and act on.
+either stage. The ceiling is a number a person must read and act on. What the
+validator does do is carry the search's own caveat forward verbatim — a verdict
+on a candidate never benchmarked against noise prints and records the sentence
+saying so — which is disclosure, not a gate.
 
 **Nothing computes a benchmark.** There is no buy-and-hold comparison anywhere.
 A long-only trend strategy on the S&P 500 over 2005–2024 must beat simply
 holding the index to be worth anything, and no module computes that number.
 
-**Folds may contain few trades.** `min_trades_per_fold` is 10 and
-`min_trades_pooled` is 30. A moving-average crossover on daily bars does not
-trade often. `insufficient_data` is expected to be a common and honest outcome —
-it means get more history or trade more often, and it is a different answer from
-`fail`. If it becomes the *only* answer, that is a finding about whether this
-design can test this strategy at all. It is never a reason to lower a threshold
-after seeing the counts.
+**Folds contain far too few trades, and this is now measured rather than
+feared.** `min_trades_per_fold` is 10 and `min_trades_pooled` is 30. The
+committed candidate — `fast=10, slow=80, trend=150` — took **8 round-trip trades
+across the whole of 2019-2024**, between 0 and 3 per twelve-month fold. Every
+fold reports `insufficient_data` on its own count, and so does the pooled
+decision, at 8 against a floor of 30.
+
+Read those per-fold counts carefully: a fold's count is trades CLOSED in it, so
+a `0` does not mean a year of inactivity. 2021 shows zero while holding a
+position opened on 2021-10-20 straight through into 2022.
+
+**The held-back run ends holding a position, and that position is in the
+figures.** Nine entries, eight exits: the trade opened 2024-08-20 was still open
+on 2024-12-31, 19.61 units held for the last 93 bars — 6.2% of the window.
+Nothing liquidates at the window edge. So that ninth position **pays no exit
+cost** — no half-spread, no slippage, no commission on the way out — it is
+**absent from the `8` above**, because `total_trades` counts round trips
+completed, and its **mark-to-market is nevertheless inside the pooled Sharpe and
+the pooled drawdown** the verdict rests on, because the engine marks equity to
+every close.
+
+The direction of the bias is not knowable in advance: an open position that
+happened to be up flatters the Sharpe, one that happened to be down depresses
+it, and either way the exit cost is missing. It is not corrected because the
+alternatives are worse — forcing a liquidation invents an exit nobody took and
+changes what `run_backtest` means for every caller, and truncating the curve at
+the last exit discards real bars. It is stated instead. Any future window will
+have the same property at its right edge.
+
+That figure comes from a development run against a COPY of `protocol.yaml`; the
+repository's counter still reads 0 and no artifact from it is committed. It is
+recorded here anyway, because it is a finding about the validation design and
+whoever spends the real touch should know it before they spend it.
+
+**This design, as pre-registered, cannot test this strategy.** A 150-bar trend
+filter on daily bars produces one or two round trips a year; six years of
+held-back data cannot reach thirty. The floors are not being changed — a
+threshold lowered after seeing the count is not a threshold, and that is the
+exact failure the pre-registration exists to prevent. The honest routes out are
+a strategy that trades more often, a longer held-back window, or a
+pre-registered decision recorded in `docs/decisions/` with the access counter
+reset. All three are the operator's call, not the code's.
 
 **Six folds is not six independent regimes.** The held-back window is 2019–2024,
 which contains one COVID crash and one 2022 drawdown, on a single market path.
@@ -476,18 +559,20 @@ What remains is that nothing *enforces* the use of that module. A component
 could still slice a cached frame with plain pandas and nobody would notice. The
 chokepoint is a convention backed by one obvious place to go, not a mechanism.
 
-**Nothing calls `increment_walk_forward_touches` in anger yet.** It is now
-wired: `windows.walk_forward_bars` increments it before returning a single
-held-back bar. But no product code calls that accessor either, because the
-validator does not exist, so the counter still reads zero for the honest reason
-rather than an accidental one.
+**`increment_walk_forward_touches` now has a product caller, and has still never
+been called in anger.** The chain is complete: `strategylab validate` →
+`validate.walk_forward` → `windows.walk_forward_bars` → the counter, incremented
+before a single held-back bar is returned. The repository's counter reads **0**
+because nobody has run that command against the repository's own
+`protocol.yaml` — not because nothing could. That is a weaker guarantee than the
+one this entry used to record, and it is the correct one from here on: the
+number is now evidence of a choice rather than of an absence.
 
-**The old entry, still true of what it describes.** The counter is implemented
-and tested, and no production code path invokes it, because the only thing that
-should — walk-forward validation — does not exist. The counter reads zero
-because nothing has read the held-back window; for the search that is now
-enforced, and for everything else it remains true only because nothing else
-reads bars at all.
+**Two earlier entries here are now historical.** They said no production code
+path invoked the counter, because the only thing that should — walk-forward
+validation — did not exist. It exists. What survives from them is the reason the
+distinction mattered: a counter at zero means something quite different when a
+reader exists, and this document should not let that shift pass silently.
 
 **The fetch path itself has no test.** `YFinanceSource.fetch` and the
 vendor-frame normalisation behind it are the one part of the data layer that
@@ -618,9 +703,10 @@ gap is structural rather than unfinished work:
   computed from the artifact's stored percentiles rather than the raw trials, so
   it is coarse: it can say "above the 95th" or "around the 50th" and nothing
   between. The band is roadmap session 8.
-- **No fold panels and no two-run comparison.** `validate/` is a stub, so no
-  fold exists, and nothing yet loads two result sets. These are roadmap session
-  8, after the components they display.
+- **No fold panels and no two-run comparison.** `validate/` now produces folds
+  and writes them to `state/validation-<stamp>.json`, but `report/` reads only
+  `search-*.json` and nothing yet loads two result sets. A verdict is therefore
+  readable as JSON and invisible in every figure. These are roadmap session 8.
 
 Reading the figure while three of its five affordances are missing is the risk
 worth naming: it looks finished, and a heatmap of unbenchmarked Sharpes is
@@ -651,8 +737,8 @@ averages on every bar of every cell", implying quadratic behaviour. Timed across
 cheap win hiding there: making the ceiling affordable means restructuring how
 `evaluate` is called, which is an engine change and a separate piece of work.
 
-**A stub command prints your home directory.** The three unbuilt CLI commands —
-`validate`, `run`, `diff` — raise `NotImplementedError`,
+**A stub command prints your home directory.** The two unbuilt CLI commands —
+`run` and `diff` — raise `NotImplementedError`,
 and the resulting traceback contains the absolute path of the file that raised
 it, which on most machines includes your username. Nothing is written anywhere
 and nothing leaves the machine, but if you paste such a traceback into a bug
