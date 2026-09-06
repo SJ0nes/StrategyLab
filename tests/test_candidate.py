@@ -300,10 +300,71 @@ def test_a_missing_noise_note_cannot_silently_become_an_empty_caveat(
         read_candidate(_written(tmp_path, artifact), _protocol(), HASH)
 
 
-def test_an_absolute_config_path_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "absolute",
+    [
+        # BOTH FLAVOURS, because `Path` is the host's and each rejects only its
+        # own. On Windows, Path("/home/x/c.yaml").is_absolute() is False; on
+        # POSIX, Path("C:\\Users\\x\\c.yaml").is_absolute() is False. An
+        # artifact written on one platform and validated on the other is
+        # exactly the case that carries a username through a one-flavour guard.
+        "/home/someone/configs/ma_crossover.yaml",
+        "C:\\Users\\someone\\configs\\ma_crossover.yaml",
+        "//server/share/configs/ma_crossover.yaml",
+    ],
+)
+def test_an_absolute_config_path_is_refused(tmp_path: Path, absolute: str) -> None:
     # A verdict records this path verbatim, and an absolute path on most
     # machines carries a username into a file this repository may publish.
-    absolute = (tmp_path / "configs" / "ma_crossover.yaml").as_posix()
-
     with pytest.raises(CandidateError, match="absolute path"):
         read_candidate(_written(tmp_path, _artifact(config=absolute)), _protocol(), HASH)
+
+
+@pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note"])
+def test_a_null_top_level_field_is_refused_rather_than_stringified(
+    tmp_path: Path, field: str
+) -> None:
+    # Refusing absence alone moved the fault rather than removing it:
+    # `str(None)` is the literal "None", which would be recorded in the verdict
+    # as the strategy's name, or printed as the closing noise caveat.
+    with pytest.raises(CandidateError, match=f"carries a null '{field}'"):
+        read_candidate(_written(tmp_path, _artifact(**{field: None})), _protocol(), HASH)
+
+
+def test_a_null_degenerate_flag_is_refused_rather_than_read_as_false(
+    tmp_path: Path,
+) -> None:
+    # `bool(None)` is False - the same unsafe default in a different shape.
+    winner = dict(_artifact()["winner"], degenerate=None)
+
+    with pytest.raises(CandidateError, match="carries a null 'degenerate'"):
+        read_candidate(_written(tmp_path, _artifact(winner=winner)), _protocol(), HASH)
+
+
+@pytest.mark.parametrize("flag", ["false", 0, "yes"])
+def test_a_degenerate_flag_that_is_not_a_boolean_is_refused(tmp_path: Path, flag: object) -> None:
+    # `bool("false")` is True. Coercing would decide the plateau flag by
+    # truthiness rather than by what the search found.
+    winner = dict(_artifact()["winner"], degenerate=flag)
+
+    with pytest.raises(CandidateError, match="not a boolean"):
+        read_candidate(_written(tmp_path, _artifact(winner=winner)), _protocol(), HASH)
+
+
+@pytest.mark.parametrize("metric", ["sharpe", "plateau_score"])
+def test_a_metric_key_missing_entirely_is_refused_though_a_null_is_not(
+    tmp_path: Path, metric: str
+) -> None:
+    # The two cases must not read alike. A null is a figure the search recorded
+    # as non-finite and comes back as NaN; an absent key is a figure it never
+    # recorded, and both would land in the verdict as `null`.
+    winner = dict(_artifact()["winner"])
+    del winner[metric]
+
+    with pytest.raises(CandidateError, match=f"carries no '{metric}'"):
+        read_candidate(_written(tmp_path, _artifact(winner=winner)), _protocol(), HASH)
+
+    nulled = dict(_artifact()["winner"], **{metric: None})
+    candidate = read_candidate(_written(tmp_path, _artifact(winner=nulled)), _protocol(), HASH)
+    value = candidate.search_sharpe if metric == "sharpe" else candidate.search_plateau_score
+    assert value != value, "a null metric is NaN, not a refusal"

@@ -39,6 +39,7 @@ import math
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -110,6 +111,7 @@ def _protocol(
     *,
     windows: Windows | None = None,
     validation: Validation | None = None,
+    costs: CostModel | None = None,
 ) -> Protocol:
     """A protocol whose two windows split the recorded fixture in half."""
     return Protocol(
@@ -118,7 +120,7 @@ def _protocol(
         instruments=Instruments(research="SPY", execution="VUAG.L"),
         windows=windows
         or Windows(in_sample=IN_SAMPLE, walk_forward=HELD_BACK, fold_months=FOLD_MONTHS),
-        costs=COSTS,
+        costs=costs or COSTS,
         validation=validation or _validation(),
         walk_forward_touches=0,
     )
@@ -559,7 +561,12 @@ def test_a_trade_is_counted_once_in_the_fold_that_closed_it() -> None:
         ),
     )
 
+    # A numpy bool array, so these subscripts are positional indexing and not
+    # pandas' deprecated label-then-position fallback - which would warn today
+    # and raise KeyError on pandas 3. Asserted, so the distinction survives a
+    # change to the return type rather than being a comment nobody rechecks.
     exits = _completed_exits(decisions)
+    assert isinstance(exits, np.ndarray)
 
     assert exits.sum() == 1, "one round trip, not two and not none"
     assert bool(exits[5]), "the round trip belongs to the bar that closed it"
@@ -661,8 +668,11 @@ def _candidate() -> CandidateRef:
     )
 
 
-# Six folds over the committed held-back window, and every figure in them is
-# consistent with the rules the module applies:
+# Six folds over the committed held-back window. EVERY FIGURE IS INVENTED,
+# chosen to exercise every branch of `_fold_outcome` - these are not the
+# committed candidate's real numbers, which are eight round trips in total
+# across all six years, not 52. What they are is internally consistent with the
+# rules the module applies:
 #   2019  9 trades  - below min_trades_per_fold (10), so insufficient_data
 #   2020  12 trades - measurable, -0.411 below the 1.20 bar, so fail
 #   2021  0 trades  - a fold spent holding a position opened in 2020, so
@@ -673,13 +683,21 @@ def _candidate() -> CandidateRef:
 # Sum: 9 + 12 + 0 + 11 + 10 + 10 = 52 round trips, which clears the pooled floor
 # of 30, so the pooled verdict reaches the Sharpe comparison rather than
 # stopping at insufficient_data. Pooled Sharpe 0.5 is below 1.20 and pooled
-# drawdown 12.5% is inside the 25% ceiling, so the verdict is FAIL on the
+# drawdown 18.40% is inside the 25% ceiling, so the verdict is FAIL on the
 # Sharpe alone - which is what `reason` says.
 #
-# THE COHERENCE IS THE POINT. An earlier version of this fixture paired
-# outcome=FAIL with 3 pooled trades against a floor of 30, a state `_verdict`
-# cannot produce. Nothing failed, because the writer does not adjudicate - but
-# a reader of these tests would have learned a rule the module does not have.
+# POOLED DRAWDOWN MUST DOMINATE EVERY FOLD'S, and 18.40 is above 2022's 16.67
+# for that reason rather than by taste. The folds are date slices of ONE run, so
+# a fold's running peak is taken over a subset of the bars the pooled running
+# peak is taken over; a larger peak against the same trough gives a larger
+# decline; so the pooled figure is at least the maximum fold figure, always.
+#
+# THE COHERENCE IS THE POINT, and it has now been got wrong twice. The first
+# version of this fixture paired outcome=FAIL with 3 pooled trades against a
+# floor of 30. The version that fixed THAT set a pooled drawdown of 12.5%
+# beneath a fold's 16.67%. Neither could fail a test, because the writer does
+# not adjudicate - which is exactly why the guard below asserts the invariants
+# rather than trusting the comment above them.
 _FOLDS = (
     (2019, 0.812, 4.50, 9, Outcome.INSUFFICIENT_DATA),
     (2020, -0.411, 11.89, 12, Outcome.FAIL),
@@ -688,10 +706,13 @@ _FOLDS = (
     (2023, 1.507, 5.78, 10, Outcome.PASS),
     (2024, 1.506, 8.07, 10, Outcome.PASS),
 )
-# 252 + 253 + 252 + 251 + 250 + 252 NYSE sessions across 2019-2024, which is
-# what a real run over this window reports.
+# 252 + 253 + 252 + 251 + 250 + 252 NYSE sessions across 2019-2024, derived from
+# a calendar. Whether a given price snapshot actually holds all 1,510 is a
+# property of that snapshot and is not asserted anywhere.
 POOLED_BARS = 1_510
 POOLED_TRADES = 52
+POOLED_SHARPE = 0.5
+POOLED_DRAWDOWN_PCT = 18.40
 
 
 def _folds() -> tuple[FoldResult, ...]:
@@ -710,48 +731,67 @@ def _folds() -> tuple[FoldResult, ...]:
     )
 
 
-def _result(
-    outcome: Outcome = Outcome.FAIL,
-    folds: tuple[FoldResult, ...] | None = None,
-) -> ValidationResult:
-    """A coherent verdict over the committed window, for the writer's tests."""
-    resolved = _folds() if folds is None else folds
+def _result() -> ValidationResult:
+    """A coherent verdict over the committed window, for the writer's tests.
+
+    Takes no overrides. An earlier version had a ``folds=`` parameter, and the
+    one call site that used it rebuilt both fixture defects at once: zero pooled
+    trades against a floor of thirty, carrying an outcome of FAIL, beside a
+    ``bars_used`` for six years and a single one-year fold. A test needing a
+    different verdict builds its own, in full, where a reader can see it.
+    """
+    folds = _folds()
     return ValidationResult(
-        outcome=outcome,
-        folds=resolved,
-        pooled_sharpe=0.5,
-        pooled_max_drawdown_pct=12.5,
-        total_trades=sum(fold.trade_count for fold in resolved),
+        outcome=Outcome.FAIL,
+        folds=folds,
+        pooled_sharpe=POOLED_SHARPE,
+        pooled_max_drawdown_pct=POOLED_DRAWDOWN_PCT,
+        total_trades=sum(fold.trade_count for fold in folds),
         bars_used=POOLED_BARS,
         warmup_bars=WARMUP,
         threshold=1.2,
-        reason="pooled Sharpe 0.500 is below the bar of 1.20",
+        # The full sentence the module renders, floor and margin included. The
+        # first version of this fixture carried a truncated one, and the guard
+        # below caught it on its first run - which is the argument for asserting
+        # the reason rather than only the outcome.
+        reason=("pooled Sharpe 0.500 is below the bar of 1.20 (1.00 floor + 0.20 margin)"),
         walk_forward_touches=1,
     )
 
 
 def test_the_writers_fixture_is_a_verdict_the_module_could_reach() -> None:
-    # Guards the fixture itself against drifting back into an impossible state:
-    # the folds must sum to the pooled count, that count must clear the pooled
-    # floor, and each fold's own outcome must be the one the criteria give it.
+    # Guards the fixture against drifting back into an impossible state, which
+    # it has now done twice. Five invariants: the folds sum to the pooled count;
+    # that count clears the pooled floor; the pooled OUTCOME AND REASON are the
+    # ones the criteria actually render; each fold's outcome is the one the
+    # criteria give it; and the pooled drawdown dominates every fold's, because
+    # the folds are slices of one continuous run and a fold's running peak is
+    # taken over a subset of the pooled run's bars.
+    criteria = _validation()
     result = _result()
 
     assert result.total_trades == POOLED_TRADES
-    assert result.total_trades >= _validation().min_trades_pooled
-    assert (
-        _verdict(
-            result.pooled_sharpe,
-            result.pooled_max_drawdown_pct,
-            result.total_trades,
-            _validation(),
-        )[0]
-        is Outcome.FAIL
+    assert result.total_trades >= criteria.min_trades_pooled
+
+    outcome, reason = _verdict(
+        result.pooled_sharpe, result.pooled_max_drawdown_pct, result.total_trades, criteria
     )
+    assert outcome is result.outcome
+    assert reason == result.reason, "the fixture's reason is not the one the module renders"
+
     for fold in result.folds:
         assert (
-            _fold_outcome(fold.sharpe, fold.max_drawdown_pct, fold.trade_count, _validation())
+            _fold_outcome(fold.sharpe, fold.max_drawdown_pct, fold.trade_count, criteria)
             is fold.outcome
         )
+
+    measurable = [
+        fold.max_drawdown_pct for fold in result.folds if not math.isnan(fold.max_drawdown_pct)
+    ]
+    assert result.pooled_max_drawdown_pct >= max(measurable), (
+        "a fold's running peak is taken over a subset of the pooled run's bars, so the "
+        "pooled drawdown can never be the smaller number"
+    )
 
 
 def test_the_artifact_is_named_for_the_moment_it_was_generated(tmp_path: Path) -> None:
@@ -768,19 +808,35 @@ def test_the_artifact_is_named_for_the_moment_it_was_generated(tmp_path: Path) -
     )
 
 
+@pytest.mark.parametrize(
+    ("offset_hours", "hour", "expected_name", "expected_stamp"),
+    [
+        # BOTH CASES CROSS MIDNIGHT, and that is the point. 14:30 at +05:00
+        # converts to 09:30 on the SAME calendar day, so the date in the
+        # filename would read identically whether the conversion happened or
+        # not - an implementation converting the time and taking the date from
+        # the unconverted stamp would pass. These two pin the date as well, and
+        # in opposite directions, so the sign of the conversion is fixed too.
+        (5, 2, "validation-20260905T213005Z.json", "2026-09-05T21:30:05+00:00"),
+        (-5, 22, "validation-20260907T033005Z.json", "2026-09-07T03:30:05+00:00"),
+    ],
+)
 def test_a_non_utc_stamp_is_converted_rather_than_stamped_with_a_lying_z(
     tmp_path: Path,
+    offset_hours: int,
+    hour: int,
+    expected_name: str,
+    expected_stamp: str,
 ) -> None:
-    # The filename ends in a literal Z. Accepting +05:00 and writing it through
-    # unchanged would name the file for a UTC time the payload contradicts.
-    stamp = datetime(2026, 9, 6, 14, 30, 5, tzinfo=timezone(timedelta(hours=5)))
+    # The filename ends in a literal Z. Accepting an offset and writing it
+    # through unchanged would name the file for a UTC time the payload
+    # contradicts.
+    stamp = datetime(2026, 9, 6, hour, 30, 5, tzinfo=timezone(timedelta(hours=offset_hours)))
 
     path = write_validation_result(_result(), _candidate(), _protocol(), stamp, tmp_path)
 
-    assert path.name == "validation-20260906T093005Z.json"
-    assert (
-        json.loads(path.read_text(encoding="utf-8"))["generated_at"] == "2026-09-06T09:30:05+00:00"
-    )
+    assert path.name == expected_name
+    assert json.loads(path.read_text(encoding="utf-8"))["generated_at"] == expected_stamp
 
 
 def test_the_artifact_records_the_verdict_and_the_bar_it_was_measured_against(
@@ -832,11 +888,41 @@ def test_the_artifact_carries_every_cost_parameter(tmp_path: Path) -> None:
     assert "commission_min_flat" not in payload["costs_frac"], "a cash amount is not a rate"
 
 
+def test_the_two_costs_decided_at_zero_are_read_rather_than_hardcoded(
+    tmp_path: Path,
+) -> None:
+    # The committed protocol sets fx_conversion and commission_min_flat to zero,
+    # so the test above cannot tell a writer that READS them from one that emits
+    # a literal 0.0 and ignores the model. These two are the very fields
+    # protocol.yaml argues are DECIDED at zero rather than absent, so "the
+    # writer looks at them" is the property worth pinning. Distinct non-zero
+    # values, so a swap between the two would fail as well.
+    costs = CostModel(
+        spread_frac=0.0003,
+        slippage_frac=0.0005,
+        commission_frac=0.0005,
+        commission_min_flat=1.25,
+        fx_conversion_frac=0.0015,
+    )
+    protocol = _protocol(costs=costs)
+
+    payload = json.loads(
+        write_validation_result(
+            _result(), _candidate(), protocol, datetime(2026, 9, 6, tzinfo=UTC), tmp_path
+        ).read_text(encoding="utf-8")
+    )
+
+    assert payload["costs_frac"]["fx_conversion"] == pytest.approx(0.0015)
+    assert payload["commission_min_flat"] == pytest.approx(1.25)
+
+
 def test_a_non_finite_fold_metric_is_written_as_null_not_zero(tmp_path: Path) -> None:
-    # A fold holding no bar at all: no Sharpe and no drawdown to report. Built
-    # here rather than folded into `_result`, because a year-long fold with no
-    # bars in it is not a state a real run over this window reaches, and the
-    # shared fixture is deliberately one that is.
+    # Built in full rather than by overriding the shared fixture's folds, which
+    # is how an earlier version of this test rebuilt both defects the guard
+    # above exists to catch. Every field here is consistent with the others: one
+    # fold holding no bar at all, so no Sharpe and no drawdown; no trades, so
+    # the pooled count is zero, which is below the floor of thirty and therefore
+    # insufficient_data rather than a fail; and a bars_used to match.
     empty = FoldResult(
         index=0,
         start=date(2019, 1, 1),
@@ -846,18 +932,29 @@ def test_a_non_finite_fold_metric_is_written_as_null_not_zero(tmp_path: Path) ->
         trade_count=0,
         outcome=Outcome.INSUFFICIENT_DATA,
     )
+    unmeasurable = ValidationResult(
+        outcome=Outcome.INSUFFICIENT_DATA,
+        folds=(empty,),
+        pooled_sharpe=float("nan"),
+        pooled_max_drawdown_pct=float("nan"),
+        total_trades=0,
+        bars_used=0,
+        warmup_bars=WARMUP,
+        threshold=1.2,
+        reason="0 round-trip trade(s) pooled across all folds, below the floor of 30",
+        walk_forward_touches=1,
+    )
 
     text = write_validation_result(
-        _result(folds=(empty,)),
-        _candidate(),
-        _protocol(),
-        datetime(2026, 9, 6, tzinfo=UTC),
-        tmp_path,
+        unmeasurable, _candidate(), _protocol(), datetime(2026, 9, 6, tzinfo=UTC), tmp_path
     ).read_text(encoding="utf-8")
 
     assert "NaN" not in text, "a bare NaN token makes the file unreadable to a strict parser"
-    assert json.loads(text)["folds"][0]["sharpe"] is None
-    assert json.loads(text)["folds"][0]["max_drawdown_pct"] is None
+    payload = json.loads(text)
+    assert payload["folds"][0]["sharpe"] is None
+    assert payload["folds"][0]["max_drawdown_pct"] is None
+    assert payload["pooled"]["sharpe"] is None
+    assert payload["pooled"]["max_drawdown_pct"] is None
 
 
 def test_the_artifact_repeats_the_searchs_own_noise_caveat(tmp_path: Path) -> None:

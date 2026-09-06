@@ -52,10 +52,11 @@ THE RUN ALSO ENDS WHEREVER IT ENDS, and nothing liquidates. A position still
 open on the window's last bar pays no exit cost, is absent from
 ``total_trades`` - which counts round trips COMPLETED - and yet its
 mark-to-market is inside ``pooled_sharpe`` and ``pooled_max_drawdown_pct``,
-because the engine marks equity to every close. On the committed candidate that
-is one position of nine, held for the last 93 bars of the window.
-``LIMITATIONS.md`` records it. It is not corrected here: forcing a liquidation
-at the window edge would invent an exit nobody took, and it would change what
+because the engine marks equity to every close. ``LIMITATIONS.md`` records what
+that came to on the committed candidate, with the provenance of the measurement;
+no figure for it is repeated here, because a per-run count in a docstring is a
+number with no command beside it. It is not corrected: forcing a liquidation at
+the window edge would invent an exit nobody took, and it would change what
 :func:`~strategylab.backtest.engine.run_backtest` means for every other caller.
 
 **A TRAILING REMAINDER IS ABSORBED INTO THE FINAL FOLD, never dropped.** With
@@ -578,8 +579,17 @@ def walk_forward(
             successfully, and costs its touch.
         ProtocolError: Propagated from
             :func:`~strategylab.protocol.increment_walk_forward_touches` if the
-            protocol file cannot be read or rewritten. No bars are returned and
-            no touch is recorded.
+            protocol file is missing, unreadable, or carries no counter line. No
+            bars are returned and no touch is recorded.
+        OSError: Propagated from the same function if the REWRITE fails - a
+            read-only file, a permission denial, a full disk. That write is not
+            wrapped and is not atomic: the file is truncated and rewritten in
+            place, so a failure between the two leaves the pre-registration
+            damaged and the count neither its old value nor its new one. An
+            earlier version of this clause said the rewrite raised
+            ``ProtocolError`` and that no touch was recorded; both were wrong,
+            and the second is the dangerous one. Restore ``protocol.yaml`` from
+            version control, which is where its authoritative copy lives.
     """
     # Raises for a placeholder `params` does not supply, which is this
     # function's own contract and costs nothing to discover.
@@ -694,7 +704,9 @@ def write_validation_result(
     them and a version number is worthless without a list to compare against.
 
     - ``schema_version`` — :data:`VALIDATION_SCHEMA_VERSION`.
-    - ``generated_at`` — ISO 8601, timezone-aware, as supplied.
+    - ``generated_at`` — ISO 8601, always at offset ``+00:00``. Any timezone-aware
+      argument is converted to UTC first, so this is not necessarily the offset
+      the caller passed.
     - ``protocol_version`` — schema version of the protocol, NOT its values.
     - ``strategy``, ``config``, ``source_search`` — the strategy's name, the
       config path, and the search artifact that nominated this candidate.
@@ -735,7 +747,10 @@ def write_validation_result(
             merely requiring UTC is what makes that promise true: the filename
             ends in a literal ``Z``, and a ``+05:00`` argument would otherwise
             produce a name asserting a UTC time the payload contradicts.
-        directory: Where to write. Created along with its parents if absent.
+        directory: Where to write. Created along with its parents if absent. A
+            relative path - and the default, :data:`DEFAULT_RESULTS_DIR`, is
+            one - resolves against the WORKING DIRECTORY, which is the
+            repository root for every documented command in this project.
 
     Returns:
         The path written.

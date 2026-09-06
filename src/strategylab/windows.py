@@ -172,8 +172,15 @@ def walk_forward_bars(
             The touch has already been charged by then.
         ProtocolError: Propagated from
             :func:`~strategylab.protocol.increment_walk_forward_touches` if the
-            protocol file cannot be read or rewritten. No bars are returned and
-            no touch is recorded.
+            protocol file is missing, unreadable, or carries no counter line. No
+            bars are returned and no touch is recorded.
+        OSError: Propagated from the same function if the REWRITE fails - a
+            read-only file, a permission denial, a full disk. Only the READ is
+            wrapped into a ``ProtocolError``; the write at the end of that
+            function is not. Nor is it atomic, so a failure between the truncate
+            and the write leaves the counter neither its old value nor its new
+            one. This clause used to say "read or rewritten" and "no touch is
+            recorded", and neither was true of that case.
     """
     touches = increment_walk_forward_touches(protocol_path)
     return _cut(bars, protocol.windows.walk_forward, "walk-forward"), touches

@@ -27,8 +27,15 @@ it again" is false.
 NOTHING HERE DEFAULTS A MISSING FIELD. Every value this module returns is
 either present in the artifact or the artifact is refused, because a default
 would be written into the verdict as though the search had stated it - and one
-of the three fields this once defaulted, ``degenerate``, defaults in the unsafe
+of the fields this once defaulted, ``degenerate``, defaulted in the unsafe
 direction.
+
+Absent and NULL are both refused, and for the two metrics they are told apart.
+``sharpe`` and ``plateau_score`` may legitimately be ``null``: that is how
+:func:`write_search_result` records a non-finite figure, and it comes back as
+``NaN``. A MISSING key for either is refused, because "the search recorded a
+non-finite score" and "the search never recorded a score" must not read alike
+in a verdict where both would appear as ``null``.
 
 WHAT IS NOT CHECKED, and it is a real hole: the strategy CONFIG is named by path
 and compared by nothing. Only the price snapshot is hashed. A config edited
@@ -42,7 +49,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from strategylab.protocol import Protocol
@@ -112,7 +119,14 @@ def _params(raw: Any) -> dict[str, int]:
 
     Raises:
         CandidateError: If it is not a mapping, is empty, or holds a value that
-            is not a whole number of bars.
+            is not a whole number of bars of AT LEAST ONE. Zero and negative are
+            whole numbers and are refused: every searched parameter this project
+            can produce is a lookback, because the config loader refuses a
+            searched parameter no condition uses as a period. The day that stops
+            being true - a threshold, a fraction, a count that may legitimately
+            be zero - this refusal starts rejecting artifacts the engine would
+            have run, and its message asserts a fact about the parameter that
+            this module cannot check.
     """
     if not isinstance(raw, dict) or not raw:
         raise CandidateError("the winner in this artifact carries no 'params' mapping")
@@ -137,8 +151,8 @@ def _params(raw: Any) -> dict[str, int]:
     return resolved
 
 
-def _required(artifact: dict[str, Any], key: str, path: Path) -> Any:
-    """Fetch a field the artifact must carry, or refuse naming it.
+def _required(mapping: dict[str, Any], key: str, where: str, path: Path) -> Any:
+    """Fetch a field that must be present AND non-null, or refuse naming it.
 
     THE ALTERNATIVE WAS A DEFAULT, and a default here is the thing this module
     exists to refuse. Three fields were originally read with one: ``strategy``
@@ -148,49 +162,71 @@ def _required(artifact: dict[str, Any], key: str, path: Path) -> Any:
     drops the sentence this module's docstring promises travels into the
     verdict.
 
+    NULL IS REFUSED AS WELL AS ABSENT, and the first version of this helper
+    refused only absence - which moved the fault rather than removing it.
+    ``bool(None)`` is ``False``, so ``"degenerate": null`` reproduced the exact
+    unsafe default in a different shape; ``str(None)`` is ``"None"``, so a null
+    strategy name would have been recorded as the literal string ``None``.
+
     Args:
-        artifact: The parsed search artifact.
-        key: The field that must be present.
+        mapping: The object the field lives in - the artifact for a top-level
+            field, the winner object for one of its own.
+        key: The field that must be present and non-null.
+        where: Human-readable name of that object, for the message, so a reader
+            knows whether to look at the top level or inside ``winner``.
         path: Path of the artifact, for the message.
 
     Returns:
-        The value stored at ``key``.
+        The value stored at ``key``, never ``None``.
 
     Raises:
-        CandidateError: If ``key`` is absent.
+        CandidateError: If ``key`` is absent or its value is ``None``.
     """
-    if key not in artifact:
+    if key not in mapping or mapping[key] is None:
+        state = "carries no" if key not in mapping else "carries a null"
         raise CandidateError(
-            f"search artifact '{path.as_posix()}' carries no '{key}'. This reader refuses a "
-            "missing field rather than defaulting it: a default would be recorded in the "
-            "verdict as though the search had stated it"
+            f"search artifact '{path.as_posix()}' {state} '{key}' in its {where}. This "
+            "reader refuses a missing or null field rather than defaulting it: a default "
+            "would be recorded in the verdict as though the search had stated it"
         )
-    return artifact[key]
+    return mapping[key]
 
 
-def _number(raw: Any, field: str) -> float:
-    """Coerce one of the winner's metrics to a float, tolerating a JSON null.
+def _number(winner: dict[str, Any], key: str, path: Path) -> float:
+    """Read one of the winner's metrics, distinguishing a null from an absence.
 
-    A metric written as ``null`` is a non-finite value :func:`write_search_result`
-    made JSON-safe. It comes back as ``NaN`` rather than as an error: a winner
-    can only be nominated on a finite plateau score, so a null here describes a
-    figure recorded alongside the decision rather than one the decision rested
-    on.
+    THESE TWO CASES ARE NOT THE SAME and the first version of this function
+    conflated them. A metric written as ``null`` is a non-finite value
+    :func:`write_search_result` deliberately made JSON-safe, and it comes back
+    as ``NaN``. A metric whose KEY IS MISSING is a search that never recorded
+    the figure at all, and that is refused - otherwise
+    ``search_plateau_score``, the field the candidate was actually selected on,
+    could arrive as ``NaN`` and be written into the verdict as ``null``,
+    indistinguishable from a score the search recorded as non-finite on purpose.
 
     Args:
-        raw: The parsed value.
-        field: Name of the field, for the message.
+        winner: The parsed winner object.
+        key: The metric to read.
+        path: Path of the artifact, for the message.
 
     Returns:
-        The value as a float, or ``NaN`` if it was ``null`` or absent.
+        The value as a float, or ``NaN`` when the key is present and ``null``.
 
     Raises:
-        CandidateError: If it is present and not a number.
+        CandidateError: If the key is absent, or its value is present and not a
+            number.
     """
+    if key not in winner:
+        raise CandidateError(
+            f"search artifact '{path.as_posix()}' carries no '{key}' in its winner. A "
+            "null is a figure the search recorded as non-finite; an absent key is a "
+            "figure it never recorded, and the two must not read alike"
+        )
+    raw = winner[key]
     if raw is None:
         return float("nan")
     if isinstance(raw, bool) or not isinstance(raw, int | float):
-        raise CandidateError(f"the winner's '{field}' is {raw!r}, which is not a number")
+        raise CandidateError(f"the winner's '{key}' is {raw!r}, which is not a number")
     return float(raw)
 
 
@@ -216,11 +252,15 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             carries an unfamiliar ``schema_version``; it nominated no winner, or
             a ``winner`` that is not an object; it was run under a different
             protocol version, or against a different price snapshot; it names no
-            config, or names one by an absolute path; it omits ``strategy``,
-            ``degenerate`` or ``noise_ceiling_note``; the winner carries no
-            ``params`` mapping, or a parameter that is not a whole number of
-            bars of at least one; or a winner metric is present and not a
-            number. Nothing here charges a touch, so every one of these is free.
+            config, or names one by a path that is absolute under either POSIX
+            or Windows rules; it omits or nulls ``strategy``, ``degenerate`` or
+            ``noise_ceiling_note``, or carries a ``degenerate`` that is not a
+            boolean; it omits ``sharpe`` or ``plateau_score`` from the winner
+            entirely, as opposed to recording either as ``null``; the winner
+            carries no ``params`` mapping, or a parameter that is not a whole
+            number of bars of at least one; or a winner metric is present and
+            not a number. Nothing here charges a touch, so every one of these
+            refusals is free.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -286,22 +326,39 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
     # in another module, and this one states relativeness as a property of the
     # value it RETURNS - a value then written verbatim into the validation
     # artifact. A promise enforced one module away is not enforced.
-    if config_path.is_absolute():
+    #
+    # BOTH FLAVOURS, because `Path` is the host's. On Windows,
+    # `Path("/home/<user>/x.yaml").is_absolute()` is False; on POSIX,
+    # `Path("C:\\Users\\<user>\\x.yaml").is_absolute()` is False. An artifact
+    # written on one platform and validated on the other would otherwise carry
+    # exactly the username this guard exists to stop.
+    if PurePosixPath(config).is_absolute() or PureWindowsPath(config).is_absolute():
         raise CandidateError(
             f"search artifact '{path.as_posix()}' names its config by the absolute path "
             f"'{config}'. A verdict records that path, and an absolute path on most "
             "machines carries a username into a file this repository may publish"
         )
 
+    # `degenerate` is type-checked rather than coerced. `bool("false")` is True,
+    # so a flag the search wrote as a string would read as "flagged" or "not
+    # flagged" according to nothing but truthiness.
+    degenerate = _required(winner, "degenerate", "winner", path)
+    if not isinstance(degenerate, bool):
+        raise CandidateError(
+            f"search artifact '{path.as_posix()}' carries a 'degenerate' of {degenerate!r}, "
+            "which is not a boolean; coercing it would decide the plateau flag by "
+            "truthiness rather than by what the search found"
+        )
+
     return CandidateRef(
         source=path,
-        strategy=str(_required(artifact, "strategy", path)),
+        strategy=str(_required(artifact, "strategy", "top level", path)),
         config_path=config_path,
         params=_params(winner.get("params")),
         data_content_hash=data_content_hash,
         protocol_version=protocol.protocol_version,
-        search_sharpe=_number(winner.get("sharpe"), "sharpe"),
-        search_plateau_score=_number(winner.get("plateau_score"), "plateau_score"),
-        degenerate=bool(_required(winner, "degenerate", path)),
-        noise_ceiling_note=str(_required(artifact, "noise_ceiling_note", path)),
+        search_sharpe=_number(winner, "sharpe", path),
+        search_plateau_score=_number(winner, "plateau_score", path),
+        degenerate=degenerate,
+        noise_ceiling_note=str(_required(artifact, "noise_ceiling_note", "top level", path)),
     )
