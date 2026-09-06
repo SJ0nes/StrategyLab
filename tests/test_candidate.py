@@ -304,13 +304,18 @@ def test_a_missing_noise_note_cannot_silently_become_an_empty_caveat(
     "absolute",
     [
         # BOTH FLAVOURS, because `Path` is the host's and each rejects only its
-        # own. On Windows, Path("/home/x/c.yaml").is_absolute() is False; on
-        # POSIX, Path("C:\\Users\\x\\c.yaml").is_absolute() is False. An
+        # own. On Windows a POSIX absolute path has a root but no drive and
+        # `is_absolute()` is False; on POSIX a Windows one has neither. An
         # artifact written on one platform and validated on the other is
         # exactly the case that carries a username through a one-flavour guard.
-        "/home/someone/configs/ma_crossover.yaml",
-        "C:\\Users\\someone\\configs\\ma_crossover.yaml",
-        "//server/share/configs/ma_crossover.yaml",
+        #
+        # None of these is home-directory-shaped, and that is not squeamishness:
+        # this repository's own hygiene gate refuses a `/home/<name>` or
+        # `Users` path in any tracked file, which is the same rule the guard
+        # under test enforces at run time. A test for it should not violate it.
+        "/srv/research/configs/ma_crossover.yaml",
+        "D:\\research\\configs\\ma_crossover.yaml",
+        "//fileserver/share/configs/ma_crossover.yaml",
     ],
 )
 def test_an_absolute_config_path_is_refused(tmp_path: Path, absolute: str) -> None:
