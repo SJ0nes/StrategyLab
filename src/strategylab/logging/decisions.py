@@ -15,6 +15,34 @@ the property ``diff`` rests on. If reading loses a field, or widens a float, or
 turns a tuple into a list, then two identical runs produce two logs that differ
 and the difference is this module's fault rather than the strategy's.
 
+THE THREE WAYS THAT GUARANTEE COULD HAVE BEEN FALSE ARE CLOSED BY REFUSING THE
+INPUT, not by hoping. A non-string mapping key, which JSON coerces to a string
+silently; a timestamp carrying precision finer than a microsecond, which
+``datetime`` cannot hold and which a ``pandas.Timestamp`` from a bar index
+carries by construction; and a ``recorded_at`` at some offset other than UTC,
+which would come back as a different rendering of the same instant. Each is
+rejected on write, so nothing reaches a log that cannot come back from it. The
+one thing that IS reduced is a named timezone: ``ZoneInfo("UTC")`` comes back as
+a fixed ``+00:00``. Records still compare equal, because datetimes compare by
+instant, but the ``tzinfo`` object is not the one that went in.
+
+THE READ PATH IS AS STRICT AS THE WRITE PATH, and an earlier version of this
+module was not - it coerced seven fields with ``str()``, ``float()`` and
+``int()``, so a ``ticker`` of ``null`` read back as the string ``"None"`` and a
+``protocol_version`` of ``1.9`` was truncated to ``1``. Both directions now
+refuse what the other would not have produced. A reader looser than its writer
+is a reader that accepts logs this project cannot have written, and then ``diff``
+compares one of them against a real one.
+
+TWO DELIBERATE DIVERGENCES FROM :mod:`strategylab.search.graveyard`, the other
+append-only JSON Lines writer here, stated because a reader of both will
+otherwise assume they agree. A non-finite metric there becomes JSON ``null`` and
+is argued for; a non-finite float HERE is refused, because a metric that could
+not be computed is a fact worth recording while an indicator value that is not a
+number means the evaluation read garbage and no decision should have followed.
+Key sorting is the same in both, for the same reason: the bytes of a line are a
+function of the record alone.
+
 WHAT IT DOES NOT GUARANTEE. It does not decide how ``indicator_values`` and
 ``thresholds`` are KEYED - it serialises whatever mapping it is handed. The
 contract says "keyed by indicator name", which is unambiguous only while no
@@ -37,9 +65,10 @@ long the worker took to decide after the bar closed.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -60,21 +89,39 @@ class DecisionRecord:
     """Everything known at the moment one decision was made.
 
     Attributes:
-        schema_version: Version of this record shape, so a log written months
-            ago can still be read.
+        schema_version: Version of this record shape. A HARD GATE, not a
+            compatibility hint: :func:`read_decisions` refuses any value but
+            :data:`SCHEMA_VERSION`, and :func:`write_decision` refuses to write
+            one. So a log written months ago can be read for exactly as long as
+            nobody bumps that constant, and the session that bumps it either
+            writes a reader for the old shape or accepts that existing logs
+            become unreadable. Refusing beats the alternative, which is reading
+            an old shape as though it were the new one.
         bar_timestamp: Timestamp of the bar being evaluated. Timezone-NAIVE,
             matching the bar index everywhere else in this project.
-        recorded_at: UTC wall-clock time the record was written. Equal to the
-            bar timestamp in a backtest and later than it when live, and the
-            difference between the two is itself a measurement. Timezone-AWARE;
-            see the module docstring for why the two differ.
+            MICROSECOND RESOLUTION: a ``pandas.Timestamp`` carrying non-zero
+            nanoseconds is refused rather than silently truncated, because
+            ``datetime`` cannot hold it and the record would not round-trip.
+        recorded_at: Wall-clock time the record was written, timezone-AWARE and
+            at UTC - an offset other than zero is refused, so the field means
+            what its name says. Equal to the bar timestamp in a backtest and
+            later than it when live, and the difference between the two is
+            itself a measurement. See the module docstring for why the two
+            timestamps are in different frames.
         source: Either ``backtest`` or ``live``. The only field whose value is
             expected to differ between the two logs being diffed.
         ticker: Symbol evaluated.
         action: What the strategy decided.
         indicator_values: Every indicator value the evaluation read, keyed by
-            indicator name, in price units.
-        thresholds: Every threshold compared against, keyed by the same names.
+            indicator name, in price units. Keys must be strings: JSON object
+            keys are strings and an integer one would be coerced silently, so
+            the record would not come back equal to itself.
+        thresholds: Every threshold compared against, keyed by the same names,
+            in PRICE UNITS as well - with one caveat the emitter inherits. A
+            condition's right-hand side may be a bare literal rather than an
+            indicator (``Condition.right`` is ``IndicatorRef | float``), and a
+            literal's unit is whatever the config author meant by it. Nothing
+            here can check that.
         conditions_met: Rendering of each condition that passed, in config
             order.
         conditions_failed: The same for each condition that did not pass. A
@@ -83,8 +130,17 @@ class DecisionRecord:
         requested_size_pct: Size the strategy asked for, as a percentage of
             equity, so ``95.0`` means ninety-five percent.
         approved_size_pct: Size the risk layer permitted, as a percentage of
-            equity. Equal to ``requested_size_pct`` when nothing trimmed it.
-        risk_verdict: The risk layer's answer, as its string value.
+            equity. Equal to ``requested_size_pct`` when nothing bound, lower
+            when a limit reduced it, and ``0.0`` on a rejection - which is the
+            same value a ``HOLD`` or an ``EXIT_LONG`` carries in
+            ``requested_size_pct``, so ``0.0`` alone does not distinguish
+            "refused" from "nothing was asked for". Read it beside
+            ``risk_verdict``, which does.
+        risk_verdict: The risk layer's answer, as its string value - the closed
+            vocabulary of :class:`~strategylab.risk.limits.Verdict`. NOT
+            validated against it here, on write or on read, because that layer
+            is a stub and nothing can produce one yet; when it exists, this is
+            the field that should gain the check ``source`` already has.
         risk_reason: Why the risk layer answered as it did.
         params: The resolved parameters in force, so a record is readable
             without its config. Values are in BARS.
@@ -144,6 +200,63 @@ def _payload(record: DecisionRecord) -> dict[str, Any]:
     }
 
 
+def _string_keys(mapping: dict[str, Any], field: str) -> None:
+    """Refuse a mapping whose keys are not all strings.
+
+    JSON object keys are strings and :func:`json.dumps` coerces an integer one
+    without complaint, so ``{5: 10}`` is written as ``{"5": 10}`` and comes back
+    unequal to what went in. That breaks the round trip this module's docstring
+    promises, silently, for a record whose annotation said ``dict[str, ...]``
+    and whose dataclass did nothing to enforce it.
+
+    :func:`strategylab.search.graveyard.record_rejection` refuses exactly this,
+    for exactly this reason. The two writers agree.
+
+    Args:
+        mapping: The mapping to check.
+        field: Field name, for the message.
+
+    Raises:
+        ValueError: If any key is not a string.
+    """
+    unnamed = sorted(str(key) for key in mapping if not isinstance(key, str))
+    if unnamed:
+        raise ValueError(
+            f"'{field}' has non-string key(s) {unnamed}; JSON object keys are strings, and "
+            "json would coerce these silently - the record would not come back equal to "
+            "the one written"
+        )
+
+
+def _round_trippable(stamp: datetime, field: str) -> None:
+    """Refuse a timestamp that cannot survive ISO 8601 and come back equal.
+
+    THE CASE THIS EXISTS FOR IS A ``pandas.Timestamp``, which the emitter will
+    take straight from a bar index. It subclasses :class:`datetime.datetime` and
+    carries NANOSECONDS; ``isoformat`` renders them and
+    :meth:`datetime.datetime.fromisoformat` returns a plain ``datetime``, whose
+    resolution stops at microseconds. The value would be silently truncated and
+    the record would not equal itself across a write and a read.
+
+    Checked by round-tripping the rendering rather than by reaching for a pandas
+    attribute, so this module needs no opinion about what type it was handed.
+
+    Args:
+        stamp: The timestamp to check.
+        field: Field name, for the message.
+
+    Raises:
+        ValueError: If rendering and reparsing does not reproduce the instant.
+    """
+    if datetime.fromisoformat(stamp.isoformat()) != stamp:
+        raise ValueError(
+            f"'{field}' is {stamp!r}, which does not survive ISO 8601 unchanged - a "
+            "timestamp carrying precision finer than a microsecond, such as a pandas "
+            "Timestamp with nanoseconds, would be truncated and the record would not read "
+            "back equal to itself"
+        )
+
+
 def _line(record: DecisionRecord) -> str:
     """Validate one record and render it as a single JSON line.
 
@@ -151,13 +264,21 @@ def _line(record: DecisionRecord) -> str:
         record: The record to render.
 
     Returns:
-        The JSON object followed by a newline.
+        The JSON object followed by a newline, keys sorted. SORTED for the
+        reason :mod:`strategylab.search.graveyard` gives: it makes the bytes of
+        a line a function of the record alone, rather than of the order an
+        emitter happened to build its mappings in.
 
     Raises:
-        ValueError: If ``source`` is outside :data:`SOURCES`, if
-            ``schema_version`` is not :data:`SCHEMA_VERSION`, if
-            ``recorded_at`` is timezone-naive or ``bar_timestamp`` is
-            timezone-aware, or if any float in the record is not finite.
+        ValueError: If ``source`` is outside :data:`SOURCES`; if
+            ``schema_version`` is not :data:`SCHEMA_VERSION`; if ``action`` is
+            not an :class:`~strategylab.core.types.Action`; if ``recorded_at``
+            is timezone-naive or is not at UTC, or ``bar_timestamp`` is
+            timezone-aware; if either timestamp carries precision finer than a
+            microsecond; if a mapping has a non-string key; if any float is not
+            finite; or if any value is not JSON-serialisable, which arrives as
+            a ``TypeError`` and is re-raised as a ``ValueError`` rather than
+            escaping a clause that does not admit it.
     """
     if record.source not in SOURCES:
         raise ValueError(
@@ -170,6 +291,15 @@ def _line(record: DecisionRecord) -> str:
             f"{SCHEMA_VERSION}. Writing a version this code does not produce would put two "
             "shapes in one append-only file"
         )
+    # Checked rather than trusted: the dataclass is not runtime-typed, so
+    # `action="hold"` is constructible and would reach `.value` as an
+    # AttributeError - a type this function's contract does not admit.
+    if not isinstance(record.action, Action):
+        raise ValueError(
+            f"action is {record.action!r}, which is not an Action; the record would fail "
+            "on the way to JSON with an error naming neither the field nor the log"
+        )
+
     # The two frames, checked rather than assumed. A naive `recorded_at` cannot
     # be compared against another machine's, and an aware `bar_timestamp` would
     # not equal the bar index it came from - which is how a diff would come to
@@ -179,25 +309,54 @@ def _line(record: DecisionRecord) -> str:
             "recorded_at is timezone-naive; it is wall-clock time on a machine and an "
             "unqualified one cannot be compared against another machine's"
         )
+    if record.recorded_at.utcoffset() != timedelta(0):
+        raise ValueError(
+            f"recorded_at is at offset {record.recorded_at.utcoffset()} and this field is "
+            "documented as UTC. Accepting any offset would make two logs from two machines "
+            "compare by a rendering rather than by an instant"
+        )
     if record.bar_timestamp.tzinfo is not None:
         raise ValueError(
             f"bar_timestamp carries a timezone ({record.bar_timestamp.tzinfo}) and the bar "
             "index it comes from is naive throughout this project; a diff against a naive "
             "log would report every bar as different"
         )
+    _round_trippable(record.bar_timestamp, "bar_timestamp")
+    _round_trippable(record.recorded_at, "recorded_at")
+
+    for field, mapping in (
+        ("indicator_values", record.indicator_values),
+        ("thresholds", record.thresholds),
+        ("params", record.params),
+    ):
+        _string_keys(dict(mapping), field)
 
     # allow_nan=False, so a non-finite value raises here rather than writing a
     # bare `NaN` token that a strict parser refuses. It should be unreachable:
     # `core.strategy` already refuses to decide on a non-finite indicator. That
     # is the argument for checking rather than for trusting.
-    return json.dumps(_payload(record), allow_nan=False) + "\n"
+    #
+    # TypeError is translated rather than propagated, as graveyard.py does: a
+    # value json cannot represent - a Decimal, an enum, a set - would otherwise
+    # escape as a type this contract does not admit.
+    try:
+        return json.dumps(_payload(record), allow_nan=False, sort_keys=True) + "\n"
+    except TypeError as exc:
+        raise ValueError(f"record is not serialisable as JSON: {exc}") from exc
 
 
 def write_decision(record: DecisionRecord, path: Path = DEFAULT_DECISION_LOG_PATH) -> None:
     """Append one decision record to the log as a single JSON line.
 
-    Append-only, one JSON object per line, so a log can be read incrementally
-    and a crash mid-write costs at most the final record rather than the file.
+    Append-only, one JSON object per line, so a crash mid-write costs at most
+    the final record rather than the file.
+
+    THAT BOUND IS ON THIS FUNCTION AND NOT ON :func:`write_decisions`, which
+    hands N lines to one buffered write: a crash inside it can truncate the
+    last line of the batch, and :func:`read_decisions` then refuses the whole
+    log rather than the damaged record. The two promises - crash costs one
+    record, malformed line refuses everything - pull against each other, and
+    which one you get depends on which writer produced the log.
 
     THE RECORD IS RENDERED BEFORE THE FILE IS OPENED, so a record this module
     refuses cannot leave a partial line behind. Validation failures are the
@@ -210,8 +369,11 @@ def write_decision(record: DecisionRecord, path: Path = DEFAULT_DECISION_LOG_PAT
 
     Args:
         record: The record to write.
-        path: Log file, relative to the repository root. Created along with its
-            parent directory if absent.
+        path: Log file. A relative path - and the default is one - resolves
+            against the WORKING DIRECTORY, not the repository root; the two
+            coincide only because every command in this project is documented
+            as run from the root. Created along with its parent directory if
+            absent.
 
     Returns:
         None.
@@ -245,8 +407,9 @@ def write_decisions(
 
     Args:
         records: The records to write, in order.
-        path: Log file, relative to the repository root. Created along with its
-            parent directory if absent.
+        path: Log file, resolved as :func:`write_decision` describes. Created
+            along with its parent directory if absent - EXCEPT for an empty
+            batch, which creates nothing at all and returns zero.
 
     Returns:
         How many records were appended.
@@ -263,6 +426,132 @@ def write_decisions(
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.writelines(lines)
     return len(lines)
+
+
+def _text(payload: dict[str, Any], key: str, line_number: int) -> str:
+    """Read a string field, refusing anything that is not already a string.
+
+    NOT ``str(...)``, which is what this did first and which coerced silently:
+    a ``ticker`` of ``null`` became the string ``"None"`` and a ``source`` of
+    ``5`` became ``"5"``. Both would then be diffed against a real log.
+
+    Args:
+        payload: The parsed line.
+        key: Field to read.
+        line_number: One-based line, for the message.
+
+    Returns:
+        The string.
+
+    Raises:
+        ValueError: If the value is not a string.
+    """
+    value = payload[key]
+    if not isinstance(value, str):
+        raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a string")
+    return value
+
+
+def _number(payload: dict[str, Any], key: str, line_number: int) -> float:
+    """Read a finite numeric field, refusing a bool, a string or a non-finite value.
+
+    ``float("95.0")`` and ``float(True)`` both succeed, which is why this does
+    not call ``float`` on whatever it is given. The finiteness check is the read
+    side of the rule :func:`_line` enforces on write: ``json.loads`` accepts the
+    bare tokens ``NaN`` and ``Infinity``, so without it this reader would hand
+    back records its own writer refuses to produce.
+
+    Args:
+        payload: The parsed line.
+        key: Field to read.
+        line_number: One-based line, for the message.
+
+    Returns:
+        The value as a float.
+
+    Raises:
+        ValueError: If it is not a real number, or is not finite.
+    """
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a number")
+    if not math.isfinite(value):
+        raise ValueError(
+            f"line {line_number}: '{key}' is {value}, which is not finite; the writer "
+            "refuses to produce one, so a log carrying it was not written by this project"
+        )
+    return float(value)
+
+
+def _whole(payload: dict[str, Any], key: str, line_number: int) -> int:
+    """Read a field that must be a whole number, refusing a truncation.
+
+    ``int(1.9)`` is ``1``. A ``protocol_version`` of ``1.9`` silently becoming
+    version 1 would make a record claim traceability to rules it was not
+    produced under.
+
+    Args:
+        payload: The parsed line.
+        key: Field to read.
+        line_number: One-based line, for the message.
+
+    Returns:
+        The value as an int.
+
+    Raises:
+        ValueError: If it is not a whole number.
+    """
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+        raise ValueError(f"line {line_number}: '{key}' is {value!r}, which is not a whole number")
+    return int(value)
+
+
+def _stamp(payload: dict[str, Any], key: str, line_number: int, *, aware: bool) -> datetime:
+    """Read a timestamp and check it is in the frame this field is documented in.
+
+    THE FRAMES ARE CHECKED ON THE WAY IN AS WELL AS ON THE WAY OUT. The module
+    docstring's longest paragraph is about the asymmetry between the two
+    timestamps, and an earlier version of this reader enforced none of it: a
+    line carrying an aware ``bar_timestamp`` read straight back, which is the
+    exact state the writer calls out as "how a diff would come to report every
+    bar as differing".
+
+    Args:
+        payload: The parsed line.
+        key: Field to read.
+        line_number: One-based line, for the message.
+        aware: Whether this field must carry a timezone at UTC. ``False``
+            means it must carry none at all.
+
+    Returns:
+        The parsed timestamp.
+
+    Raises:
+        ValueError: If the value is not an ISO 8601 STRING - an integer is
+            refused rather than being read as a basic-format date - or is in
+            the wrong frame.
+    """
+    raw = _text(payload, key, line_number)
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"line {line_number}: '{key}' is not ISO 8601: {exc}") from exc
+
+    if aware:
+        if stamp.tzinfo is None:
+            raise ValueError(f"line {line_number}: '{key}' carries no timezone and must")
+        if stamp.utcoffset() != timedelta(0):
+            raise ValueError(
+                f"line {line_number}: '{key}' is at offset {stamp.utcoffset()} and this "
+                "field is documented as UTC"
+            )
+    elif stamp.tzinfo is not None:
+        raise ValueError(
+            f"line {line_number}: '{key}' carries a timezone and the bar index it comes "
+            "from is naive throughout this project"
+        )
+    return stamp
 
 
 def _floats(raw: Any, field: str, line_number: int) -> dict[str, float]:
@@ -286,6 +575,13 @@ def _floats(raw: Any, field: str, line_number: int) -> dict[str, float]:
         if isinstance(value, bool) or not isinstance(value, int | float):
             raise ValueError(
                 f"line {line_number}: '{field}.{name}' is {value!r}, which is not a number"
+            )
+        if not math.isfinite(value):
+            raise ValueError(
+                f"line {line_number}: '{field}.{name}' is {value}, which is not finite. "
+                "The writer refuses to produce one - an indicator value that is not a "
+                "number means the evaluation read garbage and no decision should have "
+                "followed it"
             )
         values[str(name)] = float(value)
     return values
@@ -336,8 +632,11 @@ def _record(payload: Any, line_number: int) -> DecisionRecord:
     if not isinstance(payload, dict):
         raise ValueError(f"line {line_number}: not a JSON object; it is a {type(payload).__name__}")
 
+    # `is not` rather than `!=`, and an explicit int check, because `True == 1`
+    # and `1.0 == 1` in Python: a line carrying `"schema_version": true` would
+    # otherwise pass this gate and be laundered into the int 1 below.
     version = payload.get("schema_version")
-    if version != SCHEMA_VERSION:
+    if isinstance(version, bool) or not isinstance(version, int) or version != SCHEMA_VERSION:
         raise ValueError(
             f"line {line_number}: schema_version is {version!r}, and this build reads "
             f"version {SCHEMA_VERSION}"
@@ -375,11 +674,8 @@ def _record(payload: Any, line_number: int) -> DecisionRecord:
             f"{sorted(member.value for member in Action)}"
         ) from exc
 
-    try:
-        bar_timestamp = datetime.fromisoformat(str(payload["bar_timestamp"]))
-        recorded_at = datetime.fromisoformat(str(payload["recorded_at"]))
-    except ValueError as exc:
-        raise ValueError(f"line {line_number}: a timestamp is not ISO 8601: {exc}") from exc
+    bar_timestamp = _stamp(payload, "bar_timestamp", line_number, aware=False)
+    recorded_at = _stamp(payload, "recorded_at", line_number, aware=True)
 
     params_raw = payload["params"]
     if not isinstance(params_raw, dict):
@@ -393,23 +689,35 @@ def _record(payload: Any, line_number: int) -> DecisionRecord:
             )
         params[str(name)] = int(value)
 
+    source = _text(payload, "source", line_number)
+    if source not in SOURCES:
+        raise ValueError(
+            f"line {line_number}: source is {source!r}, which is not one of "
+            f"{sorted(SOURCES)}. The writer refuses to produce one, so a log carrying it "
+            "was not written by this project"
+        )
+
     return DecisionRecord(
+        # Validated above and then regenerated from the constant rather than
+        # copied: the gate has already refused anything else, so the two are the
+        # same value, and taking it from the constant means the returned record
+        # cannot carry a version this build does not implement.
         schema_version=SCHEMA_VERSION,
         bar_timestamp=bar_timestamp,
         recorded_at=recorded_at,
-        source=str(payload["source"]),
-        ticker=str(payload["ticker"]),
+        source=source,
+        ticker=_text(payload, "ticker", line_number),
         action=action,
         indicator_values=_floats(payload["indicator_values"], "indicator_values", line_number),
         thresholds=_floats(payload["thresholds"], "thresholds", line_number),
         conditions_met=_strings(payload["conditions_met"], "conditions_met", line_number),
         conditions_failed=_strings(payload["conditions_failed"], "conditions_failed", line_number),
-        requested_size_pct=float(payload["requested_size_pct"]),
-        approved_size_pct=float(payload["approved_size_pct"]),
-        risk_verdict=str(payload["risk_verdict"]),
-        risk_reason=str(payload["risk_reason"]),
+        requested_size_pct=_number(payload, "requested_size_pct", line_number),
+        approved_size_pct=_number(payload, "approved_size_pct", line_number),
+        risk_verdict=_text(payload, "risk_verdict", line_number),
+        risk_reason=_text(payload, "risk_reason", line_number),
         params=params,
-        protocol_version=int(payload["protocol_version"]),
+        protocol_version=_whole(payload, "protocol_version", line_number),
     )
 
 
@@ -425,10 +733,13 @@ def read_decisions(path: Path = DEFAULT_DECISION_LOG_PATH) -> list[DecisionRecor
     record.
 
     Args:
-        path: Log file, relative to the repository root.
+        path: Log file, resolved as :func:`write_decision` describes.
 
     Returns:
-        Every record in the file, in the order written.
+        Every record in the file, in the order written. THE WHOLE FILE IS READ
+        INTO MEMORY. The format permits incremental reading and this function
+        does not offer it; a log large enough for that to matter is a log this
+        function is the wrong tool for.
 
     Raises:
         FileNotFoundError: If the log does not exist. Propagated unchanged
@@ -436,10 +747,16 @@ def read_decisions(path: Path = DEFAULT_DECISION_LOG_PATH) -> list[DecisionRecor
             records in it" are different answers, and only one of them means
             the worker ran.
         ValueError: If a line is not JSON, is not an object, carries an unknown
-            schema version, omits a field, or holds a value of the wrong shape.
-            The message names the ONE-BASED line number, because a log is
-            thousands of lines long and "malformed record" without a position
-            is not actionable.
+            schema version, omits a field, or holds a value of the wrong shape,
+            the wrong type, a non-finite number, a timestamp in the wrong frame,
+            or a ``source`` outside :data:`SOURCES`. The message names the
+            ONE-BASED line number, because a log is thousands of lines long and
+            "malformed record" without a position is not actionable.
+
+            WITH ONE EXCEPTION THAT CANNOT NAME A LINE. A file that is not valid
+            UTF-8 fails while being decoded, before there are any lines to
+            number, and ``UnicodeDecodeError`` is a ``ValueError`` subclass - so
+            it satisfies this clause and not the sentence above it.
         OSError: Propagated unchanged if the file cannot be read for any other
             reason.
     """
