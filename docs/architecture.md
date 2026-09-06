@@ -80,7 +80,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
 | `backtest/engine.py` | `run_backtest` — `evaluate` stepped bar by bar with costs applied. Signal from a close, fill at the NEXT bar's open. Carries the lookahead test that can actually fail, plus the determinism test. | 33 |
 | `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 28 |
-| `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 53 |
+| `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 58 |
 | `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, and the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used. Does not resolve placeholders. | 81 |
 | `core/types.py` | The value types shared by the backtester and the live worker. Types rather than behaviour, apart from one guard on `IndicatorRef`. | in the 81 |
 | `search/graveyard.py` | `record_rejection` — append-only JSON Lines, one object per line, closed reason vocabulary, non-finite metric written as JSON null so the file stays parseable by something other than Python. | 33 |
@@ -98,7 +98,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. NOTHING EMITS IT YET. | 143 |
 | `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**926 tests pass** — 34 + 40 + 81 + 81 + 53 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143. Run `uv run pytest` to see the
+**931 tests pass** — 34 + 40 + 81 + 81 + 58 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

@@ -126,6 +126,14 @@ class Intent:
     An intent is a request, not a decision. The risk layer may veto it and the
     venue may fail to fill it; neither of those possibilities is known here.
 
+    NOT HASHABLE. A frozen dataclass generates ``__hash__`` from its fields and
+    a dict is not hashable, so ``hash(intent)`` raises ``TypeError`` - which
+    became true silently when the two mappings below were added. Nothing in this
+    project hashes one, and ``tests/test_strategy.py`` pins the fact so that
+    anyone reaching for an ``lru_cache`` or a set of intents finds out at the
+    test rather than at run time. The alternative, a tuple of pairs, would make
+    every consumer rebuild the mapping a decision record wants.
+
     Attributes:
         action: The requested action.
         size_pct: Requested position size as a percentage of account equity, so
@@ -136,9 +144,18 @@ class Intent:
         conditions_failed: The same for each condition that did not pass. A
             ``HOLD`` is explained by this field, which is why rejections are
             worth as much log space as entries.
-        indicator_values: Every indicator this evaluation actually read, keyed
-            by the SAME name the rendered conditions use - ``sma($fast)``,
-            ``close`` - and valued in price units at the bar evaluated.
+
+            BOTH FIELDS DESCRIBE ONE LIST, and which list depends on the
+            action. An ``EXIT_LONG`` reports the exit conditions; an
+            ``ENTER_LONG`` and a ``HOLD`` report the entry conditions. So an
+            ``ENTER_LONG`` carries ``conditions_failed=()`` even though it was
+            reached only because an exit condition failed - "nothing failed"
+            means nothing in the list being reported failed. The other list's
+            outcome is not on the record.
+        indicator_values: The indicators behind the conditions THIS INTENT
+            REPORTS, keyed by the SAME name those rendered conditions use -
+            ``sma($fast)``, ``close`` - and valued in price units at the bar
+            evaluated.
 
             KEYED BY REFERENCE, NOT BY INDICATOR. Two conditions on different
             averages give ``sma($fast)`` and ``sma($slow)``, which do not
@@ -147,27 +164,32 @@ class Intent:
             because that is what the rendered strings say, and the parameters
             that resolve it travel in the same decision record.
 
-            ONLY WHAT WAS READ. An ``EXIT_LONG`` returns before the entry
-            conditions are evaluated, so its mapping holds the exit
-            references and nothing else. The field is a record of the
-            evaluation that happened, not of the strategy's whole vocabulary.
+            EVERY KEY IS NAMED BY A LINE ON THE SAME RECORD, and that is the
+            point of the field: a value can be matched to the condition it
+            decided. An earlier version merged in the values from the list that
+            was evaluated and NOT reported, which left keys no string on the
+            record explained. The narrower claim is the true one - what the
+            evaluation read but did not report is not recorded here.
         thresholds: Every LITERAL a condition compared against, keyed by its
-            own rendering, in whatever units the config author meant. Empty
-            whenever every condition compares one indicator against another,
-            which is true of every condition the current vocabulary can
-            express - so this is empty today and is not dead weight: the
-            comparison ``close above 400`` is one config change away, and a
-            number compared against is not an indicator value.
+            own rendering at six significant figures, in whatever units the
+            config author meant - which is why it is not merged into
+            ``indicator_values``, whose values are prices.
+
+            EMPTY ONLY BECAUSE THE COMMITTED CONFIG HAPPENS NOT TO USE ONE. The
+            loader accepts a bare number as a condition's ``target`` today, so
+            ``close above 400`` is expressible now rather than one change away;
+            an earlier version of this docstring said the vocabulary could not
+            express it, and that was a claim about the loader the loader does
+            not support.
+
+            Two literals that render identically at six significant figures
+            would share a key, and :func:`~strategylab.core.strategy.evaluate`
+            REFUSES that rather than letting one replace the other.
     """
 
     action: Action
     size_pct: float = 0.0
     conditions_met: tuple[str, ...] = ()
     conditions_failed: tuple[str, ...] = ()
-    # NOT HASHABLE from here on. A frozen dataclass generates ``__hash__`` from
-    # its fields, and a dict is not hashable, so hashing an Intent now raises.
-    # Nothing does; this is stated rather than worked around, because the
-    # alternative - a tuple of pairs - would make every consumer rebuild the
-    # mapping the decision record wants.
     indicator_values: dict[str, float] = field(default_factory=dict)
     thresholds: dict[str, float] = field(default_factory=dict)

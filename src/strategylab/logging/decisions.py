@@ -47,14 +47,15 @@ sorted in both, so the bytes of a line are a function of the record alone, and
 both translate a value json cannot represent into a ``ValueError`` rather than
 letting a ``TypeError`` escape a clause that does not admit it.
 
-WHAT IT DOES NOT GUARANTEE. It does not decide how ``indicator_values`` and
-``thresholds`` are KEYED - it serialises whatever mapping it is handed. The
-contract says "keyed by indicator name", which is unambiguous only while no
-strategy names the same indicator twice; ``close above sma(150)`` and
-``close above sma(50)`` in one condition list would collide under any naming by
-indicator alone. Settling that is the emitter's job and it is not settled here,
-because the emitter does not exist yet and a convention invented in advance is a
-convention the emitter will contradict. ``LIMITATIONS.md`` records the gap.
+WHAT IT DOES NOT ENFORCE. It does not decide how ``indicator_values`` and
+``thresholds`` are KEYED - it serialises whatever mapping it is handed, and a
+mapping with the wrong keys is not something this module can detect. The
+convention is now SETTLED, in :class:`~strategylab.core.types.Intent`: keyed by
+REFERENCE, so ``sma($fast)`` and ``sma($slow)`` rather than ``sma`` twice.
+Keying by indicator alone would collide for ``close above sma(150)`` and
+``close above sma(50)`` in one condition list, which is why it was not chosen.
+Whatever builds a record here should take its mappings from an ``Intent``
+rather than assembling its own.
 
 TWO TIMESTAMPS IN DIFFERENT FRAMES, deliberately, and a reader has to know which
 is which. ``bar_timestamp`` is timezone-NAIVE, because that is what the bar
@@ -139,16 +140,21 @@ class DecisionRecord:
             expected to differ between the two logs being diffed.
         ticker: Symbol evaluated.
         action: What the strategy decided.
-        indicator_values: Every indicator value the evaluation read, keyed by
-            indicator name, in price units. Keys must be strings: JSON object
-            keys are strings and an integer one would be coerced silently, so
-            the record would not come back equal to itself.
-        thresholds: Every threshold compared against, keyed by the same names,
-            in PRICE UNITS as well - with one caveat the emitter inherits. A
-            condition's right-hand side may be a bare literal rather than an
-            indicator (``Condition.right`` is ``IndicatorRef | float``), and a
-            literal's unit is whatever the config author meant by it. Nothing
-            here can check that.
+        indicator_values: The indicator values behind the conditions this
+            record reports, keyed by REFERENCE - ``sma($fast)``, ``close`` - and
+            in PRICE UNITS. The keying matches
+            :attr:`~strategylab.core.types.Intent.indicator_values`, which is
+            where it is settled and argued; keying by indicator name alone
+            would collide for two conditions on different averages. Keys must
+            be strings: JSON object keys are strings and an integer one would
+            be coerced silently, so the record would not come back equal to
+            itself.
+        thresholds: Every LITERAL a condition compared against, keyed by its own
+            rendering, in WHATEVER UNITS the config author meant - which is why
+            these are a separate mapping rather than merged into the one above.
+            A condition's right-hand side may be a bare number rather than an
+            indicator (``Condition.right`` is ``IndicatorRef | float``), and
+            nothing here can check what such a number means.
         conditions_met: Rendering of each condition that passed, in config
             order.
         conditions_failed: The same for each condition that did not pass. A

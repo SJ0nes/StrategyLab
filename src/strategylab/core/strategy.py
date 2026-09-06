@@ -215,10 +215,14 @@ def reference_name(ref: IndicatorRef | float) -> str:
     PUBLIC, AND USED FOR TWO THINGS THAT MUST AGREE: the rendered condition
     lines in :attr:`~strategylab.core.types.Intent.conditions_met`, and the KEYS
     of :attr:`~strategylab.core.types.Intent.indicator_values`. It was a nested
-    helper inside :func:`_render` until the decision log needed the same names;
-    a second implementation would have let a log's keys drift from the strings
-    beside them, and a reader could not then tell which value belonged to which
-    condition.
+    helper inside :func:`_render`; a second implementation would have let a
+    log's keys drift from the strings beside them, and a reader could not then
+    tell which value belonged to which condition.
+
+    It is public rather than private so that whatever builds a decision record
+    can name things the same way. NOTHING OUTSIDE THIS MODULE IMPORTS IT YET -
+    the emitter does not exist - so that is a reason for the visibility rather
+    than a description of current callers.
 
     THE PLACEHOLDER IS NOT RESOLVED. A searched period renders as
     ``sma($fast)`` rather than ``sma(10)``, because the parsed definition is
@@ -384,7 +388,23 @@ def _test_all(
         if isinstance(condition.right, IndicatorRef):
             values[reference_name(condition.right)] = right_value
         else:
-            thresholds[reference_name(condition.right)] = right_value
+            # SIX SIGNIFICANT FIGURES IS NOT INJECTIVE OVER FLOATS.
+            # `f"{400.0000001:.6g}"` and `f"{400.0000009:.6g}"` are both "400",
+            # so two conditions comparing against those two literals would write
+            # to one key and the second would silently replace the first - one
+            # of the numbers the evaluation compared against, gone from the
+            # record with nothing said. The key has to stay the rendered name,
+            # because that is what makes a value matchable to the line beside
+            # it, so the collision is refused instead.
+            key = reference_name(condition.right)
+            if key in thresholds and thresholds[key] != right_value:
+                raise ValueError(
+                    f"two conditions compare against literals that render identically at "
+                    f"six significant figures ('{key}'): {thresholds[key]!r} and "
+                    f"{right_value!r}. One would replace the other in the decision log, so "
+                    "the log would not record what this evaluation actually compared"
+                )
+            thresholds[key] = right_value
         line = _render(condition, left_value, right_value)
         (met if _holds(condition, bars, resolved) else failed).append(line)
     return _Evaluated(tuple(met), tuple(failed), values, thresholds)
@@ -504,11 +524,16 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
                 period = _resolve_period(side, definition, params)
                 resolved[id(side)] = _series(side, period, bars)
 
-    # THE MAPPINGS CARRY WHAT THIS CALL ACTUALLY READ, which differs by branch.
-    # An exit returns before the entry conditions are looked at, so its record
-    # holds the exit references alone; the other two branches evaluated both
-    # lists and carry both. A record claiming values the evaluation never read
-    # would be the same kind of lie as a record rebuilt after the fact.
+    # THE MAPPINGS CARRY THE NUMBERS BEHIND THE CONDITIONS THIS INTENT REPORTS,
+    # and nothing else.
+    #
+    # An earlier version merged the exit list's values into the entry branches
+    # while DISCARDING the exit list's rendered lines, which left keys on the
+    # record that no string on the same record named - so the promised match
+    # from a value back to "the condition it decided" could not be made for
+    # them. Each branch now reports one list, and carries exactly that list's
+    # numbers. What the evaluation read but did not report is not recorded,
+    # which is the narrower and honest claim.
     exits = _test_all(definition.exit, bars, resolved)
     if not exits.failed:
         return Intent(
@@ -520,16 +545,13 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
         )
 
     entries = _test_all(definition.entry, bars, resolved)
-    values = {**exits.values, **entries.values}
-    thresholds = {**exits.thresholds, **entries.thresholds}
-
     if not entries.failed:
         return Intent(
             action=Action.ENTER_LONG,
             size_pct=_size_pct(definition),
             conditions_met=entries.met,
-            indicator_values=values,
-            thresholds=thresholds,
+            indicator_values=entries.values,
+            thresholds=entries.thresholds,
         )
 
     return Intent(
@@ -537,6 +559,6 @@ def evaluate(definition: StrategyDef, bars: pd.DataFrame, params: dict[str, int]
         size_pct=0.0,
         conditions_met=entries.met,
         conditions_failed=entries.failed,
-        indicator_values=values,
-        thresholds=thresholds,
+        indicator_values=entries.values,
+        thresholds=entries.thresholds,
     )

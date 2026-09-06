@@ -375,35 +375,103 @@ def test_a_literal_right_hand_side_is_compared_as_a_constant() -> None:
 
 
 def _numbers_in(rendered: str) -> dict[str, float]:
-    """Pull `name=value` pairs out of a rendered condition line."""
+    """Pull `name=value` pairs out of a rendered condition line.
+
+    BOTH SIDES, INCLUDING A LITERAL. A literal comparand renders as its own
+    value on both halves - `13.5=13.5` - so this returns a name that lives in
+    `thresholds` rather than in `indicator_values`. Callers have to look in
+    both, and an earlier caller looked in one; it passed only because no
+    fixture used a literal.
+    """
     left, _, right = rendered.split(" ")
-    return {side.split("=")[0]: float(side.split("=")[1]) for side in (left, right)}
+    return {side.split("=", 1)[0]: float(side.split("=", 1)[1]) for side in (left, right)}
 
 
-def test_the_indicator_values_are_keyed_the_way_the_rendered_lines_name_them() -> None:
+def _literal_strategy(entry_target: float, exit_target: float) -> StrategyDef:
+    """A strategy whose conditions compare `close` against bare numbers."""
+    return StrategyDef(
+        name="literal",
+        version=1,
+        description="Test fixture.",
+        entry=(
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=entry_target),
+        ),
+        exit=(
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=exit_target),
+        ),
+        search={},
+        fixed={"position_size_pct": 50.0},
+    )
+
+
+@pytest.mark.parametrize(
+    "literal", [False, True], ids=["indicator against indicator", "against a literal"]
+)
+def test_every_name_in_a_rendered_line_is_a_key_on_the_record(literal: bool) -> None:
     # The keys and the strings come from one function, `reference_name`, so a
-    # reader can match a value to the condition it decided. A second renderer
-    # would let the two drift and nothing would say which value was which.
-    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+    # reader can match a value to the condition it decided.
+    #
+    # BOTH MAPPINGS, because a literal comparand is named in the line and keyed
+    # in `thresholds` rather than `indicator_values`. Checking one of the two
+    # passed only because the fixture never used a literal.
+    definition = _literal_strategy(13.5, 1e9) if literal else crossover()
+    params: dict[str, int] = {} if literal else {"fast": 2, "slow": 3}
+    intent = evaluate(definition, frame(V_SHAPE), params)
 
     named = set()
     for rendered in intent.conditions_met + intent.conditions_failed:
         named |= set(_numbers_in(rendered))
 
-    assert named <= set(intent.indicator_values), (
-        "every name in a rendered line must be a key in indicator_values"
-    )
+    assert named, "the fixture must render at least one condition"
+    assert named <= set(intent.indicator_values) | set(intent.thresholds)
+
+
+def test_no_key_on_the_record_is_missing_from_the_rendered_lines() -> None:
+    # THE OTHER DIRECTION, and the one that was false. `evaluate` used to merge
+    # the exit list's values into an entry branch while discarding the exit
+    # list's rendered lines, so a record could carry a key that no string on it
+    # named - and the promised match from a value back to "the condition it
+    # decided" could not be made for those.
+    intent = evaluate(_literal_strategy(13.5, 1e9), frame(V_SHAPE), {})
+
+    named = set()
+    for rendered in intent.conditions_met + intent.conditions_failed:
+        named |= set(_numbers_in(rendered))
+
+    assert intent.action is Action.ENTER_LONG
+    assert set(intent.indicator_values) | set(intent.thresholds) == named
 
 
 def test_the_indicator_values_agree_with_the_rendered_lines() -> None:
     # The strings show six significant figures; the mapping carries the full
     # double. They must agree to that precision, or the log's prose and its
     # numbers describe different bars.
-    intent = evaluate(crossover(), frame(V_SHAPE), {"fast": 2, "slow": 3})
+    #
+    # THE SERIES CARRIES MORE THAN SIX SIGNIFICANT FIGURES ON PURPOSE. Every
+    # value in V_SHAPE is three figures or fewer, so on that fixture `.6g` and
+    # `.4g` render identically and this assertion pinned no particular
+    # precision at all. These closes make the averages differ past the sixth.
+    closes = [412.3456789, 411.9876543, 413.2468101, 410.1357911, 414.8642099]
+    intent = evaluate(crossover(), frame(closes), {"fast": 2, "slow": 3})
 
-    for rendered in intent.conditions_met + intent.conditions_failed:
+    lines = intent.conditions_met + intent.conditions_failed
+    assert lines, "the fixture must render at least one condition"
+
+    widest = 0
+    checked = 0
+    for rendered in lines:
         for name, shown in _numbers_in(rendered).items():
             assert f"{intent.indicator_values[name]:.6g}" == f"{shown:.6g}"
+            digits = f"{intent.indicator_values[name]:.6g}".replace(".", "").lstrip("0")
+            widest = max(widest, len(digits))
+            checked += 1
+
+    assert checked, "nothing was compared"
+    # THE FIXTURE, not every value: an average can legitimately land on a short
+    # decimal. What matters is that at least one value here needs all six
+    # figures, so the assertion above distinguishes `.6g` from `.4g` - which it
+    # could not on V_SHAPE, where nothing exceeds three.
+    assert widest >= 6, f"the widest value rendered {widest} figures; the fixture is too round"
 
 
 def test_a_searched_period_is_keyed_by_its_placeholder_not_its_value() -> None:
@@ -455,23 +523,71 @@ def test_a_literal_comparand_is_a_threshold_and_not_an_indicator_value() -> None
     # A literal was never read from the bars and carries whatever unit the
     # config author meant, so it is not a price. The two mappings keep that
     # distinction rather than merging it.
+    intent = evaluate(_literal_strategy(13.5, 1e9), frame(V_SHAPE), {})
+
+    # THE ENTRY LIST'S LITERAL ALONE. The exit list was evaluated first and
+    # failed, but an ENTER_LONG reports the ENTRY conditions - so the exit's
+    # threshold does not belong on this record either. Recording it while
+    # discarding the line that named it was the defect: the key was an orphan
+    # that nothing on the record explained.
+    assert intent.thresholds == {"13.5": 13.5}
+    assert intent.indicator_values == {"close": 14.0}
+
+
+def test_two_literals_that_render_alike_are_refused_rather_than_merged() -> None:
+    # SIX SIGNIFICANT FIGURES IS NOT INJECTIVE OVER FLOATS. Both of these
+    # render as "400", so one would have replaced the other in the mapping and
+    # a number the evaluation compared against would be gone from the record
+    # with nothing said. The key must stay the rendered name - that is what
+    # makes a value matchable to the line beside it - so the collision is
+    # refused instead.
+    assert f"{400.0000001:.6g}" == f"{400.0000009:.6g}" == "400"
     definition = StrategyDef(
-        name="literal",
+        name="colliding",
         version=1,
         description="Test fixture.",
-        entry=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=13.5),),
+        entry=(
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=400.0000001),
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=400.0000009),
+        ),
         exit=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=1e9),),
         search={},
         fixed={"position_size_pct": 50.0},
     )
 
-    intent = evaluate(definition, frame(V_SHAPE), {})
+    with pytest.raises(ValueError, match="render identically at six significant figures"):
+        evaluate(definition, frame(V_SHAPE), {})
 
-    # BOTH literals, because both lists were evaluated: the exit was tested
-    # first and failed, then the entry was tested and passed. The mapping
-    # records what the evaluation read, and it read both.
-    assert intent.thresholds == {"13.5": 13.5, "1e+09": 1e9}
-    assert intent.indicator_values == {"close": 14.0}
+
+def test_two_conditions_against_the_same_literal_are_not_a_collision() -> None:
+    # The same number twice is not a lost value: the key carries the value it
+    # already had. Refusing this would reject a legitimate config.
+    definition = StrategyDef(
+        name="repeated",
+        version=1,
+        description="Test fixture.",
+        entry=(
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=13.5),
+            Condition(left=IndicatorRef(indicator="close"), operator="above", right=13.5),
+        ),
+        exit=(Condition(left=IndicatorRef(indicator="close"), operator="above", right=1e9),),
+        search={},
+        fixed={"position_size_pct": 50.0},
+    )
+
+    assert evaluate(definition, frame(V_SHAPE), {}).thresholds == {"13.5": 13.5}
+
+
+def test_an_intent_is_not_hashable_now_that_it_carries_mappings() -> None:
+    # A frozen dataclass generates __hash__ from its fields and a dict is not
+    # hashable, so this changed silently when the two mappings were added.
+    # Nothing in the project hashes an Intent; this pins the fact so that
+    # anyone about to write `lru_cache` or a set of Intents finds out here
+    # rather than at run time.
+    intent = evaluate(crossover(), frame(V_SHAPE), PARAMS)
+
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(intent)
 
 
 def test_thresholds_are_empty_when_every_condition_compares_two_indicators() -> None:

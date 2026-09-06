@@ -153,28 +153,35 @@ it. That is a smaller gap and a different one, and it is worth being precise
 about which: the risk was that two shapes would drift apart, and it is now that
 one shape sits unused beside another that is in use.
 
-**Two things block the backtester adopting it**, both real rather than
-scheduling:
+**One thing blocks the backtester adopting it, and it used to be two.**
 
-- `DecisionRecord.indicator_values` and `thresholds` need the numbers each
-  condition was decided on, keyed by name. `core.evaluate` computes them - it
-  renders them into strings like `sma(10)=412.346` - but returns only the
-  rendered strings, so `Intent` carries no structured values. Emitting the full
-  record means `core/` returning them, and `core/` is the shared brain.
-- `risk_verdict`, `risk_reason` and `approved_size_pct` describe a gate that
-  does not exist. `risk/limits.py` is still a stub. A backtest recording
-  `allow` there would log a gate that never ran as having passed, which is
-  exactly the inference `RiskVerdict`'s own docstring says the field exists to
-  prevent.
+The first blocker is GONE. `Intent` now carries `indicator_values` and
+`thresholds` as numbers rather than only as rendered strings, so `core.evaluate`
+supplies what a record needs. That was a change to the shared brain and it is
+its own commit.
 
-**The keying of `indicator_values` is not settled.** The contract says "keyed by
-indicator name", which is unambiguous only while no strategy names the same
-indicator twice. `close above sma(150)` and `close above sma(50)` in one
-condition list collide under any naming by indicator alone, and the committed
-config is one condition away from that. `logging/` deliberately does not invent
-a convention - it serialises whatever mapping it is handed - because the emitter
-does not exist and a convention chosen in advance is one the emitter will
-contradict. Whoever builds the emitter settles it.
+- **The remaining blocker: `risk_verdict`, `risk_reason` and
+  `approved_size_pct` describe a gate that does not exist.** `risk/limits.py` is
+  still a stub. A backtest recording `allow` there would log a gate that never
+  ran as having passed, which is exactly the inference `RiskVerdict`'s own
+  docstring says the field exists to prevent. Whatever emits a record has to say
+  something honest in those three fields, and "the layer is not built" is the
+  only honest thing available.
+
+**The keying of `indicator_values` IS now settled: by reference.**
+`sma($fast)` and `sma($slow)`, not `sma` twice - so `close above sma(150)` and
+`close above sma(50)` in one condition list no longer collide, which was the
+case this entry used to describe as unresolved. The searched period is left as
+its placeholder because the parsed definition is never rewritten, and the
+`params` mapping that resolves it travels in the same record. `logging/` still
+does not enforce the convention - it serialises whatever mapping it is handed -
+but `core/` now produces one, and `Intent`'s docstring is where it is written
+down.
+
+**A literal comparand is a threshold, not an indicator value**, and two literals
+that render identically at six significant figures are REFUSED rather than
+silently merged. That refusal is reachable: the config loader accepts a bare
+number as a condition's `target` today, so `close above 400` is expressible now.
 
 **The engine's fill convention is a decision, not a detail.** A signal computed
 from bar `t`'s close is filled at bar `t+1`'s OPEN. Filling at the same close
@@ -184,7 +191,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-926 tests pass (`uv run pytest`). They cover the protocol loader, the window
+931 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
