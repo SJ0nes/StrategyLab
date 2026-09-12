@@ -257,12 +257,17 @@ def test_the_currency_is_fetched_once(tmp_path: Path) -> None:
 
 
 def test_a_second_summary_within_five_seconds_waits_out_the_remainder(tmp_path: Path) -> None:
-    ticks = iter([100.0, 100.0, 102.0, 102.0])
+    # The clock is read before and after each request. The first request runs
+    # from 100 to 101, so its completion is recorded at 101; the second arrives
+    # at 103, 2.0s later, and must wait the other 3.0s. Recording the START
+    # instead would wait only 2.0s - which is why the before and after ticks
+    # differ here, where an earlier version had them equal and could not tell.
+    ticks = iter([100.0, 101.0, 103.0, 104.0])
     venue = _venue(Recorder(_balance_answers()), tmp_path, clock=lambda: next(ticks))
     venue.get_balance()
     venue.get_balance()
-    # Second call arrives 2.0s after the first completed: waits the other 3.0s.
-    assert venue.sleeps == [pytest.approx(ACCOUNT_SUMMARY_MIN_INTERVAL_S - 2.0)]  # type: ignore[attr-defined]
+    assert ACCOUNT_SUMMARY_MIN_INTERVAL_S == 5.0
+    assert venue.sleeps == [pytest.approx(3.0)]  # type: ignore[attr-defined]
 
 
 def test_a_second_summary_after_the_interval_does_not_wait(tmp_path: Path) -> None:

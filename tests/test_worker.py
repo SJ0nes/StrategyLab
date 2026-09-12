@@ -143,6 +143,8 @@ def test_portfolio_state_sums_positive_exposure_and_reports_no_realised_pnl() ->
         Position(ticker="B", quantity=1.0, average_price=1.0, market_value=-500.0),
     ]
     state = portfolio_state(_balance(equity=9_500.0), positions, _session(10_000.0))
+    # Per the docstring, exposure is summed over POSITIVE market values only, so
+    # the -500 does not net against the 3,000.
     assert state.open_exposure == 3_000.0
     assert state.equity == 9_500.0
     assert state.start_of_day_equity == 10_000.0
@@ -174,10 +176,13 @@ def test_decide_passes_the_intent_through_the_gate() -> None:
 
 def test_an_allowed_entry_is_sized_from_equity_and_the_close() -> None:
     intent = Intent(action=Action.ENTER_LONG, size_pct=95.0)
-    order = order_for(intent, _allow(50.0), _balance(equity=10_000.0), [], TICKER, 200.0, "r")
+    # Cash is deliberately NOT equal to equity: an implementation sizing from
+    # cash would give 10 units here, and with the two equal it would have passed.
+    balance = _balance(equity=10_000.0, cash=4_000.0)
+    order = order_for(intent, _allow(50.0), balance, [], TICKER, 200.0, "r")
     assert order is not None
     assert (order.side, order.ticker, order.client_ref) == (Side.BUY, TICKER, "r")
-    # 50% of 10,000 is 5,000 of notional; at 200 a unit that is 25 units.
+    # 50% of 10,000 of EQUITY is 5,000 of notional; at 200 a unit that is 25 units.
     assert order.quantity == 25.0
 
 
@@ -217,9 +222,12 @@ def test_a_rejection_sends_nothing() -> None:
 
 
 def test_an_allowance_of_zero_on_an_entry_sends_nothing() -> None:
-    # A malformed ENTER_LONG at size zero is allowed at zero by the gate, and an
-    # allow is never read as "there is an order to send" without the size.
-    intent = Intent(action=Action.ENTER_LONG, size_pct=0.0)
+    # An allow is never read as "there is an order to send" without the size
+    # beside it - and it is the VERDICT's size that decides, so the intent here
+    # asks for 95 while the gate permits nothing. An implementation reading
+    # intent.size_pct instead would send an order, and with both at zero it
+    # would have passed.
+    intent = Intent(action=Action.ENTER_LONG, size_pct=95.0)
     assert order_for(intent, _allow(0.0), _balance(), [], TICKER, 1.0, "r") is None
 
 
@@ -354,3 +362,14 @@ def test_a_tiny_value_difference_within_tolerance_is_not_a_divergence() -> None:
     live = _live_log(bars)
     nudged = bars.copy() * (1 + 1e-12)
     assert compare(live, replay(_definition(), PARAMS, nudged, live, NOW)).divergences == ()
+    # And the tolerance is bounded from above: a nudge of 1e-6 relative is a
+    # real price change and every indicator value must report it - as may the
+    # rendered condition lines, which carry those values at six significant
+    # figures. A crossover is scale-invariant, so neither nudge can move an
+    # action, and that is the field that must never appear here.
+    coarse = bars.copy() * (1 + 1e-6)
+    report = compare(live, replay(_definition(), PARAMS, coarse, live, NOW))
+    fields = {d.field for d in report.divergences}
+    assert "indicator_values" in fields
+    assert fields <= {"indicator_values", "conditions_met", "conditions_failed"}
+    assert report.diverging_bars == report.compared
