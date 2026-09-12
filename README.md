@@ -44,8 +44,8 @@ function `validate.walk_forward`, which is what the tests use. The first real
 run is the operator's to make. **No figure from a search appears in this
 README.**
 
-**The veto gate between a strategy and a venue now exists, and nothing calls
-it.** `risk/limits.py` reads its own config file — `configs/risk_limits.yaml`,
+**The veto gate between a strategy and a venue now exists, and the live worker
+is its one caller.** `risk/limits.py` reads its own config file — `configs/risk_limits.yaml`,
 which is new, and deliberately neither `protocol.yaml` nor anything a search
 touches — and answers one question per intent: may this proceed, and at what
 size. A position or exposure limit may reduce a size rather than refuse; the
@@ -58,12 +58,24 @@ unwinding an open position while it is set is a manual act at the venue.
 position-closing intent would forbid the one action that stops the loss it is
 measuring. That second claim is about SIZE, not about exits: the gate reads the
 size an intent asks for, so a well-formed exit — which asks for none — passes,
-while a malformed one carrying a size is refused like any other request. Nothing
-in this repository calls any of it: `strategylab run` is a stub, and a backtest
-deliberately does not consult it, so no intent has been through this gate outside
-its tests. Both decisions, and why a limit of zero is refused rather than honoured,
-are argued in
+while a malformed one carrying a size is refused like any other request.
+`strategylab run` passes every intent through it; a backtest deliberately does
+not, so no research figure in this repository is gated. Both decisions, and why a
+limit of zero is refused rather than honoured, are argued in
 [docs/decisions/0010](docs/decisions/0010-what-the-risk-gate-refuses.md).
+
+**The live half is built, and has never been run.** `strategylab run` runs the
+paper-trading worker for one bar and exits: it reconciles against Trading 212's
+demo venue, fetches the execution instrument's latest bars and appends them to
+the cache, evaluates the bar through the same `core.evaluate` the backtester
+uses, gates the intent, writes a decision record, and sends at most one market
+order. `strategylab diff` replays every bar in that log from the cached bars and
+reports each field on which the two disagree — which tests the simulator, not
+the strategy. The venue adapter is tested through a mock transport, so what is
+proven is this side of the contract and not the vendor's: no request has ever
+reached Trading 212 from this code, the T212 ticker for the execution instrument
+is unverified, and the first real run is the operator's to make with a DEMO key.
+The command refuses to start with anything else.
 
 | Built | Not built |
 |---|---|
@@ -71,25 +83,28 @@ are argued in
 | Price data layer — validation, provenance, parquet cache | The noise band drawn on the figure's own axis |
 | Cost model — hand-verified arithmetic | Rejection *on* the ceiling — it informs, it does not gate |
 | Strategy-config loader — closed schema, closed vocabulary | Fold panels in a report — a verdict is JSON, invisible in every figure |
-| The noise ceiling — block-resampled surrogates, `--trials` | Venue adapters and the live worker — so nothing emits a decision record or consults the risk layer |
+| The noise ceiling — block-resampled surrogates, `--trials` | The backtester emitting the decision schema — the replay stands in for it |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
 | Backtest engine and metrics, with the determinism test | A hash on the strategy config — only the price snapshot is checked |
-| Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
-| Plateau scoring, the edge check, the degeneracy check | |
+| Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A daily-loss limit that latches — the gate is stateless, so a recovery re-permits |
+| Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter | |
-| The decision-log schema — append-only JSON Lines, exact round trip *(nothing emits it yet)* | |
-| The risk layer — its own config file, the kill switch, three limits *(nothing calls it yet)* | |
-| `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
+| The decision-log schema — append-only JSON Lines, exact round trip *(emitted by the worker and the replay; not by the backtester)* | |
+| The risk layer — its own config file, the kill switch, three limits *(called by the worker; not by the backtester)* | |
+| The Trading 212 adapter — demo or live by explicit choice, no retry, key masked *(tested against a mock transport only)* | |
+| The live worker's decisions and the replay `diff` compares them against | |
+| All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(untested)* | |
 
-**1420 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1482 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
-reader, the decision log and the risk layer — eighteen areas, one per test file.
+reader, the decision log, the risk layer, the Trading 212 adapter and the live
+worker — twenty areas, one per test file.
 486 of them are the risk layer's, which is a statement about parameterisation
 rather than about size. 316 of the 486 are the same assertions repeated at four
 account equities, because at an equity of 100 a cash exposure and its percentage
@@ -109,11 +124,11 @@ or a mark-down measured against what is left of an account rather than against
 what it opened at, and an exposure measured the other way round. Two of the three
 closed real holes; the third states a rule another test already covered, and says
 so rather than claiming credit for it.
-The five CLI commands have no tests, and neither does the vendor fetch path,
-which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 8 of them across 2
-files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
-that each later component is built against a fixed interface.
+The seven CLI commands have no tests, and neither does the vendor fetch path,
+which by policy no test may call — nor the vendor's side of the Trading 212
+contract, for the same reason. No `raise NotImplementedError` remains under
+`src/` (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`
+prints 0).
 
 **The split now has a guard, not just an absence, and the guard has two
 consumers.** `fetch` caches 2005–2024 in one file and hands all of it to
@@ -154,20 +169,20 @@ protocol.yaml ──▶ protocol.py ──▶ data/ ──▶ core/ ──▶ ba
                                                        report/
 ```
 
-Full version, with every module marked built or stubbed, in
+Full version, with every module marked and every test counted, in
 [docs/architecture.md](docs/architecture.md).
 
 ## Quickstart
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1420 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1482 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1420 tests, none touching the network
+uv run pytest                   # 1482 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

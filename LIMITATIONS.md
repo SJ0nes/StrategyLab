@@ -4,27 +4,27 @@ Written before any result existed, which is the only time this is easy to write
 honestly. Everything here is a reason to distrust a number this project
 produces. Nothing here is a footnote.
 
-## Most of the system is not implemented
+## What is implemented, and what has never run
 
-Twenty-one modules have working bodies: `protocol.py`, `windows.py`,
+Twenty-three modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
 `search/surrogate.py`, `search/noise.py`, `report/render.py`,
 `report/surface.py`, `report/palette.py`, `validate/walkforward.py`,
-`validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`, and the `status`, `fetch`,
-`search`, `report` and `validate` commands in `cli.py`. Eight `NotImplementedError` bodies
-remain, across 2 files. Two further modules are mostly types rather than behaviour:
-`core/types.py` holds the shared value types, and `execution/venue.py` holds the
-venue interface and its data classes. `venue.py` has no tests; the one guard in
-`types.py` is covered by `tests/test_strategy_config.py`.
+`validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
+`execution/t212.py`, `live/worker.py`, and all seven commands in `cli.py`. No
+`NotImplementedError` body remains. Two further modules are types rather than
+behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
+the venue interface and its data classes, exercised through the adapter's and the
+worker's tests.
 
-**What is left is the live half.** `execution/t212.py` and the `run` and `diff`
-commands - plus the wiring that would make anything emit the decision schema or
-pass an intent through the risk gate. Both of those now exist and neither has a
-caller, which is a different and smaller gap than a missing component, and worth
-distinguishing: what is unproven about them is the integration, not the unit.
-The research pipeline — fetch, search, report, validate — runs end to end.
+**What is left is not a component but a first run.** The research pipeline —
+fetch, search, report, validate — has run end to end. The live half — the
+Trading 212 adapter, the worker, `run` and `diff` — has been built and tested
+against a mock transport and literals, and has never sent a request to the venue.
+The section "The live half has never run" below lists what that leaves unproven,
+and it is the section a reader of the README's "built" table should go to next.
 
 **A strategy config can now be read, expanded, backtested and scored — by the
 product, not only by a test.**
@@ -146,8 +146,10 @@ unused.** `docs/architecture.md` states the schema is defined once, in
 `logging/decisions.py`, because a backtest log and a live log have to be
 diffable - that is what makes `strategylab diff` possible at all. That module is
 now built, tested and reachable: `DecisionRecord` round-trips through
-`write_decisions`/`read_decisions` exactly. **Nothing emits it.** `run_backtest`
-still writes its ad-hoc seven-column frame, and the live worker does not exist.
+`write_decisions`/`read_decisions` exactly. **The live worker and the replay emit
+it; the backtester does not.** `run_backtest` still writes its ad-hoc
+seven-column frame, and `diff` compares the live log against a replay built from
+`core.evaluate` directly rather than against the engine's frame.
 
 So the "defined once" rule is no longer aspirational in the sense that the one
 definition is missing - it is aspirational in the sense that nobody has adopted
@@ -244,11 +246,10 @@ test collector rather than from the previous draft, and the lesson
 fails more often than its arithmetic does — is now evidenced here as well as
 there.
 
-What has no tests is not only the stub bodies, and an earlier version of this
-paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
-of `status`, `fetch`, `search`, `report` and `validate`; the venue interface in
-`execution/venue.py`; and `YFinanceSource`'s fetch path, which by policy no test
-may call. The CLI is the one that keeps growing — `search`, `report` and
+Three FINISHED areas are untested: **the CLI**, all seven of `status`, `fetch`,
+`search`, `report`, `validate`, `run` and `diff`; `YFinanceSource`'s fetch path,
+which by policy no test may call; and the vendor's side of the Trading 212
+contract, for the same reason. The CLI is the one that keeps growing — `search`, `report` and
 `validate` together are several hundred lines of argument handling, error paths
 and output formatting, and every failure branch in them is unexercised: a
 missing config, an unparseable one, an uncached instrument, an unreadable
@@ -262,12 +263,12 @@ happen BEFORE the read are covered — `tests/test_candidate.py` drives every on
 of them through `read_candidate` — but the wiring that calls it, and the error
 handling around the two calls that can fail after the touch is charged, is not.
 
-Untested too is every type definition the remaining stub module carries beside
-its `NotImplementedError` bodies — `T212Error`, the two base URLs, and the two
-rate-limit constants in `execution/t212.py` — along with `execution/venue.py`'s
-`Order`, `Position`, `Balance`, `ReconcileReport` and `OrderType`. Those are real
-code, some of it load-bearing for a later component's schema, and nothing
-exercises any of it. That list keeps shrinking as the components arrive:
+The list of untested type definitions is now empty: `execution/venue.py`'s
+`Order`, `Position`, `Balance`, `ReconcileReport` and `OrderType` are exercised
+by `tests/test_t212.py` and `tests/test_worker.py`, as are `T212Error` and the
+adapter's constants. What remains untested is what no test may reach: the seven
+CLI commands, the vendor fetch path, and the vendor's side of the Trading 212
+contract. That list shrank as the components arrived:
 `FoldResult`, `ValidationResult` and `Outcome` left it when
 `validate/walkforward.py` was built, `DecisionRecord`'s sixteen fields left it
 with `tests/test_decisions.py`, and `RiskLimits`, `PortfolioState`, `RiskVerdict`
@@ -824,14 +825,14 @@ averages on every bar of every cell", implying quadratic behaviour. Timed across
 cheap win hiding there: making the ceiling affordable means restructuring how
 `evaluate` is called, which is an engine change and a separate piece of work.
 
-**A stub command prints your home directory.** The two unbuilt CLI commands —
-`run` and `diff` — raise `NotImplementedError`,
-and the resulting traceback contains the absolute path of the file that raised
-it, which on most machines includes your username. Nothing is written anywhere
-and nothing leaves the machine, but if you paste such a traceback into a bug
-report or an issue, that path goes with it. `status` prints no ABSOLUTE paths
-for that reason — it names `configs/ma_crossover.yaml`, which is a repository
-path and carries nothing about the machine it ran on.
+**An unhandled exception prints your home directory.** Every command catches
+the errors it expects and prints a message, but any it does not expect surfaces
+as a traceback, and a traceback contains the absolute path of the file that
+raised it, which on most machines includes your username. Nothing is written
+anywhere and nothing leaves the machine, but if you paste such a traceback into
+a bug report or an issue, that path goes with it. `status` prints no ABSOLUTE
+paths for that reason — it names `configs/ma_crossover.yaml`, which is a
+repository path and carries nothing about the machine it ran on.
 
 `search` follows the same rule and extends it to a file rather than only to a
 terminal. It catches its own errors and prints a message instead of a traceback,
@@ -842,24 +843,82 @@ open. What it does NOT do is scrub anything else: if you pass a config from
 outside the repository the artifact records its filename, and a filename can
 carry information too.
 
-**The risk layer is built, and nothing has ever asked it anything.** All three
-parts `CLAUDE.md` demands now exist: its own module, its own config file
+## The live half has never run
+
+Everything below is true of code that passes its tests and has never been
+executed against Trading 212. Each is a reason to distrust the first live
+decision record until it has been read beside the venue's own account page.
+
+- **No request has ever reached the venue from this code.** `tests/test_t212.py`
+  drives every adapter method through an `httpx.MockTransport` that answers with
+  canned JSON in the shapes the public v0 documentation describes. Whether the
+  endpoints still answer in those shapes, whether the demo account behaves like
+  the documentation, and whether `market_value` derived as quantity times current
+  price matches the venue's own figure - none of that is established. The first
+  real run establishes it, and nothing in the suite can.
+- **The Trading 212 ticker for `VUAG.L` is unverified.** The adapter maps
+  protocol symbols to venue tickers through `symbol_map`, which defaults to the
+  identity, so an unmapped symbol is sent as written and refused by the venue
+  rather than traded as something else. Confirming the mapping means calling the
+  instruments endpoint, which no test may do. The first run will most likely be
+  refused on this point, and that is the intended failure.
+- **T212 v0 accepts no client reference.** `venue.py` says `client_ref` is what
+  lets a timed-out order be resolved by query rather than resend. The endpoint
+  has no such field, so the adapter carries the reference in its own error
+  message only, and resolution after a timeout means matching ticker, quantity
+  and time against the venue's open orders by hand. The adapter does not do it
+  automatically, and it does not retry.
+- **The session open is the first observation of the day.** A worker scheduled
+  after the close records that close as the session open, so on its first run of
+  a day the mark-to-market loss route reads zero by construction, and a loss
+  taken before the worker ran is invisible to the daily-loss limit until the next
+  day's open resets it. A worker restarted mid-session keeps the file's figure,
+  which is the right behaviour; the gap is at the first run.
+- **The daily-loss limit does not latch.** The gate is a pure function of the
+  state it is handed, and the worker runs once per bar and exits, so a refusal
+  today and a recovery tomorrow morning is an allowance tomorrow. Nothing holds
+  the flag that "stops for the day" would need.
+- **`diff` compares six fields and deliberately not the three risk fields.** The
+  replay does not run the gate, so `risk_verdict`, `risk_reason` and
+  `approved_size_pct` differ by construction and comparing them would report the
+  harness as simulator drift. That is the decision the previous section described
+  as unmade; it is now made in the replay's favour, and the cost is that a live
+  refusal is invisible to `diff` unless its consequence shows up in a later bar's
+  decision.
+- **`run` and `diff` are untested**, like the five commands before them. Their
+  decisions are in `live/worker.py`, which is tested; what is not is the wiring -
+  environment variables, the fetch-and-merge of the execution instrument's bars,
+  the order of writes, and every error branch. The two refusals were exercised by
+  hand: a non-demo environment and an absent live log both exit non-zero with a
+  message, and that is the extent of it.
+- **The mutation figures in this repository's commit messages cannot be re-run
+  from the repository.** The harness that produced them lives outside it.
+  `docs/decisions/0006` already lists this as a past finding, and it has now
+  recurred: either the harness gets committed under a `tools/` directory or the
+  figures stop appearing in messages that ship.
+
+**The risk layer is built, and its one caller has never run.** All three parts
+`CLAUDE.md` demands exist: its own module, its own config file
 (`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 486 of
-them). What does not exist is a caller. `strategylab run` is a stub, the
-backtester deliberately does not gate, and so every verdict this layer has ever
-produced was produced by a test.
+them). `live/worker.py` is its caller and the backtester deliberately is not, so
+no research figure here is gated - and since `strategylab run` has never been
+invoked against the venue, every verdict this layer has produced was still
+produced by a test.
 [docs/decisions/0010](docs/decisions/0010-what-the-risk-gate-refuses.md) argues the
 two decisions the stub's contract left open. These consequences are worth stating
 plainly,
 and they are what a reader should take from this section rather than the fact that
 the tests pass.
 
-- **Nothing constructs a `PortfolioState`.** The gate needs equity, start-of-day
-  equity, open exposure and realised profit and loss for the session, and the only
-  thing that could supply them is a venue reconciliation that does not exist yet.
-  The layer's arithmetic is tested against states a test builds; whether those
-  states resemble what Trading 212 actually reports is untested and untestable
-  until the adapter is written.
+- **The worker constructs a `PortfolioState` with one field always zero.**
+  Equity and exposure come from the venue's balance and positions; the session
+  open comes from `state/session.json`; and `realised_pnl_today` is ALWAYS 0.0,
+  because the venue's cash endpoint reports a lifetime realised figure and the
+  worker keeps no ledger to difference it against. So the daily-loss limit is
+  reached only by the mark-to-market route in live use, and the realised route -
+  half of what `tests/test_risk.py` tests - is never exercised by the worker.
+  Whether the venue's balance and positions resemble what the tests build is
+  unverified until the first real run.
 - **"The session" is not defined anywhere.** The daily-loss limit is expressed
   per session and compares against start-of-day equity, but no component decides
   when a day begins, resets the figure, or persists it across a restart. A worker
