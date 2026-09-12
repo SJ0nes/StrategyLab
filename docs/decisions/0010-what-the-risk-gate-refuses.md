@@ -122,6 +122,7 @@ refusing things.
   positive and finite. It is the denominator of the daily-loss limit and nothing
   can tell whether such an account is down three percent or thirty. The check
   precedes even the kill switch, so it fires with the switch set.
-- Everything above was decided against tests and nothing else. `strategylab run`
-  is a stub and the backtester deliberately does not gate, so no intent has been
-  through this gate outside `tests/test_risk.py`.
+- Everything above was decided against tests and nothing else. `live/worker.py`
+  is now the gate's caller and the backtester deliberately is not, but
+  `strategylab run` has never been invoked against the venue, so no intent has
+  been through this gate outside `tests/test_risk.py` and `tests/test_worker.py`.

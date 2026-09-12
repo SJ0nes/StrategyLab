@@ -23,10 +23,12 @@ duplicated code is the seventeen-line body of one method, and paying it twice is
 the point. An earlier version of this paragraph called it nine lines, which was
 a guess rather than a count.
 
-NOTHING CALLS THIS YET. The live worker (``strategylab run``) is a stub, so no
-intent has ever been through this gate outside its own tests, and the backtester
-does not consult it - a backtest is a research measurement of a strategy, not a
-simulation of an account with a kill switch on it. ``logging/decisions.py``
+ONE CALLER, WHICH HAS NEVER RUN. :mod:`strategylab.live.worker` passes every
+live intent through :func:`check`; the backtester does not consult it - a
+backtest is a research measurement of a strategy, not a simulation of an account
+with a kill switch on it. ``strategylab run`` has never been invoked against the
+venue, so every verdict this module has produced was produced by a test.
+``logging/decisions.py``
 already carries the three fields this module's verdict fills, and ALL THREE ARE
 RENAMED on the way, none of it enforced by anything: ``verdict`` is an enum and
 ``risk_verdict`` is its ``.value``; ``limited_size_pct`` is ``approved_size_pct``
@@ -262,7 +264,8 @@ class RiskVerdict:
             limit, which FIELD made the question unanswerable. MEANT for the
             decision log, on allowed intents as well as rejected ones, so that a
             log shows the gate ran rather than leaving it to be inferred. No
-            record carries one yet: nothing calls this module.
+            record carries one yet: the worker that would write it has never
+            run.
         limited_size_pct: The size the intent is permitted at, as a percentage
             of equity. Equal to the requested size when nothing bound, lower
             when a limit reduced it, and ``0.0`` on a rejection.

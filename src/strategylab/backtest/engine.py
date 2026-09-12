@@ -113,7 +113,9 @@ class BacktestResult:
             also remains is that this frame carries three columns
             ``DecisionRecord`` deliberately does not: the position, the cash and
             the equity, which are account state rather than a decision.
-            ``LIMITATIONS.md`` records the decision and its two costs.
+            ``LIMITATIONS.md`` records the decision - since made, in the replay's
+            favour: ``strategylab diff`` replays through ``evaluate`` directly and
+            does not run the gate, so this frame is no longer what any diff reads.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a
