@@ -8,15 +8,17 @@ arrives with its own tests rather than as part of a large unreviewable change.
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from strategylab.core.config import StrategyConfigError, load_strategy
+from strategylab.core.strategy import required_history
 from strategylab.data.source import (
     DataQualityError,
     YFinanceSource,
@@ -25,8 +27,24 @@ from strategylab.data.source import (
     is_cached,
     validate_bars,
 )
+from strategylab.execution.t212 import T212Error, T212Venue
+from strategylab.live.worker import (
+    DEFAULT_LIVE_LOG_PATH,
+    DEFAULT_REPLAY_LOG_PATH,
+    DEFAULT_SESSION_PATH,
+    compare,
+    decide,
+    load_session,
+    order_for,
+    portfolio_state,
+    record,
+    replay,
+    save_session,
+)
+from strategylab.logging.decisions import read_decisions, write_decision, write_decisions
 from strategylab.protocol import Protocol, ProtocolError, load_protocol
 from strategylab.report.surface import ReportError, render_surface
+from strategylab.risk.limits import load_limits
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH
 from strategylab.search.grid import expand_grid
 from strategylab.search.loop import (
@@ -836,28 +854,248 @@ def report() -> None:
     )
 
 
-@app.command()
-def run() -> None:
-    """Start the live paper-trading worker against the demo venue.
+#: How much history the worker fetches for the execution instrument, as a
+#: multiple of the strategy's warm-up in bars, converted to calendar days at a
+#: generous rate so weekends and holidays cannot leave the window short.
+WARMUP_CALENDAR_DAYS_PER_BAR = 2
+WARMUP_CALENDAR_DAYS_FLOOR = 60
 
-    Reconciles against the venue on startup, then evaluates each bar through
-    the same core.evaluate the backtester uses, passes every intent through the
-    risk layer, and writes a decision record per bar. Live data never selects
-    anything: it accumulates into history for future searches.
+
+def _candidate_or_exit(result: Path, protocol: Protocol) -> tuple[Any, Any]:
+    """Load the search artifact's winner and its strategy, or exit non-zero.
+
+    Args:
+        result: The search artifact.
+        protocol: The loaded protocol.
+
+    Returns:
+        The candidate and the parsed strategy definition.
+
+    Raises:
+        typer.Exit: With code 1 if the research snapshot is not cached, the
+            artifact does not match it, or the config cannot be loaded.
     """
-    raise NotImplementedError
+    ticker = protocol.instruments.research
+    if not is_cached(ticker, DATA_DIR):
+        err_console.print(f"[bold red]{ticker} is not cached[/bold red] - run `strategylab fetch`")
+        raise typer.Exit(code=1)
+    try:
+        _, entry = cache_read(ticker, DATA_DIR)
+        candidate = read_candidate(result, protocol, entry.content_hash)
+        definition = load_strategy(candidate.config_path)
+    except (DataQualityError, CandidateError, StrategyConfigError) as exc:
+        err_console.print(f"[bold red]cannot load the candidate[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    return candidate, definition
 
 
 @app.command()
-def diff() -> None:
-    """Compare the live decision log against a backtest replay of the same period.
+def run(
+    result: Annotated[
+        Path,
+        typer.Argument(
+            help="Search artifact whose candidate to trade, such as "
+            "state/search-20260822T213227Z.json. A validation is not required and "
+            "nothing here checks for one: what to run is the operator's decision."
+        ),
+    ],
+) -> None:
+    """Run the paper-trading worker for ONE bar against the demo venue, then exit.
 
-    Replays the backtester over the dates the live worker ran and diffs the two
-    decision logs, which share a schema for exactly this purpose. Measures how
-    far live results drift from what the backtest predicted - which tests the
-    simulator, not the strategy.
+    Scheduled once per session after the close rather than left running.
+    Reconciles against the venue, fetches the execution instrument's latest
+    bars (THE ONE OTHER COMMAND THAT USES THE NETWORK, besides fetch) and
+    appends them to the cache so live data accumulates into history, evaluates
+    the latest bar through the same core.evaluate the backtester uses, passes
+    the intent through the risk layer, writes ONE decision record to
+    state/decisions-live.jsonl, and then sends at most one market order.
+
+    THE RECORD IS WRITTEN BEFORE THE ORDER IS SENT, so a venue failure never
+    costs the log the decision that preceded it; the record says what the gate
+    answered, and an order that failed is reported on the terminal and nowhere
+    else. Live data never selects anything.
+
+    Refuses to start unless T212_ENVIRONMENT is `demo`. A live key is a
+    separate, later decision, and this command does not take it.
     """
-    raise NotImplementedError
+    protocol = _load_or_exit()
+
+    environment = os.environ.get("T212_ENVIRONMENT", "")
+    api_key = os.environ.get("T212_API_KEY", "")
+    if environment != "demo":
+        err_console.print(
+            f"[bold red]refusing to run[/bold red] T212_ENVIRONMENT is {environment!r}; this "
+            "command runs against the demo venue only. Export the values in .env first."
+        )
+        raise typer.Exit(code=1)
+    if not api_key.strip():
+        err_console.print("[bold red]refusing to run[/bold red] T212_API_KEY is not set")
+        raise typer.Exit(code=1)
+
+    candidate, definition = _candidate_or_exit(result, protocol)
+    try:
+        limits = load_limits()
+    except (FileNotFoundError, ValueError) as exc:
+        err_console.print(f"[bold red]risk limits[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    ticker = protocol.instruments.execution
+    now = datetime.now(UTC)
+    today = now.date()
+    warmup = required_history(definition, candidate.params)
+    span = max(WARMUP_CALENDAR_DAYS_FLOOR, WARMUP_CALENDAR_DAYS_PER_BAR * warmup)
+    source = YFinanceSource()
+    console.print(f"Fetching {ticker} from {source.name}, last {span} days ...")
+    try:
+        fresh = source.fetch(ticker, today - timedelta(days=span), today)
+        if is_cached(ticker, DATA_DIR):
+            cached, _ = cache_read(ticker, DATA_DIR)
+            fresh = fresh.combine_first(cached).sort_index()
+        validate_bars(fresh)
+        entry = cache_write(fresh, ticker, DATA_DIR, source=source.name, fetched_at=now)
+    except DataQualityError as exc:
+        err_console.print(f"[bold red]bars[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    bars = fresh
+    if len(bars) < warmup:
+        err_console.print(
+            f"[bold red]too few bars[/bold red] {len(bars)} cached, {warmup} needed for warm-up"
+        )
+        raise typer.Exit(code=1)
+    console.print(f"  cached {entry.rows} bars to {entry.path.as_posix()}")
+
+    try:
+        venue = T212Venue(api_key, environment)
+        reconciled = venue.reconcile()
+        balance = venue.get_balance()
+        positions = venue.get_positions()
+    except (T212Error, ValueError) as exc:
+        err_console.print(f"[bold red]venue[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    for line in reconciled.discrepancies:
+        console.print(f"  [yellow]reconciled[/yellow] {line}")
+
+    session = load_session(DEFAULT_SESSION_PATH, today, balance.equity)
+    save_session(session, DEFAULT_SESSION_PATH)
+    state = portfolio_state(balance, positions, session)
+
+    bar_stamp = bars.index[-1].to_pydatetime()
+    try:
+        intent, verdict = decide(definition, candidate.params, bars, state, limits)
+        entry_record = record(
+            intent,
+            verdict,
+            bar_timestamp=bar_stamp,
+            recorded_at=now,
+            source="live",
+            ticker=ticker,
+            params=candidate.params,
+            protocol_version=protocol.protocol_version,
+        )
+        write_decision(entry_record, DEFAULT_LIVE_LOG_PATH)
+        order = order_for(
+            intent,
+            verdict,
+            balance,
+            positions,
+            ticker,
+            float(bars["close"].iloc[-1]),
+            client_ref=f"{ticker}-{bar_stamp:%Y%m%d}",
+        )
+    except ValueError as exc:
+        err_console.print(f"[bold red]decision[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column(style="dim", no_wrap=True)
+    table.add_column()
+    table.add_row("bar", f"{bar_stamp:%Y-%m-%d}  {ticker} close {bars['close'].iloc[-1]:.4f}")
+    table.add_row(
+        "account", f"{balance.equity:.2f} {balance.currency} equity, {len(positions)} position(s)"
+    )
+    table.add_row("intent", f"{intent.action.value}  requested {intent.size_pct:g}%")
+    table.add_row("risk", f"{verdict.verdict.value}  {verdict.reason}")
+    table.add_row("log", DEFAULT_LIVE_LOG_PATH.as_posix())
+    console.print(table)
+
+    if order is None:
+        console.print("\nNo order to send.")
+        return
+    try:
+        order_id = venue.place_order(order)
+    except T212Error as exc:
+        err_console.print(f"[bold red]order failed[/bold red] {exc}")
+        err_console.print("The decision record above was written; the order was not confirmed.")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"\n[green]sent[/green] {order.side.value} {order.quantity:.6f} {order.ticker} "
+        f"(venue id {order_id})"
+    )
+
+
+@app.command()
+def diff(
+    result: Annotated[
+        Path,
+        typer.Argument(help="The search artifact the worker was run with."),
+    ],
+) -> None:
+    """Compare the live decision log against a replay of the same bars.
+
+    Re-decides every bar in state/decisions-live.jsonl from the cached bars
+    alone, through the same core.evaluate, writes the replay to
+    state/decisions-replay.jsonl (replaced each run), and reports every field on
+    which the two disagree. Uses no network: the bars are what `run` cached.
+
+    Compares the strategy's decision - action, conditions, indicator values,
+    requested size - and NOT the risk fields, which differ by construction
+    because the replay does not run the gate. A divergence is a finding about
+    the simulator, not a failure; the exit code is zero either way.
+    """
+    protocol = _load_or_exit()
+    try:
+        live = read_decisions(DEFAULT_LIVE_LOG_PATH)
+    except (FileNotFoundError, ValueError) as exc:
+        err_console.print(f"[bold red]live log[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if not live:
+        err_console.print("[bold red]nothing to diff[/bold red] the live log is empty; run first")
+        raise typer.Exit(code=1)
+
+    candidate, definition = _candidate_or_exit(result, protocol)
+    ticker = protocol.instruments.execution
+    if not is_cached(ticker, DATA_DIR):
+        err_console.print(f"[bold red]{ticker} is not cached[/bold red] - `run` caches it")
+        raise typer.Exit(code=1)
+    try:
+        bars, _ = cache_read(ticker, DATA_DIR)
+        replayed = replay(definition, candidate.params, bars, live, datetime.now(UTC))
+    except (DataQualityError, ValueError) as exc:
+        err_console.print(f"[bold red]replay[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    DEFAULT_REPLAY_LOG_PATH.unlink(missing_ok=True)
+    write_decisions(replayed, DEFAULT_REPLAY_LOG_PATH)
+
+    report = compare(live, replayed)
+    console.print(
+        f"Compared {report.compared} bar(s): {report.diverging_bars} diverge, "
+        f"{len(report.missing_in_replay)} could not be replayed."
+    )
+    if report.divergences:
+        table = Table(box=None, pad_edge=False)
+        table.add_column("bar", style="dim", no_wrap=True)
+        table.add_column("field", no_wrap=True)
+        table.add_column("live")
+        table.add_column("replay")
+        for item in report.divergences:
+            table.add_row(f"{item.bar_timestamp:%Y-%m-%d}", item.field, item.live, item.replay)
+        console.print(table)
+    for stamp in report.missing_in_replay:
+        console.print(f"  [yellow]missing[/yellow] {stamp:%Y-%m-%d} is not in the cached bars")
+    console.print(
+        f"\nReplay written to {DEFAULT_REPLAY_LOG_PATH.as_posix()}. The risk fields are not "
+        "compared: the replay does not run the gate."
+    )
 
 
 if __name__ == "__main__":
