@@ -6,23 +6,25 @@ produces. Nothing here is a footnote.
 
 ## Most of the system is not implemented
 
-Twenty modules have working bodies: `protocol.py`, `windows.py`,
+Twenty-one modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
 `search/surrogate.py`, `search/noise.py`, `report/render.py`,
 `report/surface.py`, `report/palette.py`, `validate/walkforward.py`,
-`validate/candidate.py`, `logging/decisions.py`, and the `status`, `fetch`, `search`, `report` and
-`validate` commands in `cli.py`. Ten `NotImplementedError` bodies remain,
-across 3 files. Two further modules are mostly types rather than behaviour:
+`validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`, and the `status`, `fetch`,
+`search`, `report` and `validate` commands in `cli.py`. Eight `NotImplementedError` bodies
+remain, across 2 files. Two further modules are mostly types rather than behaviour:
 `core/types.py` holds the shared value types, and `execution/venue.py` holds the
 venue interface and its data classes. `venue.py` has no tests; the one guard in
 `types.py` is covered by `tests/test_strategy_config.py`.
 
-**What is left is the live half.** `risk/limits.py`, `execution/t212.py`, and
-the `run` and `diff` commands - plus the wiring that would make anything emit
-the decision schema now that it exists. The research pipeline — fetch, search,
-report, validate — runs end to end.
+**What is left is the live half.** `execution/t212.py` and the `run` and `diff`
+commands - plus the wiring that would make anything emit the decision schema or
+pass an intent through the risk gate. Both of those now exist and neither has a
+caller, which is a different and smaller gap than a missing component, and worth
+distinguishing: what is unproven about them is the integration, not the unit.
+The research pipeline — fetch, search, report, validate — runs end to end.
 
 **A strategy config can now be read, expanded, backtested and scored — by the
 product, not only by a test.**
@@ -153,20 +155,34 @@ it. That is a smaller gap and a different one, and it is worth being precise
 about which: the risk was that two shapes would drift apart, and it is now that
 one shape sits unused beside another that is in use.
 
-**One thing blocks the backtester adopting it, and it used to be two.**
+**What blocked the backtester adopting it used to be two things, then one, and
+is now a decision nobody has made.**
 
 The first blocker is GONE. `Intent` now carries `indicator_values` and
 `thresholds` as numbers rather than only as rendered strings, so `core.evaluate`
 supplies what a record needs. That was a change to the shared brain and it is
 its own commit.
 
-- **The remaining blocker: `risk_verdict`, `risk_reason` and
-  `approved_size_pct` describe a gate that does not exist.** `risk/limits.py` is
-  still a stub. A backtest recording `allow` there would log a gate that never
-  ran as having passed, which is exactly the inference `RiskVerdict`'s own
-  docstring says the field exists to prevent. Whatever emits a record has to say
-  something honest in those three fields, and "the layer is not built" is the
-  only honest thing available.
+The second blocker is gone in the sense that mattered and open in a way that did
+not exist before. `risk/limits.py` is built and tested, so `risk_verdict`,
+`risk_reason` and `approved_size_pct` CAN now be filled with something true. What
+nobody has decided is what a BACKTEST should put there, and both available
+answers cost something:
+
+- **Run the gate in the backtest too.** Then the two logs are produced the same
+  way and `diff` measures the simulator, which is its whole purpose. But the
+  backtest stops being a measurement of the strategy: a kill switch, a daily-loss
+  halt and an exposure cap would suppress trades, and every Sharpe this project
+  reports would be the Sharpe of a strategy-plus-risk-layer. The searches already
+  recorded did not do that, so adopting it invalidates comparison with them.
+- **Do not run it, and record that it did not run.** Then the backtest keeps
+  measuring the strategy, but a live log and a backtest log of the same period
+  differ in those three fields BY CONSTRUCTION, and `diff` will report harness
+  drift as though it were simulator drift unless it is taught to exclude them.
+
+Neither is chosen here, and the unchosen decision is the reason nothing emits a
+`DecisionRecord` yet. What is no longer true is the previous claim that the only
+honest thing available was "the layer is not built".
 
 **The keying of `indicator_values` IS now settled: by reference.**
 `sma($fast)` and `sma($slow)`, not `sma` twice - so `close above sma(150)` and
@@ -199,12 +215,25 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-934 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1414 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
-walk-forward validation, the candidate reader and the decision log — seventeen
-areas, one per test file.
+walk-forward validation, the candidate reader, the decision log and the risk
+layer — eighteen areas, one per test file. 480 of the 1414 are the risk layer's,
+and that is a statement about parameterisation rather than about importance. 316
+of those 480 are assertions repeated at four account equities, because at an
+equity of 100 a cash exposure and its percentage of equity are the same number.
+One test that asserts a percentage sits outside that fan-out on purpose —
+`test_the_committed_daily_loss_ceiling_binds` — because bracketing the shipped 3%
+ceiling wants round cash amounts at one account size rather than the same
+percentage at four; it asserts a verdict rather than a number, so nothing there
+needs to be exact in binary. The other 164 items are the loader and the type, 106
+of them refusals and 58 acceptances — a distinction worth making, because an
+earlier draft of this paragraph called all 164 refusals. Five invariants are asserted over forty cases built from twenty distinct
+account states — forty was written here as forty states, which overstated the
+coverage by a factor of two, and this is the class of number this document is
+worst at.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
@@ -224,14 +253,20 @@ happen BEFORE the read are covered — `tests/test_candidate.py` drives every on
 of them through `read_candidate` — but the wiring that calls it, and the error
 handling around the two calls that can fail after the touch is charged, is not.
 
-Untested too is every type definition the remaining stub modules carry beside
-their `NotImplementedError` bodies — `DecisionRecord`'s sixteen fields,
-`RiskLimits`, `PortfolioState`, the `Verdict` enum, `T212Error`, and the default
-paths. Those are real code, some of it load-bearing for a later component's
-schema, and nothing exercises any of it. `FoldResult`, `ValidationResult` and
-`Outcome` were on that list until this session and are not any more: they are in
-the built `validate/walkforward.py` and exercised throughout
-`tests/test_walkforward.py`.
+Untested too is every type definition the remaining stub module carries beside
+its `NotImplementedError` bodies — `T212Error`, the two base URLs, and the two
+rate-limit constants in `execution/t212.py` — along with `execution/venue.py`'s
+`Order`, `Position`, `Balance`, `ReconcileReport` and `OrderType`. Those are real
+code, some of it load-bearing for a later component's schema, and nothing
+exercises any of it. That list keeps shrinking as the components arrive:
+`FoldResult`, `ValidationResult` and `Outcome` left it when
+`validate/walkforward.py` was built, `DecisionRecord`'s sixteen fields left it
+with `tests/test_decisions.py`, and `RiskLimits`, `PortfolioState`, `RiskVerdict`
+and the `Verdict` enum have left it now — `tests/test_risk.py` exercises all
+four. The default path's VALUE is pinned there too, but nothing calls
+`load_limits()` with no argument and nothing should: the default is
+working-directory-relative, so a test resting on it would be a test about where
+pytest was started from.
 
 **The lookahead test exists, is green, and CANNOT FAIL.** `core.evaluate` is
 handed a window whose last row IS the bar being evaluated, so it cannot read the
@@ -798,8 +833,82 @@ open. What it does NOT do is scrub anything else: if you pass a config from
 outside the repository the artifact records its filename, and a filename can
 carry information too.
 
-**The risk layer is not implemented.** `risk/limits.py` exists and carries its
-contracts, but both functions are stubs, there is no `configs/risk_limits.yaml`
-for it to read, and there are no tests. `CLAUDE.md` describes it as untouchable
-with its own file and its own tests: it has the file, and neither of the other
-two.
+**The risk layer is built, and nothing has ever asked it anything.** All three
+parts `CLAUDE.md` demands now exist: its own module, its own config file
+(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 480 of
+them). What does not exist is a caller. `strategylab run` is a stub, the
+backtester deliberately does not gate, and so every verdict this layer has ever
+produced was produced by a test.
+[docs/decisions/0010](docs/decisions/0010-what-the-risk-gate-refuses.md) argues the
+two decisions the stub's contract left open. These consequences are worth stating
+plainly,
+and they are what a reader should take from this section rather than the fact that
+the tests pass.
+
+- **Nothing constructs a `PortfolioState`.** The gate needs equity, start-of-day
+  equity, open exposure and realised profit and loss for the session, and the only
+  thing that could supply them is a venue reconciliation that does not exist yet.
+  The layer's arithmetic is tested against states a test builds; whether those
+  states resemble what Trading 212 actually reports is untested and untestable
+  until the adapter is written.
+- **"The session" is not defined anywhere.** The daily-loss limit is expressed
+  per session and compares against start-of-day equity, but no component decides
+  when a day begins, resets the figure, or persists it across a restart. A worker
+  restarted mid-session with a fresh start-of-day equity would have its daily loss
+  silently forgiven. That is a bug waiting in the component that has not been
+  written, and the limit is only as good as the state handed to it. `check` does
+  not read `PortfolioState.as_of` at all — an audit confirmed the field has no
+  reader — so the layer cannot tell a stale state from a current one, and nothing
+  ties the "today" of a realised figure to any date.
+- **The kill switch refuses an exit, by design, and that is a real exposure.**
+  While it is set, a position already open cannot be closed through this gate: the
+  switch stops the wire rather than flattening the account, so unwinding is a
+  manual act at the venue. That is the intended meaning of a human throwing a
+  switch, and it is stated here because the alternative reading — that a kill
+  switch protects you from a position you already hold — is the one a reader will
+  assume.
+- **What the other limits exempt is a SIZE, not an exit.** The gate reads
+  `Intent.size_pct`, so what passes a blown daily-loss limit is an intent asking
+  for no new exposure. A well-formed exit is exactly that, and a malformed one
+  carrying a size is refused like any other request. The distinction matters
+  because `Intent`'s own docstring states the zero as a property of the type and
+  nothing enforces it, so the two modules disagreed about whether it was a fact
+  until an audit made both of them say the same thing.
+- **Two of the three limits barely diverge yet.** They are set to the same
+  number and, with one instrument, they are not the same test: the exposure limit
+  subtracts what is already open first, so it is never looser than
+  `max_position_pct` and is strictly tighter the moment anything is on the book.
+  With an empty book neither binds a request of 95. It is a separate limit because
+  it guards a portfolio total, and a second instrument would separate them
+  properly; today it is untested in the only sense that matters, which is against
+  a real portfolio.
+- **Three of the four limits can refuse outright, not just reduce.** The kill
+  switch and the daily-loss limit always do. The exposure limit reduces a request
+  to the headroom left and refuses when that headroom is zero or negative — which
+  is easy to miss in a summary that contrasts "reduces" with "refuses", and was
+  missing from this document until an audit said so.
+- **Nothing enforces that the gate is asked with the committed limits.** `check`
+  takes a `RiskLimits` as an argument and never calls `load_limits`, and the range
+  check on the type admits 100.0 for all three fields — so a caller can hand the
+  gate a maximal set of limits built in code and have a full-size entry approved
+  on an account already down 80% for the day. File separation stops a search
+  editing a limit; it does not stop a caller bypassing the file. This is the same
+  shape as the window guard above: a chokepoint that is a convention backed by one
+  obvious place to go, not a mechanism. The first caller ever written is the moment
+  it starts to matter.
+- **Nothing re-reads the limits file.** `load_limits` is a one-shot read, nothing
+  watches the file, and no component reloads it. The kill switch is the one control
+  here whose value is time-sensitive — set by a human, cleared by a human — and a
+  human flipping it mid-session changes nothing until whatever holds the
+  `RiskLimits` object reads the file again. There is no such component yet and no
+  documented obligation on the one that comes.
+- **For one input the gate raises instead of answering.** A
+  `start_of_day_equity` that is not positive and finite produces a `ValueError`,
+  and that check precedes the kill switch, so it fires even with the switch set.
+  It is deliberate — the field is the denominator of the daily-loss limit, and
+  nothing can tell whether such an account is down three percent or thirty — but
+  it is a crash path out of the component whose other answer to an unreadable
+  account is a refusal. It is also the field most likely to arrive wrong or absent
+  from the first venue reconciliation ever written, which is the same component
+  that would have to catch it. The entry above about a restarted worker covers the
+  field being WRONG; this covers it being missing.

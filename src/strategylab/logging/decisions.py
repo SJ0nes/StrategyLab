@@ -170,10 +170,21 @@ class DecisionRecord:
             "refused" from "nothing was asked for". Read it beside
             ``risk_verdict``, which does.
         risk_verdict: The risk layer's answer, as its string value - the closed
-            vocabulary of :class:`~strategylab.risk.limits.Verdict`. NOT
-            validated against it here, on write or on read, because that layer
-            is a stub and nothing can produce one yet; when it exists, this is
-            the field that should gain the check ``source`` already has.
+            vocabulary of :class:`~strategylab.risk.limits.Verdict`. STILL NOT
+            validated against it here, on write or on read, but no longer for the
+            reason this docstring used to give: that layer was a stub, and it is
+            now built and tested, so the trigger it named ("when it exists") has
+            been met. What the check would cost is an import of
+            :mod:`strategylab.risk.limits` INTO this module, to reach an enum with
+            two members - the direction matters, and an earlier version of this
+            paragraph had it backwards. Nothing would be imported into ``risk/``,
+            whose isolation rule is about what it imports rather than about who
+            imports it; the cost is a dependency from this schema onto the risk
+            layer. That is a decision for whichever component first
+            emits a record, because it is the one that will know whether the
+            coupling is worth it, and no component emits one yet. Until then the
+            field is validated as a string, and ``source`` remains the only field
+            here with a closed-set check.
         risk_reason: Why the risk layer answered as it did.
         params: The resolved parameters in force, so a record is readable
             without its config. Values are in BARS.

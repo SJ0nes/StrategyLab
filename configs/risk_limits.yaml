@@ -1,0 +1,97 @@
+# RISK LIMITS — the veto gate between an intent and the venue.
+#
+# THIS FILE IS THE RISK LAYER'S OWN. Nothing else in the system may modify it:
+# not a search, not a strategy config, not a review process. A risk limit that a
+# search can relax is not a limit, and the moment it becomes adjustable it will
+# be adjusted by whatever is optimising against it. It is a separate file from
+# protocol.yaml for the same reason the risk module is a separate module.
+#
+# UNITS. Every `_pct` key here is a PERCENTAGE and stays one. Nothing divides it
+# by 100. The units rule in CLAUDE.md is about RATES crossing the `costs:`
+# boundary in protocol.yaml — a rate that multiplies a price. These are
+# thresholds compared against other percentages: `max_position_pct` is compared
+# against `Intent.size_pct`, which is also a percentage of equity, so converting
+# either one would break the comparison.
+#
+# THE SCHEMA IS CLOSED AND NOTHING IS DEFAULTED. All four keys below are
+# required, `kill_switch` included: an omitted switch would have to be read as
+# off, and this is the one file where an omission must not be given a
+# safe-looking meaning. An unknown or misspelled key is refused rather than
+# ignored. A repeated key is refused too — PyYAML would otherwise keep the last
+# one silently, which is how a file that plainly reads `kill_switch: true` gets
+# disarmed four lines further down. So is a YAML anchor with a merge key: a limit
+# assembled from a definition elsewhere is a limit an operator cannot read off
+# the line it is written on.
+#
+# EVERY PERCENTAGE MUST BE ABOVE 0 AND AT MOST 100, and both bounds are refusals
+# rather than clamps. Zero is refused because it means something different and
+# useless in each of the three, rather than because it refuses everything: a
+# position cap of zero would reduce every request to an approval for a size of
+# nothing, an exposure ceiling of zero would leave no headroom on any day, and a
+# loss ceiling of zero would stop any day that is not in profit — a flat day
+# included. If the intention is to refuse everything, `kill_switch` is the field
+# that says so. Above 100 is refused for the two size limits because a position
+# larger than the account is leverage, which this project's engine and cost model
+# do not describe — it sizes a position out of cash it holds. For
+# `max_daily_loss_pct` the upper bound is simply the widest meaningful one: a
+# session loss of 100% is the whole account.
+#
+# THE ORDER THE LIMITS ARE APPLIED IN is part of what a rejection means, because
+# the first one to bind is the one the reason names: the kill switch, then the
+# position cap, then the daily loss, then the exposure headroom. Before any of
+# them, an account whose numbers cannot be read is refused — and an account whose
+# START-OF-DAY equity cannot be read raises instead, because it is the denominator
+# the daily-loss limit divides by and nothing can say whether such an account is
+# down three percent or thirty.
+#
+# Editing this file is an operator act, unlike protocol.yaml, which is written
+# once. Tightening a limit needs no ceremony. Loosening one after a loss is the
+# move this file exists to make deliberate rather than easy.
+
+# Largest single position, as a percentage of account equity. LARGEST means a
+# request equal to this passes unchanged and only a larger one is reduced — the
+# same inclusivity as the exposure ceiling below and the opposite of the
+# daily-loss ceiling, which rejects on being reached. Stated because the other two
+# conventions are stated, and a silent third invites the reader to guess.
+#
+# Matches the strategy's own `fixed.position_size_pct` of 95.0 in
+# configs/ma_crossover.yaml, so this limit does not silently resize the strategy
+# under test; it is here to catch a config that asks for more, not to override one
+# that does not.
+max_position_pct: 95.0
+
+# Loss within one session, as a positive percentage of start-of-day equity, at
+# which trading stops for the day. Reached — not merely exceeded — is enough.
+# Two things can reach it, and both divide by start-of-day equity: a realised
+# loss, and total equity marked down from the session open. Either one stops any
+# intent that asks for NEW EXPOSURE. Neither stops an intent that asks for none,
+# which is what a well-formed exit is — the precise statement is about the size
+# requested rather than about the action, because that is what the gate reads. A
+# malformed exit carrying a non-zero size is refused like any other sized
+# request.
+max_daily_loss_pct: 3.0
+
+# Largest total exposure across all positions, as a percentage of account
+# equity, measured against CURRENT equity — after a drawdown an unchanged
+# position is a larger share of a smaller account, and that is the share this
+# ceiling is about. A request is reduced to the headroom remaining, so a size may
+# be permitted that brings total exposure exactly ONTO the ceiling; adding to a
+# book already sitting on it is refused, because the headroom is then zero. You
+# may sit at this ceiling, you may not add at it — the opposite convention to the
+# daily-loss ceiling above, deliberately. An intent asking for NO new exposure is
+# not "adding" and is never refused here either, on the same grounds as the
+# daily-loss ceiling: what the gate reads is the size requested.
+#
+# With one instrument this limit and `max_position_pct` are set to the same
+# number, but they are not the same test: this one subtracts what is already open
+# first, so they coincide only while the book is empty and this one is otherwise
+# the tighter of the two. It is stated separately because the value it guards is a
+# portfolio total, and a second instrument would separate them further.
+max_open_exposure_pct: 95.0
+
+# Set by a human, cleared by a human. While true EVERY intent is refused,
+# INCLUDING AN EXIT — so a kill switch does not flatten the account, it stops
+# the wire, and unwinding an open position becomes a manual act at the venue.
+# That is the intended meaning of a switch a human throws: stop sending orders.
+# It is the only limit here that refuses an intent asking for no new exposure.
+kill_switch: false

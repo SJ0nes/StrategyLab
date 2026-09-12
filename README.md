@@ -44,13 +44,34 @@ function `validate.walk_forward`, which is what the tests use. The first real
 run is the operator's to make. **No figure from a search appears in this
 README.**
 
+**The veto gate between a strategy and a venue now exists, and nothing calls
+it.** `risk/limits.py` reads its own config file — `configs/risk_limits.yaml`,
+which is new, and deliberately neither `protocol.yaml` nor anything a search
+touches — and answers one question per intent: may this proceed, and at what
+size. A position or exposure limit may reduce a size rather than refuse; the
+kill switch and the daily-loss limit always refuse outright, and so does the
+exposure limit when there is no headroom left to reduce into. Two decisions in it are worth stating rather
+than leaving to be discovered. **The kill switch refuses an exit too** — a
+switch a human throws means stop sending orders, not flatten the account, so
+unwinding an open position while it is set is a manual act at the venue.
+**The daily-loss limit does not**, because a limit that blocked a
+position-closing intent would forbid the one action that stops the loss it is
+measuring. That second claim is about SIZE, not about exits: the gate reads the
+size an intent asks for, so a well-formed exit — which asks for none — passes,
+while a malformed one carrying a size is refused like any other request. Nothing
+in this repository calls any of it: `strategylab run` is a stub, and a backtest
+deliberately does not consult it, so no intent has been through this gate outside
+its tests. Both decisions, and why a limit of zero is refused rather than honoured,
+are argued in
+[docs/decisions/0010](docs/decisions/0010-what-the-risk-gate-refuses.md).
+
 | Built | Not built |
 |---|---|
 | Protocol loader and validator | Any benchmark — nothing computes buy-and-hold |
 | Price data layer — validation, provenance, parquet cache | The noise band drawn on the figure's own axis |
 | Cost model — hand-verified arithmetic | Rejection *on* the ceiling — it informs, it does not gate |
 | Strategy-config loader — closed schema, closed vocabulary | Fold panels in a report — a verdict is JSON, invisible in every figure |
-| The noise ceiling — block-resampled surrogates, `--trials` | Decision logging, risk limits, venue adapters, the live worker |
+| The noise ceiling — block-resampled surrogates, `--trials` | Venue adapters and the live worker — so nothing emits a decision record or consults the risk layer |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
 | Backtest engine and metrics, with the determinism test | A hash on the strategy config — only the price snapshot is checked |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | |
@@ -60,17 +81,34 @@ README.**
 | The surface report — faceted heatmap, self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter | |
 | The decision-log schema — append-only JSON Lines, exact round trip *(nothing emits it yet)* | |
+| The risk layer — its own config file, the kill switch, three limits *(nothing calls it yet)* | |
 | `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
 
-**934 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1414 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
-reader and the decision log — seventeen areas, one per test file.
+reader, the decision log and the risk layer — eighteen areas, one per test file.
+480 of them are the risk layer's, which is a statement about parameterisation
+rather than about size. 316 of the 480 are the same assertions repeated at four
+account equities, because at an equity of 100 a cash exposure and its percentage
+of equity are the same number and an implementation that never divided would pass.
+One test that asserts a percentage sits outside that fan-out deliberately —
+`test_the_committed_daily_loss_ceiling_binds`, which brackets the shipped 3%
+ceiling at a single account size so that 2.8% and 3.2% are round cash amounts
+either side of it. The other 164 items are the loader and the type: 106 refusals
+(a malformed file, an out-of-range limit, a non-boolean kill switch) and 58
+acceptances (the admissible bounds, YAML's boolean spellings, an integer read as
+a float). Three test functions, twelve of those items, came out of an audit showing
+the suite could not tell a correct denominator from a wrong one — a realised loss
+or a mark-down measured against what is left of an account rather than against
+what it opened at, and an exposure measured the other way round. Two of the three
+closed real holes; the third states a rule another test already covered, and says
+so rather than claiming credit for it.
 The five CLI commands have no tests, and neither does the vendor fetch path,
 which by policy no test may call. Everything else is a signature and a
-docstring contract with a `raise NotImplementedError` body — 10 of them across 3
+docstring contract with a `raise NotImplementedError` body — 8 of them across 2
 files (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`) — so
 that each later component is built against a fixed interface.
 
@@ -120,13 +158,13 @@ Full version, with every module marked built or stubbed, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**934 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1414 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 934 tests, none touching the network
+uv run pytest                   # 1414 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

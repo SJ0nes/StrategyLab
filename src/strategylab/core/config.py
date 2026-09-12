@@ -1,4 +1,10 @@
-"""The strategy-config loader: the only reader of the files in ``configs/``.
+"""The strategy-config loader: the only reader of a strategy config.
+
+``configs/`` holds one other file this module never touches:
+``risk_limits.yaml``, read only by :func:`strategylab.risk.limits.load_limits`,
+which deliberately shares no loading code with this one. So the directory has two
+readers and neither can reach the other's file. This docstring claimed a single
+reader of the directory until the risk layer existed.
 
 A strategy config is declarative and stays that way. Its conditions are a FLAT
 list combined with AND, drawn from a vocabulary this module and
@@ -730,8 +736,10 @@ def _check_parameters(definition: StrategyDef, source: str) -> None:
 def load_strategy(path: Path) -> StrategyDef:
     """Load and validate one strategy config.
 
-    This is the only reader of the files in ``configs/``; everything else in the
-    system takes a :class:`StrategyDef`. Validation is complete before this
+    This is the only reader of a STRATEGY config; everything else in the system
+    takes a :class:`StrategyDef`. It is not the only reader of ``configs/`` - the
+    risk layer's own file lives there too and only that layer reads it.
+    Validation is complete before this
     returns: the schema is closed, conditions are flat and AND-combined, every
     indicator and operator is in the vocabulary this module declares, every
     ``$placeholder`` has a parameter behind it, every searched parameter is used,

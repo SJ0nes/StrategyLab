@@ -102,12 +102,18 @@ class BacktestResult:
             not converged on it. The obligation is unchanged and its direction
             is unchanged - these must converge on THAT schema, not on this one -
             but the reason they have not is no longer that one of them is
-            missing. What blocks it is that ``risk_verdict``, ``risk_reason``
-            and ``approved_size_pct`` describe a gate ``risk/limits.py`` does
-            not yet implement, and this frame carries three columns
+            missing. ``risk/limits.py`` is BUILT now too, so
+            ``risk_verdict``, ``risk_reason`` and ``approved_size_pct`` no longer
+            describe a gate that does not exist - which removes the blocker this
+            docstring used to name and replaces it with a decision nobody has
+            made: whether a BACKTEST should run that gate at all. Running it makes
+            the two logs comparable and stops this being a measurement of the
+            strategy alone; not running it means a live log and a backtest log of
+            the same period differ in those three fields by construction. What
+            also remains is that this frame carries three columns
             ``DecisionRecord`` deliberately does not: the position, the cash and
             the equity, which are account state rather than a decision.
-            ``LIMITATIONS.md`` records both.
+            ``LIMITATIONS.md`` records the decision and its two costs.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a

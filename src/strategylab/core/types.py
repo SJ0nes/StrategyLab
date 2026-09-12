@@ -180,6 +180,15 @@ class Intent:
         size_pct: Requested position size as a percentage of account equity, so
             ``95.0`` means ninety-five percent. Zero when ``action`` is
             ``HOLD`` or ``EXIT_LONG``.
+
+            THAT IS A CONTRACT ON WHOEVER BUILDS AN INTENT, NOT AN INVARIANT OF
+            THIS TYPE. Nothing here enforces it - no ``__post_init__``, no
+            finiteness or sign check - so a consumer that relies on it is relying
+            on every producer being careful. :func:`strategylab.risk.limits.check`
+            is written on the assumption that it can be false: it gates on this
+            number rather than on ``action`` precisely so that a ``HOLD``
+            carrying fifty percent meets every limit instead of walking through
+            on the strength of its action name.
         conditions_met: Human-readable rendering of each condition that passed,
             in config order.
         conditions_failed: The same for each condition that did not pass. A

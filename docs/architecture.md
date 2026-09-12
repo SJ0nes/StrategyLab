@@ -19,9 +19,9 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 ┌───────────────┐   ┌─────────────────┐   ┌────────────────┐
 │    data/      │   │    backtest/    │   │     risk/      │
 │               │   │                 │   │                │
-│ source.py     │   │ costs.py  BUILT │   │ limits.py STUB │
-│        BUILT  │   │ engine.py BUILT │   │ + no config    │
-│               │   │ metrics.py BUILT│   │   file exists  │
+│ source.py     │   │ costs.py  BUILT │   │ limits.py BUILT│
+│        BUILT  │   │ engine.py BUILT │   │ + its own      │
+│               │   │ metrics.py BUILT│   │   config file  │
 └───────┬───────┘   └────────┬────────┘   └────────┬───────┘
         │                    │                     │
         │  bars              │  fills, equity      │  veto
@@ -32,7 +32,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
                      │ strategy.py    │  BUILT — the shared brain.
                      │      BUILT     │  Used by BOTH the backtester and
                      │ types.py BUILT │  the live worker. Written once.
-                     │ config.py BUILT│  The only reader of configs/.
+                     │ config.py BUILT│  The only reader of a STRATEGY config.
                      └───────┬────────┘
                              │  Intent
               ┌──────────────┼──────────────┐
@@ -81,7 +81,7 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `backtest/engine.py` | `run_backtest` — `evaluate` stepped bar by bar with costs applied. Signal from a close, fill at the NEXT bar's open. Carries the lookahead test that can actually fail, plus the determinism test. | 33 |
 | `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. | 28 |
 | `core/strategy.py` | `evaluate` — the shared brain, used by the backtester and the live worker alike. Two indicators and three operators, matching the loader's vocabulary. Ships with the lookahead test. | 58 |
-| `core/config.py` | `load_strategy` — the only reader of `configs/`. Closed schema, closed indicator and operator vocabulary, the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used, and the refusal of two conditions in one list comparing against distinct literals that render alike at six significant figures — which a decision log would key alike and so record only one of. Does not resolve placeholders. | 84 |
+| `core/config.py` | `load_strategy` — the only reader of a STRATEGY config. `configs/` has a second reader since the risk layer arrived — `risk/limits.py` reads `configs/risk_limits.yaml` and nothing else — and neither module reads the other's file, which is the whole point of the risk layer having its own. Closed schema, closed indicator and operator vocabulary, the cross-check that every `$placeholder` has a parameter behind it and every searched parameter is used, and the refusal of two conditions in one list comparing against distinct literals that render alike at six significant figures — which a decision log would key alike and so record only one of. Does not resolve placeholders. | 84 |
 | `core/types.py` | The value types shared by the backtester and the live worker, plus `reference_name` — the one function that names a condition's side, used for the rendered log lines, for the keys of the two `Intent` mappings, and by the loader's collision check, so the three cannot drift. | in the 84 |
 | `search/graveyard.py` | `record_rejection` — append-only JSON Lines, one object per line, closed reason vocabulary, non-finite metric written as JSON null so the file stays parseable by something other than Python. | 33 |
 | `search/plateau.py` | `plateau_score` — neighbourhood median, radius in grid steps, with `neighbour_count` so a thin neighbourhood is visible. `is_edge_winner` — against the highest value the grid REACHES, not the declared `max`. `is_degenerate` — over trade sets, not trade counts. Fixes the results-frame schema the search loop must emit. | 51 |
@@ -96,9 +96,10 @@ signature and a docstring contract but a `raise NotImplementedError` body.
 | `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. | 52 |
 | `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version or snapshot hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. | 41 |
 | `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. NOTHING EMITS IT YET. | 143 |
+| `risk/limits.py` | `load_limits` — the risk layer's own reader of its own file, `configs/risk_limits.yaml`: closed schema, nothing defaulted, a repeated key refused, and percentages left as percentages because the thresholds are compared against other percentages. `check` — the veto gate, in the documented order: kill switch, position cap, daily loss by BOTH routes (realised, and equity marked down from the session open, because each can hide the other), then exposure headroom. A size limit reduces, and the exposure limit reduces to the headroom left and rejects when there is none; the kill switch and the daily loss limit always reject. An intent asking for nothing is allowed at nothing, so no loss or exposure limit can block an intent that asks for no new exposure — which is what a well-formed exit is, while a malformed one carrying a size is gated like any other request. The kill switch is the one thing that refuses even a zero-size intent, and that is deliberate, per `docs/decisions/0010`. One branch returns no verdict at all: a `start_of_day_equity` that is not positive and finite RAISES, before even the kill switch is read, because it is the denominator of the daily loss limit and an account whose session open is zero is a programming error rather than a risk decision. NOTHING CALLS ANY OF IT YET. | 480 |
 | `cli.py` | `status`, `fetch`, `search`, `report` and `validate`. | none |
 
-**934 tests pass** — 34 + 40 + 81 + 84 + 58 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143. Run `uv run pytest` to see the
+**1414 tests pass** — 34 + 40 + 81 + 84 + 58 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143 + 480. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
@@ -108,10 +109,10 @@ network call. What the fixture tests exercise is the cache path.
 ## What is stubbed
 
 Every one of these has its full signature and docstring contract, so a later
-session builds against a fixed interface rather than inventing one. **10
-`NotImplementedError` bodies across 3 files:**
+session builds against a fixed interface rather than inventing one. **8
+`NotImplementedError` bodies across 2 files:**
 
-`cli.py` (2 — `run` and `diff`) · `execution/t212.py` (6) · `risk/limits.py` (2).
+`cli.py` (2 — `run` and `diff`) · `execution/t212.py` (6).
 
 `execution/venue.py` is marked STUB in the diagram above but is **not** in that
 list and contains no `NotImplementedError`. It is a `typing.Protocol` — a
@@ -124,10 +125,6 @@ interface looks like rather than an unwritten function. `data/source.py`'s
 Listed separately, because a reader scanning module names will otherwise assume
 these exist:
 
-- **`configs/risk_limits.yaml`** — `risk/limits.py` names it as its default path.
-  The file does not exist, so the risk layer has no configuration to read.
-- **`tests/test_risk.py`** — `CLAUDE.md` says the risk layer has its own file and
-  its own tests. It has the file (`risk/limits.py`, stubbed); it has no tests.
 - **Any benchmark computation** — nothing computes buy-and-hold, so no result can
   yet be compared against simply owning the index. This is the largest remaining
   hole in the search output: `search` now prints a Sharpe with no benchmark and
@@ -202,10 +199,16 @@ past beyond the warm-up — and asserts no fold moves.
   live worker. Two implementations would drift, and the backtest would stop
   describing the thing that is actually trading.
 - **The risk layer reads its own config.** No search, no strategy file, and no
-  review may reach it. A limit a search can relax is not a limit.
+  review may reach it. A limit a search can relax is not a limit. It is now built
+  and it imports no other loader — it carries its own duplicate-key YAML loader
+  rather than the identical one in `core/config.py`, so that a change to the
+  strategy loader cannot change how a limit is parsed.
 - **Costs are protocol data; the fill formula is code.** A buyer crosses half the
   spread under every broker; what that spread is depends on the broker.
-- **One conversion boundary.** `load_protocol` divides rates by 100, once.
-  Everything downstream carries fractions.
+- **One conversion boundary.** `load_protocol` divides rates by 100, once, and
+  only for the rates under `costs:`. Everything downstream of that block carries
+  fractions. The risk limits are not rates — nothing multiplies them by a price —
+  so `configs/risk_limits.yaml` keeps percentages, and they are compared against
+  other percentages.
 - **Decision logs share a schema** between backtest and live. That is what makes
   `diff` possible, and it is why the schema is defined once in `logging/`.
