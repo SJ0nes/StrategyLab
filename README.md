@@ -97,10 +97,13 @@ of equity are the same number and an implementation that never divided would pas
 `test_the_committed_daily_loss_ceiling_binds` deliberately runs at one account
 size instead, because 2.8% and 3.2% are round cash amounts there and it brackets
 the shipped 3% ceiling rather than sitting on it. The other 167 items exercise the
-loader (90), the type's own range check (43) and the gate itself (34); 106 of them
-assert an exception and 61 a returned verdict, 23 of those a rejection. Those last
-two figures were written here as "106 refusals and 58 acceptances" until two
-audits pointed out that raises-versus-returns is not refusals-versus-acceptances. Three test functions, twelve of those items, came out of an audit showing
+loader, the type's own range check and the gate itself, in no clean partition:
+several tests use two of the three. What does divide cleanly is 106 asserting an
+exception and 61 a returned value, 24 of those a verdict from `check`, 23 of which
+carry a rejection. Three successive audits corrected that one sentence — "106
+refusals and 58 acceptances" had the wrong labels on both halves, and the
+three-way split that replaced it could not be made to add up without filing a test
+under a heading that did not describe it. Three test functions, twelve of those items, came out of an audit showing
 the suite could not tell a correct denominator from a wrong one — a realised loss
 or a mark-down measured against what is left of an account rather than against
 what it opened at, and an exposure measured the other way round. Two of the three

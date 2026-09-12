@@ -227,16 +227,22 @@ equity of 100 a cash exposure and its percentage of equity are the same number.
 `test_the_committed_daily_loss_ceiling_binds` runs at one account size instead,
 because bracketing the shipped 3% ceiling wants round cash amounts rather than the
 same percentage at four; it asserts a verdict rather than a number, so nothing
-there needs to be exact in binary. The other 167 items exercise the loader (90),
-the type's range check (43) and the gate itself (34): 106 assert an exception and
-61 a returned verdict, 23 of those a rejection.
+there needs to be exact in binary. The other 167 items exercise the loader, the
+type's range check and the gate itself, and no clean partition divides them
+because several tests use two of the three. 106 assert an exception and 61 a
+returned value, 24 of those a verdict from `check`, 23 of which carry a
+rejection.
 
 Five invariants are asserted over forty-four cases built from twenty-four distinct
-account states. Every number in this paragraph has been wrong once: forty cases
-were written as forty states, all 167 non-fan-out items were called refusals, and
-the 106/61 split was called 106/58 with the wrong label on each half. This is the
-class of number this document is worst at, and these are re-derived from the test
-collector rather than from the previous draft.
+account states. Every number in this paragraph has been wrong at least once: forty
+cases were written as forty states; all 167 non-fan-out items were called
+refusals; the 106/61 split was called 106/58 with the wrong label on each half;
+and then 61 was called a count of verdicts when only 24 of them are. Four audit
+rounds went into one paragraph of counting. These figures are re-derived from the
+test collector rather than from the previous draft, and the lesson
+`docs/decisions/0006` records — that this project's prose about its own numbers
+fails more often than its arithmetic does — is now evidenced here as well as
+there.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
