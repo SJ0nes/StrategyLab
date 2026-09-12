@@ -36,19 +36,29 @@
 # `max_daily_loss_pct` the upper bound is simply the widest meaningful one: a
 # session loss of 100% is the whole account.
 #
-# THE ORDER THE LIMITS ARE APPLIED IN is part of what a rejection means, because
-# the first one to bind is the one the reason names: the kill switch, then the
-# position cap, then the daily loss, then the exposure headroom. Before any of
-# them, an account whose numbers cannot be read is refused — and an account whose
-# START-OF-DAY equity cannot be read raises instead, because it is the denominator
-# the daily-loss limit divides by and nothing can say whether such an account is
-# down three percent or thirty.
+# THE ORDER THE LIMITS ARE APPLIED IN is part of what a rejection means. The kill
+# switch is read first and returns immediately. Then the position cap, the daily
+# loss, and the exposure headroom — and where two of those REDUCE a size, the
+# reason names the one that set the FINAL number, not the first one to bind, so a
+# reduction that was later overtaken leaves no trace in the record.
+#
+# One thing precedes even the kill switch: an account whose START-OF-DAY equity is
+# not a positive, finite number RAISES instead of producing a verdict, because it
+# is the denominator the daily-loss limit divides by and nothing can say whether
+# such an account is down three percent or thirty. The other three cash figures
+# are checked later and only for an intent that asks for a size — an intent asking
+# for nothing is allowed before they are read at all, because nothing is computed
+# from them when nothing is being requested.
 #
 # Editing this file is an operator act, unlike protocol.yaml, which is written
 # once. Tightening a limit needs no ceremony. Loosening one after a loss is the
 # move this file exists to make deliberate rather than easy.
 
-# Largest single position, as a percentage of account equity. LARGEST means a
+# Largest single REQUEST, as a percentage of account equity — not a resulting
+# position, which is `max_open_exposure_pct`'s job because it subtracts what is
+# already open first. Keep this at or below the exposure ceiling: set looser, it
+# lets a request through that takes the position past the exposure ceiling's
+# intent. LARGEST means a
 # request equal to this passes unchanged and only a larger one is reduced — the
 # same inclusivity as the exposure ceiling below and the opposite of the
 # daily-loss ceiling, which rejects on being reached. Stated because the other two
@@ -61,7 +71,14 @@
 max_position_pct: 95.0
 
 # Loss within one session, as a positive percentage of start-of-day equity, at
-# which trading stops for the day. Reached — not merely exceeded — is enough.
+# which sized intents are refused. Reached — not merely exceeded — is enough.
+#
+# IT DOES NOT LATCH, and "stops for the day" would be the wrong way to read it.
+# The gate is a pure function of the state it is handed: it refuses while the loss
+# still reads at or beyond this ceiling, and a later realised gain or a recovery in
+# equity re-permits a sized intent on the very next call. A limit that stayed
+# tripped until the session ended would need somewhere to remember it, and nothing
+# in this project holds session state yet. LIMITATIONS.md records the gap.
 # Two things can reach it, and both divide by start-of-day equity: a realised
 # loss, and total equity marked down from the session open. Either one stops any
 # intent that asks for NEW EXPOSURE. Neither stops an intent that asks for none,

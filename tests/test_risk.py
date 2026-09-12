@@ -275,6 +275,24 @@ def test_a_file_that_is_not_utf8_is_refused(tmp_path: Path) -> None:
         load_limits(path)
 
 
+def test_a_yaml_merge_key_is_refused(tmp_path: Path) -> None:
+    # Not by design - the duplicate-key loader constructs every key node before
+    # delegating, and `<<:` is still a merge-tagged scalar at that point. Asserted
+    # because it is the behaviour an operator meets, and because refusing is the
+    # right answer anyway: a limit assembled from an anchor defined elsewhere is a
+    # limit nobody can read off the line it is written on.
+    text = (
+        "defaults: &d\n"
+        "  max_position_pct: 95.0\n"
+        "  max_daily_loss_pct: 3.0\n"
+        "<<: *d\n"
+        "max_open_exposure_pct: 95.0\n"
+        "kill_switch: false\n"
+    )
+    with pytest.raises(ValueError, match="not valid YAML|could not be parsed"):
+        load_limits(_write(tmp_path, text))
+
+
 @pytest.mark.parametrize("key", ["max_position_pct", "max_daily_loss_pct", "max_open_exposure_pct"])
 @pytest.mark.parametrize(
     "bad", ["0", "0.0", "-1.0", "100.01", "100.5", "101", ".nan", ".inf", "-.inf"]
@@ -297,6 +315,15 @@ def test_a_percentage_of_exactly_one_hundred_is_accepted(tmp_path: Path, key: st
     # from the code under test moves whenever that code does.
     limits = load_limits(_file(tmp_path, **{key: "100"}))
     assert getattr(limits, key) == 100.0
+
+
+@pytest.mark.parametrize("key", ["max_position_pct", "max_daily_loss_pct", "max_open_exposure_pct"])
+def test_a_very_small_percentage_is_accepted_through_the_loader(tmp_path: Path, key: str) -> None:
+    # The constructor's accepted side is pinned beside its refusals; the LOADER's
+    # was not, and every value it was asserted to accept was 95.0, 3.0, "7" or
+    # "100". So the mutant the constructor test kills - a guard refusing anything
+    # below 1.0 - still passed if it lived here instead.
+    assert getattr(load_limits(_file(tmp_path, **{key: "0.001"})), key) == 0.001
 
 
 @pytest.mark.parametrize("key", ["max_position_pct", "max_daily_loss_pct", "max_open_exposure_pct"])
@@ -621,6 +648,41 @@ def test_an_exit_survives_exhausted_exposure(equity: float) -> None:
     assert verdict.verdict is Verdict.ALLOW
 
 
+@pytest.mark.parametrize(
+    "intent",
+    [_enter(0.0), _hold(0.0), _exit_long(0.0)],
+    ids=["enter_long", "hold", "exit_long"],
+)
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_a_zero_size_intent_of_ANY_action_survives_a_blown_limit(
+    equity: float, intent: Intent
+) -> None:
+    # THE OTHER HALF OF THE SIZE-KEYED CLAIM, and it was missing. The sized-exit
+    # tests below rule out a gate that exempts on the ACTION alone, but not one
+    # exempting on `action is EXIT_LONG and size == 0` - a conjunction that would
+    # pass every other assertion in this file, because nothing else presents a
+    # NON-EXIT action at a size of zero to a limit that has been reached.
+    #
+    # Only `enter_long` discriminates that conjunction, and `hold` discriminates
+    # the narrower form of it. The `exit_long` parameter duplicates
+    # `test_an_exit_survives_a_blown_daily_loss_limit` above, state for state, and
+    # is kept for symmetry rather than coverage - three parameters here are not
+    # three units of coverage, and an audit counted them to check.
+    verdict = check(
+        intent,
+        _state(
+            equity - equity / 2,
+            start_of_day_equity=equity,
+            open_exposure=equity,
+            realised_pnl_today=-equity / 2,
+        ),
+        _limits(max_daily_loss_pct=1.0, max_open_exposure_pct=1.0),
+    )
+    assert verdict.verdict is Verdict.ALLOW
+    assert verdict.limited_size_pct == 0.0
+    assert "no size requested" in verdict.reason
+
+
 @pytest.mark.parametrize("equity", EQUITIES)
 def test_a_hold_carrying_a_size_meets_every_limit(equity: float) -> None:
     # An Intent's contract says a HOLD carries zero, so this intent is malformed.
@@ -712,6 +774,19 @@ _CASES: tuple[tuple[Intent, PortfolioState, RiskLimits], ...] = tuple(
         (_enter(0.001), _state(equity), _limits()),
         (_hold(), _state(equity), _limits()),
         (_exit_long(), _state(equity, open_exposure=equity), _limits()),
+        # An ENTER_LONG asking for nothing, against an account that breaches both
+        # limits. Added because the invariants below are the strongest property
+        # tests here and the state this round introduced was not among them.
+        (
+            _enter(0.0),
+            _state(
+                equity - equity / 2,
+                start_of_day_equity=equity,
+                open_exposure=equity,
+                realised_pnl_today=-equity / 2,
+            ),
+            _limits(max_daily_loss_pct=1.0, max_open_exposure_pct=1.0),
+        ),
     )
 )
 
@@ -834,8 +909,17 @@ def test_the_exposure_limit_divides_by_current_equity(equity: float) -> None:
     # EITHER denominator: the mark-down is 12.5% of the session open, or 14.2857%
     # of current equity if that route is also wrong, and both sit under the 20.0
     # ceiling set here. An earlier version used a halved account and a ceiling of
-    # 100.0, where a co-occurring mark-down bug rejects at exactly 100.0 and this
-    # test would have passed on the wrong reason.
+    # 100.0, where a co-occurring mark-down bug rejects at exactly 100.0 - that
+    # version would have gone RED, but on the reason assertion rather than on the
+    # verdict, so it would have blamed the exposure limit for a mark-down bug. The
+    # re-based numbers make the verdict itself unambiguous instead of leaving a
+    # string comparison to sort out which limit answered.
+    #
+    # At E = 100 this test is the ONLY equity that catches an implementation which
+    # never divides: 87.5 raw is under the 95 ceiling and allows, while at every
+    # larger equity the raw cash figure exceeds 95 and rejects for the wrong
+    # reason. That inverts the module docstring's framing of E = 100 as the trap,
+    # and is a reason never to trim it from this test.
     verdict = check(
         _enter(95.0),
         _state(
@@ -866,7 +950,8 @@ def test_the_committed_daily_loss_ceiling_binds(realised: float, expected: Verdi
     # 7000/250000 is 2.8% of start-of-day equity and 8000/250000 is 3.2%, so this
     # brackets the ceiling rather than sitting on it: 3% of an account is not an
     # exact binary fraction, and an equality on the boundary would be fragile
-    # where this is not.
+    # where this is not. Equity equals the session open here too, so the
+    # mark-to-market route reads 0% and only the realised route can answer.
     verdict = check(
         _enter(95.0),
         _state(250_000.0, realised_pnl_today=realised),
@@ -885,7 +970,10 @@ def test_a_sized_exit_is_gated_on_its_size(equity: float) -> None:
     # would be read as a promise the gate does not make.
     # A quarter of equity realised against a 12.5 ceiling: twelve and a half points
     # clear of it, so a regression in the ceiling's INCLUSIVITY cannot turn this
-    # red and be misread as a failure of the size-gating rule.
+    # red and be misread as a failure of the size-gating rule. Equity is left at
+    # the session open, which implies an exactly offsetting unrealised gain - not
+    # an account a venue would report, and deliberate: it holds the mark-to-market
+    # route at 0% so the rejection can only have come from the realised one.
     verdict = check(
         _exit_long(50.0),
         _state(equity, realised_pnl_today=-equity / 4),
@@ -895,60 +983,11 @@ def test_a_sized_exit_is_gated_on_its_size(equity: float) -> None:
     assert verdict.limited_size_pct == 0.0
 
 
-@pytest.mark.parametrize(
-    "intent",
-    [_enter(0.0), _hold(0.0), _exit_long(0.0)],
-    ids=["enter_long", "hold", "exit_long"],
-)
-@pytest.mark.parametrize("equity", EQUITIES)
-def test_a_zero_size_intent_of_ANY_action_survives_a_blown_limit(
-    equity: float, intent: Intent
-) -> None:
-    # THE OTHER HALF OF THE SIZE-KEYED CLAIM, and it was missing. The sized-exit
-    # test above rules out a gate that exempts on the ACTION alone, but not one
-    # that exempts on `action is EXIT_LONG and size == 0` - a conjunction that
-    # would pass every other assertion in this file, because nothing else presents
-    # a non-exit action at a size of zero to a limit that has been reached. An
-    # ENTER_LONG asking for nothing is the case that separates them: the gate reads
-    # the size, so it is allowed at zero like the other two.
-    verdict = check(
-        intent,
-        _state(
-            equity - equity / 2,
-            start_of_day_equity=equity,
-            open_exposure=equity,
-            realised_pnl_today=-equity / 2,
-        ),
-        _limits(max_daily_loss_pct=1.0, max_open_exposure_pct=1.0),
-    )
-    assert verdict.verdict is Verdict.ALLOW
-    assert verdict.limited_size_pct == 0.0
-    assert "no size requested" in verdict.reason
-
-
 @pytest.mark.parametrize("equity", EQUITIES)
 def test_a_sized_exit_is_capped_like_any_other_request(equity: float) -> None:
     verdict = check(_exit_long(95.0), _state(equity), _limits(max_position_pct=10.0))
     assert verdict.verdict is Verdict.ALLOW
     assert verdict.limited_size_pct == 10.0
-
-
-def test_a_yaml_merge_key_is_refused(tmp_path: Path) -> None:
-    # Not by design - the duplicate-key loader constructs every key node before
-    # delegating, and `<<:` is still a merge-tagged scalar at that point. Asserted
-    # because it is the behaviour an operator meets, and because refusing is the
-    # right answer anyway: a limit assembled from an anchor defined elsewhere is a
-    # limit nobody can read off the line it is written on.
-    text = (
-        "defaults: &d\n"
-        "  max_position_pct: 95.0\n"
-        "  max_daily_loss_pct: 3.0\n"
-        "<<: *d\n"
-        "max_open_exposure_pct: 95.0\n"
-        "kill_switch: false\n"
-    )
-    with pytest.raises(ValueError, match="not valid YAML|could not be parsed"):
-        load_limits(_write(tmp_path, text))
 
 
 # ---------------------------------------------------------------------------
@@ -991,9 +1030,12 @@ def test_a_limit_outside_its_range_cannot_be_constructed(field: str, bad: float)
 def test_a_limit_inside_its_range_is_accepted(field: str, good: float) -> None:
     # The refusals above pin only one side. Without this, a guard refusing
     # everything below 1.0 would pass the suite - nothing else constructs a limit
-    # smaller than that - and so would one admitting 100.2, since the INCLUDED
-    # upper bound of 100.0 is otherwise only touched incidentally by a ceiling set
-    # inside a denominator test.
+    # smaller than that - and so would one admitting 100.2. The inclusive upper
+    # bound is touched NOWHERE else at the constructor: no `_limits(...)` call in
+    # this file passes 100.0, and the only other 100 is a string through the
+    # loader. An earlier version of this comment said the bound was covered
+    # incidentally by a ceiling inside a denominator test, which was true until the
+    # same round re-based that test onto 20.0.
     assert getattr(_limits_with(field, good), field) == good
 
 

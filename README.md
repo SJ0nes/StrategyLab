@@ -84,23 +84,23 @@ are argued in
 | The risk layer — its own config file, the kill switch, three limits *(nothing calls it yet)* | |
 | `status`, `fetch`, `search`, `report` and `validate` commands *(untested)* | |
 
-**1414 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1437 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log and the risk layer — eighteen areas, one per test file.
-480 of them are the risk layer's, which is a statement about parameterisation
-rather than about size. 316 of the 480 are the same assertions repeated at four
+503 of them are the risk layer's, which is a statement about parameterisation
+rather than about size. 336 of the 503 are the same assertions repeated at four
 account equities, because at an equity of 100 a cash exposure and its percentage
 of equity are the same number and an implementation that never divided would pass.
-One test that asserts a percentage sits outside that fan-out deliberately —
-`test_the_committed_daily_loss_ceiling_binds`, which brackets the shipped 3%
-ceiling at a single account size so that 2.8% and 3.2% are round cash amounts
-either side of it. The other 164 items are the loader and the type: 106 refusals
-(a malformed file, an out-of-range limit, a non-boolean kill switch) and 58
-acceptances (the admissible bounds, YAML's boolean spellings, an integer read as
-a float). Three test functions, twelve of those items, came out of an audit showing
+`test_the_committed_daily_loss_ceiling_binds` deliberately runs at one account
+size instead, because 2.8% and 3.2% are round cash amounts there and it brackets
+the shipped 3% ceiling rather than sitting on it. The other 167 items exercise the
+loader (90), the type's own range check (43) and the gate itself (34); 106 of them
+assert an exception and 61 a returned verdict, 23 of those a rejection. Those last
+two figures were written here as "106 refusals and 58 acceptances" until two
+audits pointed out that raises-versus-returns is not refusals-versus-acceptances. Three test functions, twelve of those items, came out of an audit showing
 the suite could not tell a correct denominator from a wrong one — a realised loss
 or a mark-down measured against what is left of an account rather than against
 what it opened at, and an exposure measured the other way round. Two of the three
@@ -158,13 +158,13 @@ Full version, with every module marked built or stubbed, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1414 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1437 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1414 tests, none touching the network
+uv run pytest                   # 1437 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

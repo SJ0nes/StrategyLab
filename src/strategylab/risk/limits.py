@@ -27,10 +27,11 @@ NOTHING CALLS THIS YET. The live worker (``strategylab run``) is a stub, so no
 intent has ever been through this gate outside its own tests, and the backtester
 does not consult it - a backtest is a research measurement of a strategy, not a
 simulation of an account with a kill switch on it. ``logging/decisions.py``
-already carries the three fields this module's verdict fills, and whoever wires
-them has two renames to notice, neither of which anything enforces:
-:attr:`RiskVerdict.verdict` is an enum and ``risk_verdict`` is its ``.value``, and
-:attr:`RiskVerdict.limited_size_pct` is called ``approved_size_pct`` there.
+already carries the three fields this module's verdict fills, and ALL THREE ARE
+RENAMED on the way, none of it enforced by anything: ``verdict`` is an enum and
+``risk_verdict`` is its ``.value``; ``limited_size_pct`` is ``approved_size_pct``
+there; and ``reason`` is ``risk_reason``. An earlier version of this paragraph
+counted two, which is the kind of arithmetic a wiring commit inherits.
 """
 
 from __future__ import annotations
@@ -74,8 +75,12 @@ _LIMIT_KEYS = frozenset(
 # borrowing, which this project's cost model and engine do not describe - the
 # engine sizes a position out of cash it holds. For `max_daily_loss_pct` the
 # leverage argument says nothing and the bound is merely the widest meaningful
-# one: a session loss of a hundred percent is the whole account, and a threshold
-# beyond it could never be reached.
+# one: a session loss of a hundred percent is the whole account. Note that a
+# threshold beyond it would not be strictly unreachable - nothing bounds
+# `realised_pnl_today` by `start_of_day_equity`, so a realised loss of 160% of the
+# session open is a state this module would accept and measure - it is the
+# mark-to-market route that cannot exceed 100, because `check` requires a positive
+# equity.
 PERCENT_CEILING = 100.0
 
 # The number of percent in a whole, used to turn a ratio of two cash amounts into
@@ -117,14 +122,31 @@ class RiskLimits:
     things. Every construction site now states the switch.
 
     Attributes:
-        max_position_pct: Largest single position as a percentage of account
-            equity, so ``95.0`` means ninety-five percent.
+        max_position_pct: Largest single REQUEST as a percentage of account
+            equity, so ``95.0`` means ninety-five percent. It is compared against
+            :attr:`~strategylab.core.types.Intent.size_pct` alone and never
+            against what is already open, so it does not bound a resulting
+            POSITION - that is what ``max_open_exposure_pct`` does, by subtracting
+            current exposure first. The two coincide only while the book is empty.
+            Measured: with this at 95.0, an exposure ceiling of 100.0 and half the
+            account already invested, a request for 95% is allowed at 50% and the
+            position ends at 100% of equity. The committed file sets both to 95.0,
+            which hides it. This attribute read "largest single position" until an
+            audit measured what it actually caps.
         max_daily_loss_pct: Loss within one session, as a positive percentage
-            of starting-of-day equity, at which trading stops for the day.
+            of starting-of-day equity, at which an intent carrying a size is
+            refused. NOT A LATCH: :func:`check` holds no state, so it refuses only
+            while the state it is handed still reads at or beyond this ceiling,
+            and a recovery re-permits. See :func:`check` for why that is a gap
+            rather than a design.
         max_open_exposure_pct: Largest total exposure across all positions as a
             percentage of account equity.
         kill_switch: When ``True``, every intent is rejected regardless of any
-            other limit. Set by a human, cleared by a human.
+            other LIMIT - including one that asks for no new exposure, so an open
+            position cannot be closed through the gate while it is set. Set by a
+            human, cleared by a human. One thing still comes first and is not a
+            limit: a ``start_of_day_equity`` that is not positive and finite makes
+            :func:`check` raise rather than reject, switch or no switch.
     """
 
     max_position_pct: float
@@ -179,8 +201,9 @@ class RiskLimits:
             if not math.isfinite(value):
                 raise ValueError(
                     f"{name} is a percentage and must be finite, got {value}; a nan limit never "
-                    "binds at all, because every comparison against it is False, and an infinite "
-                    "one binds without bound"
+                    "binds at all, because every comparison against it is False, and nor does a "
+                    "positive-infinite one - while a negative-infinite one binds without bound, "
+                    "past zero"
                 )
             if not 0.0 < value <= PERCENT_CEILING:
                 raise ValueError(
@@ -236,18 +259,23 @@ class RiskVerdict:
         verdict: Whether the intent may proceed.
         reason: Plain-English statement of which limit bound, or that none did -
             or, on the branches that answer about the account rather than about a
-            limit, which FIELD made the question unanswerable. Recorded in the
-            decision log for allowed intents as well as rejected ones, so the log
-            shows that the gate ran rather than leaving it to be inferred.
+            limit, which FIELD made the question unanswerable. MEANT for the
+            decision log, on allowed intents as well as rejected ones, so that a
+            log shows the gate ran rather than leaving it to be inferred. No
+            record carries one yet: nothing calls this module.
         limited_size_pct: The size the intent is permitted at, as a percentage
             of equity. Equal to the requested size when nothing bound, lower
             when a limit reduced it, and ``0.0`` on a rejection.
 
-            AN ALLOWANCE OF ZERO BELONGS ONLY TO A REQUEST FOR ZERO, and that
-            holds only because :meth:`RiskLimits.__post_init__` refuses a limit of
-            zero. A zero position cap would reduce a sized request to zero and
-            return it as an ALLOW - an approved order for nothing - so the two
-            guarantees are one guarantee, and neither is safe without the other.
+            AN ALLOWANCE OF ZERO BELONGS ONLY TO A REQUEST FOR ZERO, and it
+            rests on TWO guards rather than on anything :func:`check` does
+            directly. :meth:`RiskLimits.__post_init__` refuses a limit of zero,
+            without which a zero position cap would reduce a sized request to zero
+            and return it as an ALLOW - an approved order for nothing. And the
+            exposure test rejects at zero headroom rather than allowing, without
+            which an exposure sitting exactly on its ceiling would do the same
+            thing with every limit non-zero. Three guarantees, one property, and
+            none of the three is safe alone.
     """
 
     verdict: Verdict
@@ -344,17 +372,19 @@ def _percentage(mapping: dict[str, Any], key: str) -> float:
         # not a ValueError and so escaped this function's contract. The catch
         # around yaml.load cannot see it: this conversion happens afterwards.
         raise ValueError(
-            f"risk limits: '{key}' is too large to hold as a floating-point number, and a "
-            f"percentage above {PERCENT_CEILING:g} would be refused in any case"
+            f"risk limits: '{key}' is too large in magnitude to hold as a floating-point "
+            f"number; a percentage has to lie between 0 and {PERCENT_CEILING:g}, and this is "
+            "outside that range by a margin no conversion can even represent"
         ) from exc
     if not math.isfinite(number) or not 0.0 < number <= PERCENT_CEILING:
         raise ValueError(
             f"risk limits: '{key}' is a percentage and must be finite, above 0 and at most "
             f"{PERCENT_CEILING:g}, got {number}. Each bound is refused for its own reason: a "
             "non-finite limit either never binds or binds without bound; zero reduces every "
-            "request to nothing, or leaves no headroom, or stops any day not in profit, "
-            "depending which of the three it is; and above a hundred is leverage this project "
-            "does not describe. To refuse everything, set 'kill_switch'"
+            "request to nothing, or leaves no headroom, or refuses any day not in profit, "
+            "depending which of the three it is; and above a hundred is leverage for the two "
+            "size limits and simply wider than a whole account for the loss ceiling. To refuse "
+            "everything, set 'kill_switch'"
         )
     return number
 
@@ -532,8 +562,19 @@ def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerd
     account is carrying whether or not anything has been sold. BOTH DIVIDE BY
     ``start_of_day_equity``, never by current equity - dividing a mark-down by
     what is left of the account would overstate it. Either one reaching the
-    ceiling stops new positions for the day, and reaching it is enough: the
+    ceiling refuses an intent carrying a size, and reaching it is enough: the
     comparison is inclusive.
+
+    THE DAILY LOSS LIMIT DOES NOT LATCH, AND THE NAME SUGGESTS IT DOES. This
+    function is pure in ``(intent, state, limits)``: it holds no flag, remembers no
+    previous verdict, and recomputes both routes from the state it is handed. A
+    worker refused at a realised 12.5% that then books a gain back to 1%, or whose
+    equity recovers to the session open, is permitted a sized intent on the very
+    next call. A limit that stayed tripped until the session ended would need
+    somewhere to remember being tripped, and nothing in this project holds session
+    state - which is the same absence that makes ``as_of`` unread. Stated here
+    rather than in ``LIMITATIONS.md`` alone because the phrase "stops for the day"
+    appeared in four places in this module and was wrong in all four.
 
     THE TWO CEILINGS ARE INCLUSIVE IN OPPOSITE DIRECTIONS, which is coherent but
     has to be said. Reaching ``max_daily_loss_pct`` REJECTS. Reaching
@@ -646,7 +687,7 @@ def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerd
         return _reject(
             f"max_daily_loss_pct {limits.max_daily_loss_pct:g} reached: realised loss today is "
             f"{realised_loss_pct:.4g}% of start-of-day equity. No intent carrying a size is "
-            "permitted for the rest of the day; one asking for none still is"
+            "permitted while that holds; one asking for none still is"
         )
     marked_loss_pct = (
         (state.start_of_day_equity - state.equity) / state.start_of_day_equity * PERCENT_PER_UNIT
@@ -655,7 +696,7 @@ def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerd
         return _reject(
             f"max_daily_loss_pct {limits.max_daily_loss_pct:g} reached: equity is "
             f"{marked_loss_pct:.4g}% below the session open, realised or not. No intent carrying "
-            "a size is permitted for the rest of the day; one asking for none still is"
+            "a size is permitted while that holds; one asking for none still is"
         )
 
     exposure_pct = state.open_exposure / state.equity * PERCENT_PER_UNIT

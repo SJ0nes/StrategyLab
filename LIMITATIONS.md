@@ -215,25 +215,28 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1414 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1437 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log and the risk
-layer — eighteen areas, one per test file. 480 of the 1414 are the risk layer's,
-and that is a statement about parameterisation rather than about importance. 316
-of those 480 are assertions repeated at four account equities, because at an
+layer — eighteen areas, one per test file. 503 of the 1437 are the risk layer's,
+and that is a statement about parameterisation rather than about importance. 336
+of those 503 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
-One test that asserts a percentage sits outside that fan-out on purpose —
-`test_the_committed_daily_loss_ceiling_binds` — because bracketing the shipped 3%
-ceiling wants round cash amounts at one account size rather than the same
-percentage at four; it asserts a verdict rather than a number, so nothing there
-needs to be exact in binary. The other 164 items are the loader and the type, 106
-of them refusals and 58 acceptances — a distinction worth making, because an
-earlier draft of this paragraph called all 164 refusals. Five invariants are asserted over forty cases built from twenty distinct
-account states — forty was written here as forty states, which overstated the
-coverage by a factor of two, and this is the class of number this document is
-worst at.
+`test_the_committed_daily_loss_ceiling_binds` runs at one account size instead,
+because bracketing the shipped 3% ceiling wants round cash amounts rather than the
+same percentage at four; it asserts a verdict rather than a number, so nothing
+there needs to be exact in binary. The other 167 items exercise the loader (90),
+the type's range check (43) and the gate itself (34): 106 assert an exception and
+61 a returned verdict, 23 of those a rejection.
+
+Five invariants are asserted over forty-four cases built from twenty-four distinct
+account states. Every number in this paragraph has been wrong once: forty cases
+were written as forty states, all 167 non-fan-out items were called refusals, and
+the 106/61 split was called 106/58 with the wrong label on each half. This is the
+class of number this document is worst at, and these are re-derived from the test
+collector rather than from the previous draft.
 
 What has no tests is not only the stub bodies, and an earlier version of this
 paragraph said it was. Three FINISHED areas are untested: **the CLI**, all five
@@ -835,7 +838,7 @@ carry information too.
 
 **The risk layer is built, and nothing has ever asked it anything.** All three
 parts `CLAUDE.md` demands now exist: its own module, its own config file
-(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 480 of
+(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 503 of
 them). What does not exist is a caller. `strategylab run` is a stub, the
 backtester deliberately does not gate, and so every verdict this layer has ever
 produced was produced by a test.
@@ -866,7 +869,10 @@ the tests pass.
   manual act at the venue. That is the intended meaning of a human throwing a
   switch, and it is stated here because the alternative reading — that a kill
   switch protects you from a position you already hold — is the one a reader will
-  assume.
+  assume. A second cost of the same choice: while the switch is set, `risk_verdict`
+  stops distinguishing "refused" from "nothing was asked for", because a `HOLD`
+  records as a rejection too. A log reader separates them by the `action` field on
+  the same record.
 - **What the other limits exempt is a SIZE, not an exit.** The gate reads
   `Intent.size_pct`, so what passes a blown daily-loss limit is an intent asking
   for no new exposure. A well-formed exit is exactly that, and a malformed one
@@ -882,6 +888,22 @@ the tests pass.
   it guards a portfolio total, and a second instrument would separate them
   properly; today it is untested in the only sense that matters, which is against
   a real portfolio.
+- **The position cap bounds a REQUEST, not a position, and the shipped file
+  hides it.** `max_position_pct` is compared against the size an intent asks for
+  and never against what is already open; bounding the resulting position is the
+  exposure ceiling's job, because it subtracts current exposure first. Measured:
+  with `max_position_pct` at 95.0, an exposure ceiling of 100.0 and half the
+  account already invested, a request for 95% is allowed at 50% and the position
+  ends at 100% of equity. The committed file sets both to 95.0, so the exposure
+  ceiling masks it entirely — which is exactly why the entry above about the two
+  limits barely diverging did not catch it. Anyone loosening the exposure ceiling
+  without loosening the position cap should know the cap will not hold the line.
+- **A malformed entry asking for nothing is ALLOWED, not refused.** The
+  size-keyed gate is documented in one direction — a malformed exit carrying a
+  size is refused — and this is the mirror. An `ENTER_LONG` with `size_pct` of
+  zero returns `allow` at a permitted size of zero, deliberately and with a test
+  pinning it. So the first component to consume a verdict must not read `allow`
+  as "there is an order to send"; it has to read the size beside it.
 - **Three of the four limits can refuse outright, not just reduce.** The kill
   switch and the daily-loss limit always do. The exposure limit reduces a request
   to the headroom left and refuses when that headroom is zero or negative — which
