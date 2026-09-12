@@ -904,10 +904,15 @@ def run(
 
     Scheduled once per session after the close rather than left running. In
     order: fetches the execution instrument's latest bars (THE ONE OTHER COMMAND
-    THAT USES THE NETWORK, besides fetch) and merges them into the cache - bars
-    already cached are KEPT and only genuinely new dates are added, so history
-    once written is never rewritten by a later fetch and `diff` replays what the
-    deciding run saw; reconciles against the venue; evaluates the latest bar
+    THAT USES THE NETWORK, besides fetch) from the day after the last cached
+    bar or the warm-up span, whichever is earlier - so a pause longer than the
+    span cannot leave a gap the validator refuses - and merges them into the
+    cache with bars already cached KEPT, so history once written is never
+    rewritten by a later fetch and `diff` replays what the deciding run saw. The
+    cost of that rule: run DURING a session and the in-progress bar is cached
+    at its interim close, permanently, and no command re-downloads the
+    execution instrument. Run after the close. Then reconciles against the
+    venue; evaluates the latest bar
     through the same core.evaluate the backtester uses; passes the intent
     through the risk layer; writes ONE decision record to
     state/decisions-live.jsonl; and then sends at most one market order.
@@ -953,9 +958,18 @@ def run(
     source = YFinanceSource()
     console.print(f"Fetching {ticker} from {source.name}, last {span} days ...")
     try:
-        fresh = source.fetch(ticker, today - timedelta(days=span), today)
+        start = today - timedelta(days=span)
+        cached = None
         if is_cached(ticker, DATA_DIR):
             cached, _ = cache_read(ticker, DATA_DIR)
+            # From the day after the cache ends if that is earlier than the
+            # span: a worker paused for longer than the span would otherwise
+            # fetch a window that starts after the cache ends, and the merged
+            # frame's gap would fail validation on every later run with no
+            # command able to clear it.
+            start = min(start, cached.index[-1].date() + timedelta(days=1))
+        fresh = source.fetch(ticker, start, today)
+        if cached is not None:
             # The CACHE wins on any date both hold. A vendor revision inside the
             # overlap is thereby not silently adopted, and what diff replays is
             # what the deciding run saw. The sidecar's fetched_at is the time of
@@ -1018,7 +1032,7 @@ def run(
             float(bars["close"].iloc[-1]),
             # Unique per intended order, as the interface asks: the bar alone
             # repeats when the worker is invoked twice after one close.
-            client_ref=f"{ticker}-{bar_stamp:%Y%m%d}-{now:%H%M%S}",
+            client_ref=f"{ticker}-{bar_stamp:%Y%m%d}-{now:%Y%m%dT%H%M%S}",
         )
     except (ValueError, OSError) as exc:
         err_console.print(f"[bold red]decision[/bold red] {exc}")
@@ -1066,7 +1080,7 @@ def diff(
     which the two disagree. Uses no network: the bars are what `run` cached.
 
     Compares the strategy's decision - parameters, action, conditions,
-    indicator values, requested size - and NOT the risk fields, which differ by
+    indicator values, thresholds, requested size - and NOT the risk fields, which differ by
     construction because the replay does not run the gate. A `params`
     divergence on every bar means this command was given a different search
     artifact than `run` was. A divergence is a finding about
@@ -1075,7 +1089,7 @@ def diff(
     protocol = _load_or_exit()
     try:
         live = read_decisions(DEFAULT_LIVE_LOG_PATH)
-    except (FileNotFoundError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         err_console.print(f"[bold red]live log[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     if not live:

@@ -374,7 +374,11 @@ def test_two_live_records_for_one_bar_are_one_compared_bar_and_the_last_wins() -
         params=PARAMS,
         protocol_version=1,
     )
-    report = compare([*live, duplicate], replay(_definition(), PARAMS, bars, live, NOW))
+    replayed = replay(_definition(), PARAMS, bars, [*live, duplicate], NOW)
+    # The replay too: one record per bar, so the replay log on disk carries no
+    # duplicate even though the append-only live log keeps both.
+    assert len(replayed) == len(live)
+    report = compare([*live, duplicate], replayed)
     # One bar, not two records - and the duplicate HOLD is what the replay also
     # decides on that bar, so the count is what distinguishes bars from records.
     assert report.compared == len(live)

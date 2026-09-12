@@ -39,7 +39,8 @@ reported so a human can weigh it; ``select_candidate`` never sees it, so
 is deliberate and it is a limitation: a candidate can be nominated while sitting
 inside the noise distribution, and only a reader will notice.
 
-**It renders no report.** ``report/render.py`` does that, from the JSON this loop writes.
+**It renders no report.** ``report/surface.py`` reads the JSON this loop writes
+and hands ``report/render.py`` a context.
 
 **It flags a degenerate plateau rather than rejecting it**, which is what
 ``CLAUDE.md`` specifies. ``degenerate_plateau`` is therefore the second
@@ -1300,7 +1301,7 @@ def write_search_result(
     The whole surface, not just the winner. The output of this project is the
     SHAPE of the results across the parameter space - whether the good region is
     broad or a spike - and a file holding only the best cell cannot show that.
-    It is also what the report component will read, and what makes a later run
+    It is also what ``report/surface.py`` reads, and what makes a later run
     comparable against this one.
 
     ``generated_at`` is an argument rather than read from the clock here, for

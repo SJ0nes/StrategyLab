@@ -66,8 +66,9 @@ VALUE_REL_TOL = 1e-9
 
 #: Fields the diff compares, in the order they are reported. The risk fields are
 #: deliberately absent; ``params`` is deliberately present, because it is the one
-#: field the replay does not copy from the live record and so the one that can
-#: differ for a reason that is neither the simulator's nor the vendor's.
+#: COMPARED field that comes from the caller rather than from the bars, and so
+#: the one that can differ for a reason that is neither the simulator's nor the
+#: vendor's.
 COMPARED_FIELDS: tuple[str, ...] = (
     "params",
     "action",
@@ -338,14 +339,18 @@ def replay(
         recorded_at: Stamped on every replay record, timezone-aware at UTC.
 
     Returns:
-        One record per live bar found in ``bars``, in the live log's order.
+        One record per live BAR found in ``bars``, in bar order. Two live
+        records for one bar - a worker invoked twice after one close - produce
+        one replay record, so the replay log on disk carries no duplicate; the
+        live log keeps both, because it is append-only.
 
     Raises:
         ValueError: Propagated from ``evaluate``, including for a window
             shorter than the strategy's warm-up.
     """
     replayed = []
-    for entry in live:
+    latest = {entry.bar_timestamp: entry for entry in live}
+    for entry in sorted(latest.values(), key=lambda r: r.bar_timestamp):
         stamp = pd.Timestamp(entry.bar_timestamp)
         if stamp not in bars.index:
             continue
@@ -425,11 +430,12 @@ def _values_differ(a: dict[str, float], b: dict[str, float]) -> bool:
 def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffReport:
     """Diff the live log against its replay, bar by bar.
 
-    Compares :data:`COMPARED_FIELDS` and nothing else. ``recorded_at`` differs
-    by construction and is itself a measurement; ``source`` differs by
-    definition; ``ticker``, ``protocol_version`` and ``schema_version`` are
-    copied into the replay and cannot differ; the three risk fields differ
-    because the replay does not run the gate.
+    Compares :data:`COMPARED_FIELDS` and nothing else. Of the other nine:
+    ``bar_timestamp`` is the join key; ``recorded_at`` differs by construction
+    and is itself a measurement; ``source`` differs by definition; ``ticker``
+    and ``protocol_version`` are copied into the replay and cannot differ;
+    ``schema_version`` comes from the same constant on both sides; and the
+    three risk fields differ because the replay does not run the gate.
 
     ONE RECORD PER BAR ON EACH SIDE, THE LAST ONE WINNING. A worker invoked twice
     after one close appends two live records for the same bar; the later one is
@@ -485,7 +491,8 @@ def _render(value: object) -> str:
         value: The value.
 
     Returns:
-        Its rendering: an enum's value, a tuple joined with `` AND ``, or ``str``.
+        Its rendering: an enum's value, a tuple joined with `` AND ``, a mapping
+        as sorted ``key=value`` pairs, or ``str``.
     """
     if isinstance(value, Action):
         return value.value

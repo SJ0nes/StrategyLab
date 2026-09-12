@@ -219,13 +219,13 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1487 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1488 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter and the live worker — twenty areas, one per test file.
-486 of the 1487 are the risk layer's,
+486 of the 1488 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -899,6 +899,15 @@ decision record until it has been read beside the venue's own account page.
 - **The four files the live half writes** are `state/session.json`,
   `state/decisions-live.jsonl`, `state/decisions-replay.jsonl` and
   `state/positions.json`, all gitignored; the last belongs to the adapter.
+- **The execution cache is written once per date and never revised.** `run`
+  fetches from the day after the last cached bar (or the warm-up span if that is
+  earlier) and merges with the cache winning on any date both hold, so a vendor
+  revision is never silently adopted and `diff` replays what the deciding run
+  saw. Two costs: a run made DURING a session caches the in-progress bar at its
+  interim close, permanently, since no command re-downloads the execution
+  instrument - run after the close, or delete `data/<execution>.parquet` by
+  hand; and the sidecar's `fetched_at` is the time of the latest merge, not of
+  every bar in it.
 - **`run` and `diff` are untested**, like the five commands before them. Their
   decisions are in `live/worker.py`, which is tested; what is not is the wiring -
   environment variables, the fetch-and-merge of the execution instrument's bars,

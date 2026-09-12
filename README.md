@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(untested)* | |
 
-**1487 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1488 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -178,13 +178,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1487 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1488 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1487 tests, none touching the network
+uv run pytest                   # 1488 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

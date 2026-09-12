@@ -80,11 +80,13 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
       page reports where the candidate falls in it, but as a sentence and a
       percentile rather than a band drawn on the surface's own axis. A page
       whose search had no ceiling says that instead;
-    - fold results side by side - NOT MET: ``validate/`` is built, and its verdict is JSON, and
-      no fold exists;
+    - fold results side by side - NOT MET. ``validate/`` produces folds and
+      ``cli.validate`` prints them as a table; no page renders them;
     - loading two result sets to compare runs - NOT MET.
 
-    Three of those wait on components that do not exist. They are listed here
+    One of those waits on a component that does not exist; two wait on a
+    rendering of something already computed; one on a storage decision. They
+    are listed here
     rather than quietly dropped, because a contract that describes five
     interactions and a module that offers two should say which two.
 

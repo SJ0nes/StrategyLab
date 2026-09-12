@@ -185,6 +185,17 @@ def test_the_key_is_masked_in_an_error_body(tmp_path: Path) -> None:
     assert MASK in str(info.value)
 
 
+def test_the_key_is_masked_even_when_it_straddles_the_truncation_cut(tmp_path: Path) -> None:
+    # The body is truncated to 200 characters for the message. Masking after the
+    # cut would print the key's first characters whenever the key began inside
+    # the window and ended outside it; masking happens first.
+    padding = "x" * (200 - 8)
+    rec = Recorder({("POST", "/api/v0/equity/orders/market"): (500, {"pad": padding + KEY})})
+    with pytest.raises(T212Error) as info:
+        _venue(rec, tmp_path).place_order(_order())
+    assert KEY[:6] not in str(info.value)
+
+
 def test_the_key_is_masked_in_a_transport_error(tmp_path: Path) -> None:
     rec = Recorder({("GET", "/api/v0/equity/portfolio"): httpx.ConnectError(f"refused for {KEY}")})
     with pytest.raises(T212Error) as info:

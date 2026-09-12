@@ -499,9 +499,10 @@ class YFinanceSource:
     The only component that fetches PRICES over the network, reached from two
     commands - `fetch` for the research instrument and `run` for the execution
     instrument's recent bars; the venue adapter is the other network user in
-    the project. No test may call it: the fetch path is to
-    be tested against recorded fixtures instead, because a CI badge that goes
-    red on a vendor rate limit is worse than no badge.
+    the project. No test may call it, because a CI badge that goes red on a
+    vendor rate limit is worse than no badge - and no test does: the fetch path
+    and the normalisation behind it have no test at all, and cannot get one
+    without a recorded HTTP fixture or a fake source, neither of which exists.
     """
 
     name: str = "yfinance"

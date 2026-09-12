@@ -200,18 +200,20 @@ class T212Venue:
                 self._mask(f"{method} {path} failed: {type(exc).__name__}: {exc}")
             ) from None
         if response.status_code // 100 != 2:
-            raise T212Error(
-                self._mask(
-                    f"{method} {path} returned HTTP {response.status_code}: {response.text[:200]}"
-                )
-            )
+            # Masked BEFORE truncation. Slicing first would let a key straddling
+            # the cut print its first characters unmasked.
+            body_text = self._mask(response.text)[:200]
+            raise T212Error(f"{method} {path} returned HTTP {response.status_code}: {body_text}")
         if not response.content:
             return None
         try:
             return response.json()
-        except ValueError:
+        except ValueError as exc:
             raise T212Error(
-                self._mask(f"{method} {path} returned a body that is not JSON")
+                self._mask(
+                    f"{method} {path} returned a body that is not JSON "
+                    f"({type(exc).__name__}: {exc})"
+                )
             ) from None
 
     def _ticker(self, symbol: str) -> str:
@@ -265,7 +267,7 @@ class T212Venue:
                 json={"ticker": self._ticker(order.ticker), "quantity": signed},
             )
         except T212Error as exc:
-            raise T212Error(f"{exc} (client_ref {order.client_ref})") from exc
+            raise T212Error(f"{exc} (client_ref {order.client_ref})") from None
         if not isinstance(body, dict) or "id" not in body:
             raise T212Error(
                 f"order accepted but the response carried no id (client_ref {order.client_ref})"
