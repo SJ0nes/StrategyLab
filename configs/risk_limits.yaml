@@ -19,9 +19,13 @@
 # safe-looking meaning. An unknown or misspelled key is refused rather than
 # ignored. A repeated key is refused too — PyYAML would otherwise keep the last
 # one silently, which is how a file that plainly reads `kill_switch: true` gets
-# disarmed four lines further down. So is a YAML anchor with a merge key: a limit
-# assembled from a definition elsewhere is a limit an operator cannot read off
-# the line it is written on.
+# disarmed four lines further down. A YAML anchor with a merge key is refused
+# too - not by an explicit guard but as a consequence of that duplicate-key check,
+# which sees the merge key before it is expanded and cannot construct it. The
+# refusal is welcome rather than designed: a limit assembled from a definition
+# elsewhere is a limit an operator cannot read off the line it is written on. An
+# unknown key is reported before a missing one, because the whole file's keys are
+# checked before any single field is read.
 #
 # EVERY PERCENTAGE MUST BE ABOVE 0 AND AT MOST 100, and both bounds are refusals
 # rather than clamps. Zero is refused because it means something different and

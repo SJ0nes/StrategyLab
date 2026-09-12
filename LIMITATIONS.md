@@ -215,27 +215,27 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1437 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1420 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log and the risk
-layer — eighteen areas, one per test file. 503 of the 1437 are the risk layer's,
-and that is a statement about parameterisation rather than about importance. 336
-of those 503 are assertions repeated at four account equities, because at an
+layer — eighteen areas, one per test file. 486 of the 1420 are the risk layer's,
+and that is a statement about parameterisation rather than about importance. 316
+of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
 `test_the_committed_daily_loss_ceiling_binds` runs at one account size instead,
 because bracketing the shipped 3% ceiling wants round cash amounts rather than the
 same percentage at four; it asserts a verdict rather than a number, so nothing
-there needs to be exact in binary. The other 167 items exercise the loader, the
+there needs to be exact in binary. The other 170 items exercise the loader, the
 type's range check and the gate itself, and no clean partition divides them
-because several tests use two of the three. 106 assert an exception and 61 a
+because several tests use two of the three. 109 assert an exception and 61 a
 returned value, 24 of those a verdict from `check`, 23 of which carry a
 rejection.
 
-Five invariants are asserted over forty-four cases built from twenty-four distinct
+Five invariants are asserted over forty cases built from twenty distinct
 account states. Every number in this paragraph has been wrong at least once: forty
-cases were written as forty states; all 167 non-fan-out items were called
+cases were written as forty states; all non-fan-out items were called
 refusals; the 106/61 split was called 106/58 with the wrong label on each half;
 and then 61 was called a count of verdicts when only 24 of them are. Four audit
 rounds went into one paragraph of counting. These figures are re-derived from the
@@ -844,7 +844,7 @@ carry information too.
 
 **The risk layer is built, and nothing has ever asked it anything.** All three
 parts `CLAUDE.md` demands now exist: its own module, its own config file
-(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 503 of
+(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 486 of
 them). What does not exist is a caller. `strategylab run` is a stub, the
 backtester deliberately does not gate, and so every verdict this layer has ever
 produced was produced by a test.

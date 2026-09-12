@@ -43,9 +43,11 @@ from strategylab.risk.limits import (
     load_limits,
 )
 
-# Anchored to this file rather than to the process working directory, so the one
-# test of the COMMITTED limits file does not quietly vanish when pytest runs from
-# somewhere else.
+# Anchored to this file rather than to the process working directory, so the four
+# tests that load the COMMITTED limits file do not fail spuriously - with a
+# FileNotFoundError that depends on where pytest was invoked from - when it runs
+# from somewhere else. An earlier version of this comment said "the one test" and
+# "quietly vanish"; the count had grown, and a missing file here is loud.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPO_LIMITS = REPO_ROOT / "configs" / "risk_limits.yaml"
 REPO_PROTOCOL = REPO_ROOT / "protocol.yaml"
@@ -180,8 +182,11 @@ def test_percentages_are_not_converted_to_fractions(tmp_path: Path) -> None:
     # hundred-fold error would leave every limit slack by a factor of a hundred
     # and nothing would crash.
     limits = load_limits(_file(tmp_path, max_position_pct="95.0", max_daily_loss_pct="3.0"))
-    # A hundred-fold error would land on 0.95, which `== 95.0` above already
-    # excludes; asserting it separately adds a sentence, not a test.
+    # A hundred-fold error would land on 0.95, which the `== 95.0` below already
+    # excludes; asserting `!= 0.95` separately would add a sentence, not a test.
+    # `test_round_trips_a_well_formed_file` strictly contains this test; it is kept
+    # because the unit boundary is the hazard CLAUDE.md says has already bitten
+    # once, and a test named after a hazard is worth its two lines.
     assert limits.max_position_pct == 95.0
     assert limits.max_daily_loss_pct == 3.0
 
@@ -193,7 +198,9 @@ def test_default_path_points_at_the_risk_layers_own_file() -> None:
 
 def test_the_protocol_file_is_not_a_limits_file() -> None:
     # The isolation claim, made testable: pointing the risk loader at
-    # protocol.yaml is refused rather than partially honoured.
+    # protocol.yaml is refused rather than partially honoured. That file has seven
+    # unknown keys AND all four required ones missing, so which message appears
+    # pins the order of the two checks - which configs/risk_limits.yaml now states.
     with pytest.raises(ValueError, match="unknown keys"):
         load_limits(REPO_PROTOCOL)
 
@@ -295,7 +302,7 @@ def test_a_yaml_merge_key_is_refused(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("key", ["max_position_pct", "max_daily_loss_pct", "max_open_exposure_pct"])
 @pytest.mark.parametrize(
-    "bad", ["0", "0.0", "-1.0", "100.01", "100.5", "101", ".nan", ".inf", "-.inf"]
+    "bad", ["0", "0.0", "-0.001", "-1.0", "100.01", "100.5", "101", ".nan", ".inf", "-.inf"]
 )
 def test_a_percentage_outside_its_range_is_refused(tmp_path: Path, key: str, bad: str) -> None:
     with pytest.raises(ValueError, match=f"'{key}' is a percentage"):
@@ -659,15 +666,21 @@ def test_a_zero_size_intent_of_ANY_action_survives_a_blown_limit(
 ) -> None:
     # THE OTHER HALF OF THE SIZE-KEYED CLAIM, and it was missing. The sized-exit
     # tests below rule out a gate that exempts on the ACTION alone, but not one
-    # exempting on `action is EXIT_LONG and size == 0` - a conjunction that would
-    # pass every other assertion in this file, because nothing else presents a
-    # NON-EXIT action at a size of zero to a limit that has been reached.
+    # exempting on `action in (EXIT_LONG, HOLD) and size == 0` - a conjunction
+    # that would pass every other assertion in this file, because nothing else
+    # presents a NON-EXIT action at a size of zero to a limit that has been
+    # reached. Only `enter_long` discriminates that. `hold` discriminates the
+    # narrower `action is EXIT_LONG and size == 0`. An earlier version of this
+    # comment named the narrower mutant and then said only `enter_long` caught it,
+    # which was false: `hold` catches that one too.
     #
-    # Only `enter_long` discriminates that conjunction, and `hold` discriminates
-    # the narrower form of it. The `exit_long` parameter duplicates
-    # `test_an_exit_survives_a_blown_daily_loss_limit` above, state for state, and
-    # is kept for symmetry rather than coverage - three parameters here are not
-    # three units of coverage, and an audit counted them to check.
+    # The `exit_long` parameter repeats the INPUTS of
+    # `test_an_exit_survives_a_blown_daily_loss_limit` above exactly, and is not
+    # redundant: the reason assertion below is the file's only check that a
+    # permitted zero-size exit reports "no size requested" rather than an
+    # action-based exemption, which docs/decisions/0010 requires of the log. A
+    # previous version called it symmetry; an audit read the assertions and
+    # disagreed. Three parameters are not three units of coverage, nor one.
     verdict = check(
         intent,
         _state(
@@ -774,19 +787,12 @@ _CASES: tuple[tuple[Intent, PortfolioState, RiskLimits], ...] = tuple(
         (_enter(0.001), _state(equity), _limits()),
         (_hold(), _state(equity), _limits()),
         (_exit_long(), _state(equity, open_exposure=equity), _limits()),
-        # An ENTER_LONG asking for nothing, against an account that breaches both
-        # limits. Added because the invariants below are the strongest property
-        # tests here and the state this round introduced was not among them.
-        (
-            _enter(0.0),
-            _state(
-                equity - equity / 2,
-                start_of_day_equity=equity,
-                open_exposure=equity,
-                realised_pnl_today=-equity / 2,
-            ),
-            _limits(max_daily_loss_pct=1.0, max_open_exposure_pct=1.0),
-        ),
+        # Deliberately NOT here: an ENTER_LONG asking for nothing against a breached
+        # account. It was added once, and an audit showed no invariant below can
+        # fail on it under any gate, correct or broken - a zero request satisfies
+        # every predicate whether allowed or refused. Its discriminating assertions
+        # live in test_a_zero_size_intent_of_ANY_action_survives_a_blown_limit,
+        # which asserts the verdict and the reason this matrix does not.
     )
 )
 
@@ -795,8 +801,14 @@ _CASES: tuple[tuple[Intent, PortfolioState, RiskLimits], ...] = tuple(
 def test_a_verdict_never_permits_more_than_was_requested(
     intent: Intent, state: PortfolioState, limits: RiskLimits
 ) -> None:
-    # The gate may reduce a size. It may never raise one, and a single sign error
-    # in the headroom arithmetic would do exactly that.
+    # The gate may reduce a size. It may never raise one. What this catches is a
+    # gate that returns the binding LIMIT rather than the limited size - the rows
+    # with a request of 0.0 or 0.001 make that immediate. It does NOT catch a sign
+    # error in the headroom arithmetic, which an earlier version of this comment
+    # claimed: a widened headroom is a larger argument to a min that the request
+    # already clamps, so every case here passes regardless. The headroom's sign is
+    # pinned by test_exposure_headroom_reduces_the_size (45.0, where a sign error
+    # gives 95.0) and test_exhausted_exposure_rejects instead.
     verdict = check(intent, state, limits)
     assert verdict.limited_size_pct <= intent.size_pct
 
@@ -915,11 +927,14 @@ def test_the_exposure_limit_divides_by_current_equity(equity: float) -> None:
     # re-based numbers make the verdict itself unambiguous instead of leaving a
     # string comparison to sort out which limit answered.
     #
-    # At E = 100 this test is the ONLY equity that catches an implementation which
-    # never divides: 87.5 raw is under the 95 ceiling and allows, while at every
-    # larger equity the raw cash figure exceeds 95 and rejects for the wrong
-    # reason. That inverts the module docstring's framing of E = 100 as the trap,
-    # and is a reason never to trim it from this test.
+    # At E = 100 this is the ONLY equity that catches an implementation which
+    # never divides IN THE EXPOSURE ROUTE: 87.5 raw is under the 95 ceiling and
+    # allows, while at every larger equity the raw cash figure exceeds 95 and
+    # rejects anyway, so every assertion passes on wrong arithmetic. (A gate that
+    # never divides ANYWHERE is caught at all four equities, because the raw
+    # mark-down then trips the 20.0 ceiling and the reason assertion fails.) That
+    # inverts the module docstring's framing of E = 100 as the trap, and is a
+    # reason never to trim it from this test.
     verdict = check(
         _enter(95.0),
         _state(
@@ -981,6 +996,7 @@ def test_a_sized_exit_is_gated_on_its_size(equity: float) -> None:
     )
     assert verdict.verdict is Verdict.REJECT
     assert verdict.limited_size_pct == 0.0
+    assert "realised loss" in verdict.reason
 
 
 @pytest.mark.parametrize("equity", EQUITIES)
