@@ -350,11 +350,42 @@ def test_a_live_bar_absent_from_the_bars_is_reported_not_guessed() -> None:
     assert report.compared == len(live) - 1
 
 
+def test_a_different_artifact_shows_up_as_a_params_divergence_on_every_bar() -> None:
+    bars = _bars(RISING_LATE)
+    live = _live_log(bars)
+    # A different fast period with the same warm-up, so every live bar is still
+    # replayable and the ONLY thing that differs by construction is `params`.
+    report = compare(live, replay(_definition(), {"fast": 2, "slow": 5}, bars, live, NOW))
+    params_bars = {d.bar_timestamp for d in report.divergences if d.field == "params"}
+    assert len(params_bars) == report.compared
+    assert report.divergences[0].field == "params"
+
+
+def test_two_live_records_for_one_bar_are_one_compared_bar_and_the_last_wins() -> None:
+    bars = _bars(RISING_LATE)
+    live = _live_log(bars)
+    duplicate = record(
+        Intent(action=Action.HOLD),
+        _allow(0.0),
+        bar_timestamp=live[-1].bar_timestamp,
+        recorded_at=NOW,
+        source="live",
+        ticker=TICKER,
+        params=PARAMS,
+        protocol_version=1,
+    )
+    report = compare([*live, duplicate], replay(_definition(), PARAMS, bars, live, NOW))
+    # One bar, not two records - and the duplicate HOLD is what the replay also
+    # decides on that bar, so the count is what distinguishes bars from records.
+    assert report.compared == len(live)
+
+
 def test_the_risk_fields_are_not_among_the_compared_ones() -> None:
     assert "risk_verdict" not in COMPARED_FIELDS
     assert "risk_reason" not in COMPARED_FIELDS
     assert "approved_size_pct" not in COMPARED_FIELDS
     assert "recorded_at" not in COMPARED_FIELDS
+    assert "params" in COMPARED_FIELDS
 
 
 def test_a_tiny_value_difference_within_tolerance_is_not_a_divergence() -> None:

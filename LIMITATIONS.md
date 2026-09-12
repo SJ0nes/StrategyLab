@@ -182,9 +182,11 @@ answers cost something:
   differ in those three fields BY CONSTRUCTION, and `diff` will report harness
   drift as though it were simulator drift unless it is taught to exclude them.
 
-Neither is chosen here, and the unchosen decision is the reason nothing emits a
-`DecisionRecord` yet. What is no longer true is the previous claim that the only
-honest thing available was "the layer is not built".
+The second was chosen, in the replay's favour, when `diff` was built: the
+replay does not run the gate, and `compare` excludes the three risk fields
+rather than reporting them. The cost named above is paid knowingly and is
+recorded again in the section on the live half. The backtester itself still
+emits nothing; the replay stands in for it.
 
 **The keying of `indicator_values` IS now settled: by reference.**
 `sma($fast)` and `sma($slow)`, not `sma` twice - so `close above sma(150)` and
@@ -217,12 +219,13 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1420 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1487 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
-walk-forward validation, the candidate reader, the decision log and the risk
-layer — eighteen areas, one per test file. 486 of the 1420 are the risk layer's,
+walk-forward validation, the candidate reader, the decision log, the risk layer,
+the Trading 212 adapter and the live worker — twenty areas, one per test file.
+486 of the 1487 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -273,8 +276,9 @@ contract. That list shrank as the components arrived:
 `validate/walkforward.py` was built, `DecisionRecord`'s sixteen fields left it
 with `tests/test_decisions.py`, and `RiskLimits`, `PortfolioState`, `RiskVerdict`
 and the `Verdict` enum have left it now — `tests/test_risk.py` exercises all
-four. The default path's VALUE is pinned there too, but nothing calls
-`load_limits()` with no argument and nothing should: the default is
+four. The default path's VALUE is pinned there too; `strategylab run` is the
+one caller of `load_limits()` with no argument, and no test should be: the
+default is
 working-directory-relative, so a test resting on it would be a test about where
 pytest was started from.
 
@@ -668,10 +672,12 @@ touches the network, and by policy no test may call them. What is tested against
 the recorded fixture is the cache path. The vendor adapter is exercised only when
 a human runs `strategylab fetch`.
 
-**The CLI cannot fetch the execution instrument.** `fetch` downloads
-`instruments.research` and only that. There is no command that will obtain
-`VUAG.L`, so the execution-side price history this project would need to model
-real fills does not exist anywhere in the repository.
+**Only `run` fetches the execution instrument, and only recent bars.** `fetch`
+downloads `instruments.research` and only that; `run` fetches the last few
+months of `VUAG.L` on each invocation and merges them into `data/`, keeping any
+bar already cached. So the execution-side history accumulates from the first
+run forward and never reaches back: the years of `VUAG.L` history this project
+would need to model real fills against are not obtainable from any command.
 
 **The content hash changes on almost every re-fetch, so it cannot do the job it
 was designed for.** It was intended as an alarm for vendor revisions. Measured:
@@ -878,13 +884,21 @@ decision record until it has been read beside the venue's own account page.
   state it is handed, and the worker runs once per bar and exits, so a refusal
   today and a recovery tomorrow morning is an allowance tomorrow. Nothing holds
   the flag that "stops for the day" would need.
-- **`diff` compares six fields and deliberately not the three risk fields.** The
+- **`diff` compares seven fields and deliberately not the three risk fields.** The
   replay does not run the gate, so `risk_verdict`, `risk_reason` and
   `approved_size_pct` differ by construction and comparing them would report the
   harness as simulator drift. That is the decision the previous section described
   as unmade; it is now made in the replay's favour, and the cost is that a live
   refusal is invisible to `diff` unless its consequence shows up in a later bar's
   decision.
+- **Exposure is in the instrument's currency, and the gate reads it as the
+  account's.** `Position.market_value` is quantity times current price as the
+  venue reports both; the risk layer divides it by equity in account currency.
+  For `VUAG.L` on a GBP account the two coincide, unverified. Any other pairing
+  would make the exposure percentage a ratio of two currencies.
+- **The four files the live half writes** are `state/session.json`,
+  `state/decisions-live.jsonl`, `state/decisions-replay.jsonl` and
+  `state/positions.json`, all gitignored; the last belongs to the adapter.
 - **`run` and `diff` are untested**, like the five commands before them. Their
   decisions are in `live/worker.py`, which is tested; what is not is the wiring -
   environment variables, the fetch-and-merge of the execution instrument's bars,
@@ -919,15 +933,15 @@ the tests pass.
   half of what `tests/test_risk.py` tests - is never exercised by the worker.
   Whether the venue's balance and positions resemble what the tests build is
   unverified until the first real run.
-- **"The session" is not defined anywhere.** The daily-loss limit is expressed
-  per session and compares against start-of-day equity, but no component decides
-  when a day begins, resets the figure, or persists it across a restart. A worker
-  restarted mid-session with a fresh start-of-day equity would have its daily loss
-  silently forgiven. That is a bug waiting in the component that has not been
-  written, and the limit is only as good as the state handed to it. `check` does
-  not read `PortfolioState.as_of` at all — an audit confirmed the field has no
-  reader — so the layer cannot tell a stale state from a current one, and nothing
-  ties the "today" of a realised figure to any date.
+- **"The session" is a file the worker keeps, and nothing checks it.** The
+  daily-loss limit compares against start-of-day equity; `live/worker.py`
+  defines the session as a calendar date, records the first equity observed on
+  it in `state/session.json`, and keeps that figure across a restart on the same
+  day. What nothing does is validate it: `check` does not read
+  `PortfolioState.as_of` at all — an audit confirmed the field has no reader — so
+  the layer cannot tell a stale state from a current one, and an unreadable
+  session file silently starts a new session at current equity, which resets the
+  denominator.
 - **The kill switch refuses an exit, by design, and that is a real exposure.**
   While it is set, a position already open cannot be closed through this gate: the
   switch stops the wire rather than flattening the account, so unwinding is a
@@ -987,8 +1001,9 @@ the tests pass.
   watches the file, and no component reloads it. The kill switch is the one control
   here whose value is time-sensitive — set by a human, cleared by a human — and a
   human flipping it mid-session changes nothing until whatever holds the
-  `RiskLimits` object reads the file again. There is no such component yet and no
-  documented obligation on the one that comes.
+  `RiskLimits` object reads the file again. The worker is that component, and
+  because it runs once per bar and exits, it reads the file fresh on every
+  invocation - so the switch takes effect at the next scheduled run, not sooner.
 - **For one input the gate raises instead of answering.** A
   `start_of_day_equity` that is not positive and finite produces a `ValueError`,
   and that check precedes the kill switch, so it fires even with the switch set.
@@ -996,6 +1011,8 @@ the tests pass.
   nothing can tell whether such an account is down three percent or thirty — but
   it is a crash path out of the component whose other answer to an unreadable
   account is a refusal. It is also the field most likely to arrive wrong or absent
-  from the first venue reconciliation ever written, which is the same component
-  that would have to catch it. The entry above about a restarted worker covers the
+  from the venue's balance on the first run, and the worker that builds the
+  state is the component that would have to catch it - it does not, so this is
+  the one input on which `strategylab run` ends in a traceback rather than a
+  message. The entry above about a restarted worker covers the
   field being WRONG; this covers it being missing.

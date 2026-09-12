@@ -1,9 +1,14 @@
 """The venue interface: the boundary between this system and a broker.
 
-Every adapter implements the same structural interface, and each adapter ships
-with a test asserting that a simulated venue and a real one behave identically
-at this boundary. Where they cannot, the difference is the finding. No adapter
-is implemented yet, so no such test exists.
+Every adapter implements the same structural interface. The intent was that
+each adapter ship with a test asserting a simulated venue and a real one behave
+identically at this boundary; one adapter exists (``t212.py``), no simulated
+venue does, and so no such test exists. What ``tests/test_t212.py`` asserts is
+the adapter's side of the contract against a mock transport.
+
+SYMBOLS AT THIS BOUNDARY ARE THE PROTOCOL'S. ``Order.ticker`` and
+``Position.ticker`` carry the symbol as ``protocol.yaml`` names it; translating
+to and from a venue's own spelling is the adapter's job and stays inside it.
 """
 
 from __future__ import annotations
@@ -35,8 +40,9 @@ class Order:
     """An instruction to transact, after risk has approved it.
 
     Attributes:
-        ticker: Venue symbol to trade, which is the protocol's EXECUTION
-            instrument, not its research instrument.
+        ticker: The protocol's EXECUTION instrument, as the protocol spells it
+            - not its research instrument, and not the venue's own spelling,
+            which the adapter applies on the way out.
         side: Direction to transact.
         quantity: Units to transact. Positive; direction is carried by ``side``.
         order_type: How to execute.
@@ -57,10 +63,15 @@ class Position:
     """A holding as the venue reports it.
 
     Attributes:
-        ticker: Venue symbol held.
+        ticker: The symbol held, translated back to the protocol's spelling
+            by the adapter where it knows the mapping.
         quantity: Units held. Negative if short.
         average_price: Average entry price in the instrument's currency.
-        market_value: Current value in account currency units.
+        market_value: Current value, in the INSTRUMENT's currency as the T212
+            adapter derives it - equal to account currency units only when the
+            two coincide, which for this project's instrument on a GBP account
+            they do, unverified. The risk layer reads it as account currency;
+            ``LIMITATIONS.md`` records the gap.
     """
 
     ticker: str

@@ -200,7 +200,7 @@ def status() -> None:
         # command would find the files present and decline to replace them.
         flag = " --force" if unusable else ""
         console.print(f"Next:  [bold]uv run strategylab fetch{flag}[/bold]")
-        console.print("       Downloads and caches price data. The one command using the network.")
+        console.print("       Downloads and caches price data. Uses the network, as `run` does.")
         return
 
     if searches == 0:
@@ -239,7 +239,7 @@ def fetch(
 ) -> None:
     """Download and cache price data for the protocol's research instrument.
 
-    The one command in this project that touches the network. Writes a parquet
+    One of two commands that touch the network - `run` is the other. Writes a parquet
     snapshot alongside its provenance - fetch timestamp, source, row count, and
     a content hash - because vendors revise history, and results are
     reproducible against the snapshot rather than against the vendor.
@@ -902,21 +902,27 @@ def run(
 ) -> None:
     """Run the paper-trading worker for ONE bar against the demo venue, then exit.
 
-    Scheduled once per session after the close rather than left running.
-    Reconciles against the venue, fetches the execution instrument's latest
-    bars (THE ONE OTHER COMMAND THAT USES THE NETWORK, besides fetch) and
-    appends them to the cache so live data accumulates into history, evaluates
-    the latest bar through the same core.evaluate the backtester uses, passes
-    the intent through the risk layer, writes ONE decision record to
-    state/decisions-live.jsonl, and then sends at most one market order.
+    Scheduled once per session after the close rather than left running. In
+    order: fetches the execution instrument's latest bars (THE ONE OTHER COMMAND
+    THAT USES THE NETWORK, besides fetch) and merges them into the cache - bars
+    already cached are KEPT and only genuinely new dates are added, so history
+    once written is never rewritten by a later fetch and `diff` replays what the
+    deciding run saw; reconciles against the venue; evaluates the latest bar
+    through the same core.evaluate the backtester uses; passes the intent
+    through the risk layer; writes ONE decision record to
+    state/decisions-live.jsonl; and then sends at most one market order.
 
     THE RECORD IS WRITTEN BEFORE THE ORDER IS SENT, so a venue failure never
     costs the log the decision that preceded it; the record says what the gate
     answered, and an order that failed is reported on the terminal and nowhere
     else. Live data never selects anything.
 
-    Refuses to start unless T212_ENVIRONMENT is `demo`. A live key is a
-    separate, later decision, and this command does not take it.
+    Refuses to start unless T212_ENVIRONMENT is `demo`. Nothing can tell a
+    demo KEY from a live one - the guard is on the environment string, and that
+    same string selects the base URL. A live key is a separate, later decision,
+    and this command does not take it. Optional: T212_TICKER, the venue's own
+    spelling of the execution instrument, applied on the way out and translated
+    back on the way in; unset, the protocol's symbol is sent as written.
     """
     protocol = _load_or_exit()
 
@@ -950,10 +956,14 @@ def run(
         fresh = source.fetch(ticker, today - timedelta(days=span), today)
         if is_cached(ticker, DATA_DIR):
             cached, _ = cache_read(ticker, DATA_DIR)
-            fresh = fresh.combine_first(cached).sort_index()
+            # The CACHE wins on any date both hold. A vendor revision inside the
+            # overlap is thereby not silently adopted, and what diff replays is
+            # what the deciding run saw. The sidecar's fetched_at is the time of
+            # this merge, not of every bar in it.
+            fresh = cached.combine_first(fresh).sort_index()
         validate_bars(fresh)
         entry = cache_write(fresh, ticker, DATA_DIR, source=source.name, fetched_at=now)
-    except DataQualityError as exc:
+    except (DataQualityError, OSError) as exc:
         err_console.print(f"[bold red]bars[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     bars = fresh
@@ -964,19 +974,25 @@ def run(
         raise typer.Exit(code=1)
     console.print(f"  cached {entry.rows} bars to {entry.path.as_posix()}")
 
+    venue_ticker = os.environ.get("T212_TICKER", "").strip()
+    symbol_map = {ticker: venue_ticker} if venue_ticker else None
     try:
-        venue = T212Venue(api_key, environment)
+        venue = T212Venue(api_key, environment, symbol_map=symbol_map)
         reconciled = venue.reconcile()
         balance = venue.get_balance()
-        positions = venue.get_positions()
-    except (T212Error, ValueError) as exc:
+        positions = list(reconciled.venue_positions)
+    except (T212Error, ValueError, OSError) as exc:
         err_console.print(f"[bold red]venue[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     for line in reconciled.discrepancies:
         console.print(f"  [yellow]reconciled[/yellow] {line}")
 
     session = load_session(DEFAULT_SESSION_PATH, today, balance.equity)
-    save_session(session, DEFAULT_SESSION_PATH)
+    try:
+        save_session(session, DEFAULT_SESSION_PATH)
+    except OSError as exc:
+        err_console.print(f"[bold red]session file[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
     state = portfolio_state(balance, positions, session)
 
     bar_stamp = bars.index[-1].to_pydatetime()
@@ -1000,9 +1016,11 @@ def run(
             positions,
             ticker,
             float(bars["close"].iloc[-1]),
-            client_ref=f"{ticker}-{bar_stamp:%Y%m%d}",
+            # Unique per intended order, as the interface asks: the bar alone
+            # repeats when the worker is invoked twice after one close.
+            client_ref=f"{ticker}-{bar_stamp:%Y%m%d}-{now:%H%M%S}",
         )
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         err_console.print(f"[bold red]decision[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
@@ -1047,9 +1065,11 @@ def diff(
     state/decisions-replay.jsonl (replaced each run), and reports every field on
     which the two disagree. Uses no network: the bars are what `run` cached.
 
-    Compares the strategy's decision - action, conditions, indicator values,
-    requested size - and NOT the risk fields, which differ by construction
-    because the replay does not run the gate. A divergence is a finding about
+    Compares the strategy's decision - parameters, action, conditions,
+    indicator values, requested size - and NOT the risk fields, which differ by
+    construction because the replay does not run the gate. A `params`
+    divergence on every bar means this command was given a different search
+    artifact than `run` was. A divergence is a finding about
     the simulator, not a failure; the exit code is zero either way.
     """
     protocol = _load_or_exit()
@@ -1073,8 +1093,12 @@ def diff(
     except (DataQualityError, ValueError) as exc:
         err_console.print(f"[bold red]replay[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
-    DEFAULT_REPLAY_LOG_PATH.unlink(missing_ok=True)
-    write_decisions(replayed, DEFAULT_REPLAY_LOG_PATH)
+    try:
+        DEFAULT_REPLAY_LOG_PATH.unlink(missing_ok=True)
+        written = write_decisions(replayed, DEFAULT_REPLAY_LOG_PATH)
+    except OSError as exc:
+        err_console.print(f"[bold red]replay log[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     report = compare(live, replayed)
     console.print(
@@ -1092,10 +1116,11 @@ def diff(
         console.print(table)
     for stamp in report.missing_in_replay:
         console.print(f"  [yellow]missing[/yellow] {stamp:%Y-%m-%d} is not in the cached bars")
-    console.print(
-        f"\nReplay written to {DEFAULT_REPLAY_LOG_PATH.as_posix()}. The risk fields are not "
-        "compared: the replay does not run the gate."
-    )
+    if written:
+        console.print(f"\nReplay written to {DEFAULT_REPLAY_LOG_PATH.as_posix()}.")
+    else:
+        console.print("\nNo bar could be replayed, so no replay log was written.")
+    console.print("The risk fields are not compared: the replay does not run the gate.")
 
 
 if __name__ == "__main__":

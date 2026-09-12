@@ -496,8 +496,10 @@ def is_cached(ticker: str, path: Path) -> bool:
 class YFinanceSource:
     """A :class:`PriceSource` backed by Yahoo Finance via ``yfinance``.
 
-    The only component in the project that touches the network, and it is
-    reached from exactly one command. No test may call it: the fetch path is to
+    The only component that fetches PRICES over the network, reached from two
+    commands - `fetch` for the research instrument and `run` for the execution
+    instrument's recent bars; the venue adapter is the other network user in
+    the project. No test may call it: the fetch path is to
     be tested against recorded fixtures instead, because a CI badge that goes
     red on a vendor rate limit is worse than no badge.
     """

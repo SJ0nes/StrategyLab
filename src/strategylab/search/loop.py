@@ -39,7 +39,7 @@ reported so a human can weigh it; ``select_candidate`` never sees it, so
 is deliberate and it is a limitation: a candidate can be nominated while sitting
 inside the noise distribution, and only a reader will notice.
 
-**It renders no report.** ``report/render.py`` is a stub. This loop writes JSON.
+**It renders no report.** ``report/render.py`` does that, from the JSON this loop writes.
 
 **It flags a degenerate plateau rather than rejecting it**, which is what
 ``CLAUDE.md`` specifies. ``degenerate_plateau`` is therefore the second

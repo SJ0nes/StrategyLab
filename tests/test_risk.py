@@ -19,9 +19,10 @@ percentages are hand-derived from the cash amounts beside them: a realised loss
 of one eighth of start-of-day equity is 12.5%, and 12.5 is what the assertion
 says.
 
-WHAT THESE TESTS DO NOT CLAIM. Nothing about live trading. No intent has been
-through this gate outside this file: `strategylab run` is a stub, and the
-backtester deliberately does not consult the risk layer.
+WHAT THESE TESTS DO NOT CLAIM. Nothing about live trading. The gate's one
+caller is `live/worker.py`, tested with literals in `tests/test_worker.py`;
+`strategylab run` has never been invoked against the venue, and the backtester
+deliberately does not consult the risk layer.
 """
 
 from __future__ import annotations

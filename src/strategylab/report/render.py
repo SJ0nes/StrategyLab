@@ -80,7 +80,7 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
       page reports where the candidate falls in it, but as a sentence and a
       percentile rather than a band drawn on the surface's own axis. A page
       whose search had no ceiling says that instead;
-    - fold results side by side - NOT MET, because ``validate/`` is a stub and
+    - fold results side by side - NOT MET: ``validate/`` is built, and its verdict is JSON, and
       no fold exists;
     - loading two result sets to compare runs - NOT MET.
 

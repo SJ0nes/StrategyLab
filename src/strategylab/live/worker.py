@@ -3,9 +3,10 @@
 ONE BAR PER INVOCATION. ``strategylab run`` is meant to be scheduled once per
 session after the close, not left running: it reconciles, evaluates the latest
 bar through the same :func:`strategylab.core.strategy.evaluate` the backtester
-uses, passes the intent through :func:`strategylab.risk.limits.check`, sends at
-most one order, writes one :class:`~strategylab.logging.decisions.DecisionRecord`,
-and exits. A worker that exits has no state to lose between bars except what it
+uses, passes the intent through :func:`strategylab.risk.limits.check`, writes one
+:class:`~strategylab.logging.decisions.DecisionRecord`, sends at most one order
+- in that order, so a venue failure never costs the log the decision - and
+exits. A worker that exits has no state to lose between bars except what it
 writes to disk, and everything it writes to disk is listed below.
 
 EVERYTHING WITH A CLOCK OR A SOCKET IS IN ``cli.py``. This module takes the
@@ -13,11 +14,12 @@ bars, the balance, the positions, the date and the time as arguments, so every
 function here is deterministic and ``tests/test_worker.py`` exercises it with
 none of those things attached.
 
-DISK STATE THE WORKER OWNS: ``state/session.json`` (the session open's equity,
-for the daily-loss limit), ``state/decisions-live.jsonl`` (the log), and the
-execution instrument's bars in ``data/``, appended so that live data accumulates
-into history as CLAUDE.md requires. ``state/positions.json`` belongs to the
-venue adapter.
+DISK STATE THIS MODULE'S CALLERS WRITE: ``state/session.json`` (the session
+open's equity, for the daily-loss limit), ``state/decisions-live.jsonl`` (the
+live log), ``state/decisions-replay.jsonl`` (what ``diff`` writes, replaced on
+every run), and the execution instrument's bars in ``data/``, merged so that
+live data accumulates into history as CLAUDE.md requires. ``state/positions.json``
+belongs to the venue adapter.
 
 THE REPLAY IS ``evaluate`` OVER THE SAME BARS, NOT THE ENGINE. A decision log
 records decisions, and the engine's decisions ARE ``evaluate``'s - the engine adds
@@ -51,8 +53,9 @@ DEFAULT_SESSION_PATH = Path("state/session.json")
 DEFAULT_LIVE_LOG_PATH = Path("state/decisions-live.jsonl")
 DEFAULT_REPLAY_LOG_PATH = Path("state/decisions-replay.jsonl")
 
-#: What the replay writes into the three risk fields it does not compute.
-REPLAY_VERDICT = Verdict.ALLOW.value
+#: What the replay writes into the risk fields it does not compute: this
+#: verdict, this reason, and an approved size equal to the requested one.
+REPLAY_VERDICT = Verdict.ALLOW
 REPLAY_REASON = "replay: the gate was not consulted, by design; see LIMITATIONS.md"
 
 #: Relative tolerance for comparing an indicator value across the two logs. An
@@ -62,8 +65,11 @@ REPLAY_REASON = "replay: the gate was not consulted, by design; see LIMITATIONS.
 VALUE_REL_TOL = 1e-9
 
 #: Fields the diff compares, in the order they are reported. The risk fields are
-#: deliberately absent.
+#: deliberately absent; ``params`` is deliberately present, because it is the one
+#: field the replay does not copy from the live record and so the one that can
+#: differ for a reason that is neither the simulator's nor the vendor's.
 COMPARED_FIELDS: tuple[str, ...] = (
+    "params",
     "action",
     "conditions_met",
     "conditions_failed",
@@ -88,7 +94,14 @@ class Session:
 
 
 def load_session(path: Path, today: date, equity: float) -> Session:
-    """Return today's session, starting a new one if the file is stale or absent.
+    """Return today's session, starting a new one if the file is stale, absent, or unreadable.
+
+    A malformed file, a missing key, or a non-finite stored open all start a
+    new session at current equity - which resets the daily-loss denominator, so
+    the reset is deliberate rather than silent: a figure that cannot be read is
+    not a figure to divide by. ``equity`` itself is not validated here; a
+    non-finite one is written and refused by the gate on the same run, and
+    replaced by the next run's finite one.
 
     THE FIRST OBSERVATION OF A DAY DEFINES ITS OPEN. A worker that first runs at
     the close records the close as the open, so on that day the mark-to-market
@@ -306,8 +319,15 @@ def replay(
     For each live record, ``evaluate`` is given the bars up to and including
     that record's bar - the same window the worker had - and the result is
     written as a ``backtest`` record with the risk fields set to
-    :data:`REPLAY_VERDICT` and :data:`REPLAY_REASON`. A live bar absent from
-    ``bars`` produces no replay record; :func:`compare` reports it.
+    :data:`REPLAY_VERDICT`, :data:`REPLAY_REASON`, and an approved size equal to
+    the requested one. A live bar absent from ``bars`` produces no replay
+    record; :func:`compare` reports it.
+
+    THE PARAMETERS ARE THE CALLER'S, NOT THE LIVE RECORD'S, and they are stamped
+    on every replay record so that :func:`compare` reports a mismatch as a
+    ``params`` divergence on every bar rather than as an unexplained storm of
+    action and value divergences - which is what a ``diff`` run against a
+    different search artifact than ``run`` used would otherwise produce.
 
     Args:
         definition: The parsed strategy.
@@ -332,7 +352,7 @@ def replay(
         window = bars.loc[:stamp]
         intent = evaluate(definition, window, params)
         verdict = RiskVerdict(
-            verdict=Verdict.ALLOW, reason=REPLAY_REASON, limited_size_pct=intent.size_pct
+            verdict=REPLAY_VERDICT, reason=REPLAY_REASON, limited_size_pct=intent.size_pct
         )
         replayed.append(
             record(
@@ -407,8 +427,14 @@ def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffR
 
     Compares :data:`COMPARED_FIELDS` and nothing else. ``recorded_at`` differs
     by construction and is itself a measurement; ``source`` differs by
-    definition; the three risk fields differ because the replay does not run
-    the gate.
+    definition; ``ticker``, ``protocol_version`` and ``schema_version`` are
+    copied into the replay and cannot differ; the three risk fields differ
+    because the replay does not run the gate.
+
+    ONE RECORD PER BAR ON EACH SIDE, THE LAST ONE WINNING. A worker invoked twice
+    after one close appends two live records for the same bar; the later one is
+    the one compared, and ``compared`` counts BARS, as documented. An earlier
+    version counted records.
 
     Args:
         live: The live log.
@@ -418,10 +444,11 @@ def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffR
         The report.
     """
     by_bar = {r.bar_timestamp: r for r in replayed}
+    latest_live = {r.bar_timestamp: r for r in live}
     divergences: list[Divergence] = []
     missing: list[datetime] = []
     compared = 0
-    for entry in sorted(live, key=lambda r: r.bar_timestamp):
+    for entry in sorted(latest_live.values(), key=lambda r: r.bar_timestamp):
         other = by_bar.get(entry.bar_timestamp)
         if other is None:
             missing.append(entry.bar_timestamp)
@@ -431,6 +458,8 @@ def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffR
             mine, theirs = getattr(entry, field), getattr(other, field)
             if field in ("indicator_values", "thresholds"):
                 differs = _values_differ(mine, theirs)
+            elif field == "params":
+                differs = mine != theirs
             elif field == "requested_size_pct":
                 differs = not math.isclose(mine, theirs, rel_tol=VALUE_REL_TOL, abs_tol=0.0)
             else:
@@ -462,4 +491,6 @@ def _render(value: object) -> str:
         return value.value
     if isinstance(value, tuple):
         return " AND ".join(value) or "-"
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in sorted(value.items())) or "-"
     return str(value)

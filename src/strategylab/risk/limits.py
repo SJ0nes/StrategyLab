@@ -236,7 +236,8 @@ class PortfolioState:
             "today" of ``realised_pnl_today`` or the "session open" of
             ``start_of_day_equity`` to a date, so this module cannot tell a stale
             state from a current one - the caller that builds the state owns that,
-            and no such caller exists yet. The field is carried because a verdict
+            and :func:`strategylab.live.worker.portfolio_state` stamps the session
+            date here without checking it. The field is carried because a verdict
             worth recording is a verdict with a date on it.
         equity: Total account value in account currency units.
         start_of_day_equity: Account value at the session open, in account

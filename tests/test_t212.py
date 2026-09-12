@@ -343,6 +343,34 @@ def test_a_corrupt_cache_is_treated_as_empty_and_overwritten(tmp_path: Path) -> 
     assert report.repaired is True
 
 
+def test_a_corrupt_cache_is_replaced_even_when_the_venue_is_flat(tmp_path: Path) -> None:
+    # Corrupt plus flat used to mean "empty and matched": nothing differed, so
+    # nothing was written, and the corrupt file stayed. Unreadable is now a
+    # discrepancy in its own right.
+    (tmp_path / "positions.json").write_text("{not json")
+    report = _venue(Recorder(_portfolio()), tmp_path).reconcile()
+    assert report.repaired is True
+    assert any("unreadable" in line for line in report.discrepancies)
+    assert json.loads((tmp_path / "positions.json").read_text()) == []
+
+
+def test_positions_come_back_under_the_protocols_symbol(tmp_path: Path) -> None:
+    # The map is applied on the way out AND reversed on the way in, so the
+    # worker's one-position rule compares like with like. Before the reverse
+    # map, a non-identity map made every held position invisible to it.
+    rec = Recorder(_portfolio(("VUAGl_EQ", 2.0), ("OTHER_EQ", 1.0)))
+    positions = _venue(rec, tmp_path, symbol_map={"VUAG.L": "VUAGl_EQ"}).get_positions()
+    assert [p.ticker for p in positions] == ["VUAG.L", "OTHER_EQ"]
+
+
+def test_the_key_is_masked_in_a_mistyped_payload(tmp_path: Path) -> None:
+    rec = Recorder({("GET", "/api/v0/equity/portfolio"): (200, [{"ticker": "X", "quantity": KEY}])})
+    with pytest.raises(T212Error) as info:
+        _venue(rec, tmp_path).get_positions()
+    assert KEY not in str(info.value)
+    assert info.value.__cause__ is None
+
+
 def test_reconcile_stamps_utc(tmp_path: Path) -> None:
     report = _venue(Recorder(_portfolio()), tmp_path).reconcile()
     assert report.checked_at.utcoffset() is not None

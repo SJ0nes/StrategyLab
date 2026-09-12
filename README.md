@@ -74,8 +74,10 @@ reports each field on which the two disagree — which tests the simulator, not
 the strategy. The venue adapter is tested through a mock transport, so what is
 proven is this side of the contract and not the vendor's: no request has ever
 reached Trading 212 from this code, the T212 ticker for the execution instrument
-is unverified, and the first real run is the operator's to make with a DEMO key.
-The command refuses to start with anything else.
+is unverified, and the first real run is the operator's to make with
+`T212_ENVIRONMENT=demo` and a demo key. The command refuses any other
+environment string; nothing can tell a demo key from a live one, so the string
+is what stands between paper and real money.
 
 | Built | Not built |
 |---|---|
@@ -98,7 +100,7 @@ The command refuses to start with anything else.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(untested)* | |
 
-**1482 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1487 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -176,23 +178,24 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1482 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1487 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1482 tests, none touching the network
+uv run pytest                   # 1487 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
 `status` reads the protocol and reports where the project is. It never changes
 anything, so it is safe to run at any time.
 
-Four further commands do the work. `fetch` is **the only command that touches
-the network**, so unlike the others it can fail for reasons outside this
-repository. `search` needs `fetch` to have run; `report` and `validate` need
-`search`:
+Six further commands do the work. `fetch` and `run` are **the two commands that
+touch the network**, so unlike the others they can fail for reasons outside
+this repository. `search` needs `fetch` to have run; `report` and `validate`
+need `search`; `run` needs a search artifact and a demo key in the environment;
+`diff` needs `run` to have written `state/decisions-live.jsonl`:
 
 ```bash
 uv run strategylab fetch                              # caches SPY, with provenance
@@ -200,6 +203,8 @@ uv run strategylab search configs/ma_crossover.yaml   # ~4 min; writes state/sea
 uv run strategylab search configs/ma_crossover.yaml --trials 100   # + noise ceiling; hours
 uv run strategylab report                             # renders those to reports/*.html
 uv run strategylab validate state/search-<stamp>.json # SPENDS A HELD-BACK READ
+uv run strategylab run state/search-<stamp>.json      # ONE bar against the DEMO venue; network
+uv run strategylab diff state/search-<stamp>.json     # live log vs replay; writes state/decisions-replay.jsonl
 ```
 
 `search` reads only 2005–2018, whatever the cache holds. `report` recomputes

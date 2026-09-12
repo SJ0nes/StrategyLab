@@ -46,6 +46,9 @@ DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 LIVE_BASE_URL = "https://live.trading212.com/api/v0"
 
 ACCOUNT_SUMMARY_MIN_INTERVAL_S: float = 5.0
+#: A fact about the venue with no reader here: nothing in this adapter calls a
+#: historical endpoint. Kept because the module docstring states the limit and a
+#: reader looking for the number should find it.
 HISTORICAL_MAX_REQUESTS_PER_MIN: int = 6
 
 #: Where the local positions cache lives, relative to the working directory.
@@ -75,16 +78,20 @@ class T212Venue:
     """A :class:`strategylab.execution.venue.Venue` backed by Trading 212.
 
     The demo and live environments differ ONLY in base URL, which is precisely
-    why the environment is read from configuration and never defaulted: a
-    single wrong string is the whole distance between paper and real money.
+    why the environment is read from configuration and never defaulted TO LIVE:
+    the default is demo, and a single wrong string is the whole distance
+    between paper and real money.
 
-    SYMBOLOGY IS THE CALLER'S. The protocol names its execution instrument in
-    vendor-neutral form (``VUAG.L``) and T212 names the same thing its own way;
-    ``symbol_map`` translates one to the other and defaults to the identity, so
-    an unmapped symbol is sent as written and refused by the venue rather than
-    silently traded as something else. The mapping for this project's
-    instrument is unverified: no test may call the instruments endpoint that
-    would confirm it, and ``LIMITATIONS.md`` says so.
+    SYMBOLOGY STOPS AT THIS CLASS. Everything above it - the protocol, the
+    worker, the decision log - speaks the protocol's symbol (``VUAG.L``); T212
+    names the same thing its own way. ``symbol_map`` translates on the way OUT
+    in :meth:`place_order` and BACK on the way in in :meth:`get_positions`, so
+    a position the venue reports under its own ticker is returned under the
+    protocol's, and the worker's one-position rule compares like with like. The
+    map defaults to the identity, so an unmapped symbol is sent as written and
+    refused by the venue rather than silently traded as something else. The
+    mapping for this project's instrument is unverified: no test may call the
+    instruments endpoint that would confirm it, and ``LIMITATIONS.md`` says so.
     """
 
     def __init__(
@@ -132,6 +139,7 @@ class T212Venue:
         self.base_url = _ENVIRONMENTS[environment]
         self._positions_path = positions_path
         self._symbol_map = dict(symbol_map or {})
+        self._reverse_map = {venue: ours for ours, venue in self._symbol_map.items()}
         self._clock = clock
         self._sleep = sleep
         self._last_summary_at: float | None = None
@@ -176,15 +184,21 @@ class T212Venue:
         try:
             response = self._client.request(method, path, **kwargs)
         except httpx.TimeoutException as exc:
+            # `from None` on purpose, here and below: the cause chain is printed
+            # by the default excepthook and the raw httpx exception is not masked,
+            # so a T212Error that escapes to a traceback would print it. The type
+            # name is kept in the message; the chain is not.
             raise T212Error(
                 self._mask(
-                    f"{method} {path} timed out after {self._client.timeout.read}s; NOT "
-                    "retried. If this was an order, query the venue's open orders before "
-                    "deciding whether it exists"
+                    f"{method} {path} timed out after {self._client.timeout.read}s "
+                    f"({type(exc).__name__}); NOT retried. If this was an order, query the "
+                    "venue's open orders before deciding whether it exists"
                 )
-            ) from exc
+            ) from None
         except httpx.HTTPError as exc:
-            raise T212Error(self._mask(f"{method} {path} failed: {exc}")) from exc
+            raise T212Error(
+                self._mask(f"{method} {path} failed: {type(exc).__name__}: {exc}")
+            ) from None
         if response.status_code // 100 != 2:
             raise T212Error(
                 self._mask(
@@ -195,10 +209,10 @@ class T212Venue:
             return None
         try:
             return response.json()
-        except ValueError as exc:
+        except ValueError:
             raise T212Error(
                 self._mask(f"{method} {path} returned a body that is not JSON")
-            ) from exc
+            ) from None
 
     def _ticker(self, symbol: str) -> str:
         """Translate a protocol symbol to the venue's ticker.
@@ -276,10 +290,13 @@ class T212Venue:
         """Return every position the venue reports holding.
 
         Returns:
-            The current positions, empty when flat. ``market_value`` is
+            The current positions, empty when flat, each ``ticker`` translated
+            BACK to the protocol's symbol where ``symbol_map`` knows it and left
+            as the venue's where it does not. ``market_value`` is
             ``quantity * currentPrice`` as the venue reports both, in the
             instrument's currency - which is the account currency only when the
-            two coincide, and this adapter does not convert.
+            two coincide, and this adapter does not convert. The interface
+            promises account currency; ``LIMITATIONS.md`` records the gap.
 
         Raises:
             T212Error: On any API failure, with the key masked, or on a payload
@@ -294,14 +311,16 @@ class T212Venue:
                 quantity = float(raw["quantity"])
                 positions.append(
                     Position(
-                        ticker=str(raw["ticker"]),
+                        ticker=self._reverse_map.get(str(raw["ticker"]), str(raw["ticker"])),
                         quantity=quantity,
                         average_price=float(raw["averagePrice"]),
                         market_value=quantity * float(raw["currentPrice"]),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:
-                raise T212Error(f"portfolio entry is missing or mistypes a field: {exc}") from exc
+                raise T212Error(
+                    self._mask(f"portfolio entry is missing or mistypes a field: {exc}")
+                ) from None
         return positions
 
     def get_balance(self) -> Balance:
@@ -338,30 +357,37 @@ class T212Venue:
                 equity=float(cash["total"]),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise T212Error(f"account cash payload is missing or mistypes a field: {exc}") from exc
+            raise T212Error(
+                self._mask(f"account cash payload is missing or mistypes a field: {exc}")
+            ) from None
 
-    def _read_local(self) -> tuple[Position, ...]:
-        """Read the local positions cache, empty if absent or unreadable.
-
-        Unreadable is treated as empty on purpose: the cache is about to be
-        overwritten by the venue's answer, and refusing to reconcile because the
-        cache is corrupt would leave it corrupt.
+    def _read_local(self) -> tuple[tuple[Position, ...], bool]:
+        """Read the local positions cache.
 
         Returns:
-            The cached positions.
+            The cached positions, and whether the file was UNREADABLE - as
+            opposed to absent, which is the normal first-run state. An
+            unreadable cache is reported as empty AND flagged, so that
+            :meth:`reconcile` rewrites it even when the venue turns out to be
+            flat; an earlier version treated corrupt as empty and left the
+            corrupt file on disk whenever nothing differed.
         """
+        if not self._positions_path.exists():
+            return (), False
         try:
             raw = json.loads(self._positions_path.read_text(encoding="utf-8"))
-            return tuple(Position(**entry) for entry in raw)
+            return tuple(Position(**entry) for entry in raw), False
         except (OSError, ValueError, TypeError):
-            return ()
+            return (), True
 
     def reconcile(self) -> ReconcileReport:
         """Ask T212 what it actually holds and repair local state to match.
 
         Runs on every startup. A discrepancy is a ticker held on one side and
         not the other, or held on both at different quantities. The venue's
-        answer is written to the cache whenever anything differed.
+        answer is written to the cache whenever anything differed, and also when
+        the cache could not be read - a corrupt file is a discrepancy in its own
+        right and is reported as one.
 
         Returns:
             What differed and whether local state was repaired.
@@ -371,7 +397,7 @@ class T212Venue:
             OSError: If the cache cannot be written.
         """
         venue = tuple(self.get_positions())
-        local = self._read_local()
+        local, unreadable = self._read_local()
         by_venue = {p.ticker: p for p in venue}
         by_local = {p.ticker: p for p in local}
         discrepancies = []
@@ -391,6 +417,10 @@ class T212Venue:
                     f"{ticker}: venue holds {held.quantity} units, local cache says "
                     f"{cached.quantity}"
                 )
+        if unreadable:
+            discrepancies.append(
+                f"{self._positions_path.as_posix()}: local cache was unreadable and is replaced"
+            )
         repaired = bool(discrepancies)
         if repaired:
             self._positions_path.parent.mkdir(parents=True, exist_ok=True)
