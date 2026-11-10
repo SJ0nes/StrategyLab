@@ -11,11 +11,9 @@ to the writer and not the reader fails rather than being silently dropped.
 default log path is a real location this project uses, and a test appending to
 an append-only file in it would leave records behind that no run produced.
 
-**What these tests cannot see.** Whether the emitters agree. The live worker
-and the replay emit a `DecisionRecord`; the backtester still writes its own
-seven-column frame - so "backtest and live emit the identical schema" is a
-property of a design and
-not yet of any code. `LIMITATIONS.md` says so.
+**What these tests cannot see.** Whether the emitters agree. The live worker,
+the replay and the backtester each emit a `DecisionRecord`; that the engine's
+log and the replay's agree is asserted in `tests/test_worker.py`, not here.
 """
 
 from __future__ import annotations

@@ -528,7 +528,8 @@ class YFinanceSource:
             :data:`REQUIRED_COLUMNS`.
 
         Raises:
-            DataQualityError: If the vendor returns no rows for the request.
+            DataQualityError: If the vendor returns no rows for the request, or
+                a frame missing one of :data:`REQUIRED_COLUMNS`.
         """
         import yfinance  # noqa: PLC0415 - imported here so no test can pull in the vendor
 

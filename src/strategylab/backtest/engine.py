@@ -340,13 +340,19 @@ def decision_records(
         ticker: The instrument the bars were of. A backtest result does not
             know, so the caller says.
         protocol_version: The protocol in force, recorded on every record.
-        recorded_at: Stamped on every record. Timezone-aware at UTC; passed in
-            rather than read from a clock, so the output is a function of the
-            arguments.
+        recorded_at: Stamped on every record. Expected timezone-aware at UTC,
+            and not checked here: ``write_decisions`` is what refuses a naive
+            stamp. Passed in rather than read from a clock, so the output is a
+            function of the arguments.
 
     Returns:
         The records. Empty only for a result with no evaluated bar, which
         :func:`run_backtest` never returns.
+
+    Raises:
+        ValueError: If ``result`` does not carry one intent per row of its
+            frame, as a ``BacktestResult`` built by hand without ``intents``
+            does not.
     """
     return [
         DecisionRecord(

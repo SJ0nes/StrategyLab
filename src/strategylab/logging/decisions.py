@@ -182,9 +182,10 @@ class DecisionRecord:
             imports it; the cost is a dependency from this schema onto the risk
             layer. That is a decision for whichever component first
             emits a record, because it is the one that will know whether the
-            coupling is worth it. Two components now emit records -
-            :mod:`strategylab.live.worker` and its replay - and neither took the
-            dependency, so the field is still validated as a string and ``source``
+            coupling is worth it. Three components now emit records -
+            :mod:`strategylab.live.worker`, its replay and
+            :func:`strategylab.backtest.engine.decision_records` - and none took
+            the dependency, so the field is still validated as a string and ``source``
             remains the only field here with a closed-set check.
         risk_reason: Why the risk layer answered as it did.
         params: The resolved parameters in force, so a record is readable

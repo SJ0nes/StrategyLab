@@ -77,12 +77,12 @@ max_position_pct: 95.0
 # Loss within one session, as a positive percentage of start-of-day equity, at
 # which sized intents are refused. Reached — not merely exceeded — is enough.
 #
-# IT DOES NOT LATCH, and "stops for the day" would be the wrong way to read it.
-# The gate is a pure function of the state it is handed: it refuses while the loss
-# still reads at or beyond this ceiling, and a later realised gain or a recovery in
-# equity re-permits a sized intent on the very next call. A limit that stayed
-# tripped until the session ended would need somewhere to remember it, and nothing
-# in this project holds session state yet. LIMITATIONS.md records the gap.
+# THE GATE DOES NOT REMEMBER; THE WORKER DOES. The gate is a pure function of the
+# state it is handed: on its own it refuses while the loss still reads at or beyond
+# this ceiling. The live worker's session file records that the limit was reached,
+# and hands that to the gate on every later run of the same day, so a recovery in
+# equity does not re-permit a sized intent until a new session starts.
+# LIMITATIONS.md records what can still clear it.
 # Two things can reach it, and both divide by start-of-day equity: a realised
 # loss, and total equity marked down from the session open. Either one stops any
 # intent that asks for NEW EXPOSURE. Neither stops an intent that asks for none,

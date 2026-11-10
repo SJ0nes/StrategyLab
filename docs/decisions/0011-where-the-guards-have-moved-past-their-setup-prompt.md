@@ -57,7 +57,7 @@ prompt asks for a scan for account-number-shaped strings. Run literally, that
 reports every ISO date in the repository and can never come back clean, and a
 gate that cannot go clean gets scrolled past. Each suppression is a named shape
 in the hook with the reason beside it, and the report prints how many matches
-were suppressed. The credential scan has no exemptions at all. Two were
+were suppressed. The credential scan exempts no matched shape. It does skip four whole files - the two rulebooks and the two hook scripts, which hold the patterns themselves - and prints them as skipped. Two were
 tried for a line that reads a key from the environment, and review showed each
 also hid a real key - one given as a fallback, one left in a trailing comment.
 The line was renamed at the source instead.

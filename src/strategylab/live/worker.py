@@ -113,7 +113,9 @@ def load_session(path: Path, today: date, equity: float) -> Session:
     non-finite stored open all start a new session at current equity - which
     resets the daily-loss denominator and the latch with it, so
     the reset is deliberate rather than silent: a figure that cannot be read is
-    not a figure to divide by. ``equity`` itself is not validated here; a
+    not a figure to divide by. The one exception runs the other way: a file that
+    is otherwise readable but whose latch is not a boolean is read as tripped.
+    ``equity`` itself is not validated here; a
     non-finite one is written and refused by the gate on the same run, and
     replaced by the next run's finite one.
 
@@ -230,7 +232,8 @@ def trip_if_reached(session: Session, state: PortfolioState, limits: RiskLimits)
     Raises:
         ValueError: Propagated from
             :func:`~strategylab.risk.limits.daily_loss_reached` for a session
-            open that is not positive and finite.
+            open that is not positive and finite. Not raised for a session
+            already tripped, which is returned without asking.
     """
     if session.daily_loss_tripped or not daily_loss_reached(state, limits):
         return session

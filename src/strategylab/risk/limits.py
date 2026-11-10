@@ -137,10 +137,11 @@ class RiskLimits:
             audit measured what it actually caps.
         max_daily_loss_pct: Loss within one session, as a positive percentage
             of starting-of-day equity, at which an intent carrying a size is
-            refused. NOT A LATCH: :func:`check` holds no state, so it refuses only
-            while the state it is handed still reads at or beyond this ceiling,
-            and a recovery re-permits. See :func:`check` for why that is a gap
-            rather than a design.
+            refused. :func:`check` holds no state, so on its own it refuses only
+            while the state it is handed still reads at or beyond this ceiling.
+            It latches when the caller makes it: a state handed in with
+            ``daily_loss_tripped`` set is refused after a recovery too. See
+            :func:`check`.
         max_open_exposure_pct: Largest total exposure across all positions as a
             percentage of account equity.
         kill_switch: When ``True``, every intent is rejected regardless of any
@@ -232,7 +233,7 @@ class PortfolioState:
 
     Attributes:
         as_of: Date the state describes. NOT READ BY :func:`check`, which
-            compares only the four cash amounts below. Nothing here ties the
+            reads only the four cash amounts and the latch below. Nothing here ties the
             "today" of ``realised_pnl_today`` or the "session open" of
             ``start_of_day_equity`` to a date, so this module cannot tell a stale
             state from a current one - the caller that builds the state owns that,
