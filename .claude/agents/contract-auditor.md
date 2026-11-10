@@ -52,9 +52,8 @@ and line. A finding you cannot quote is a lead: open the file, or drop it. Befor
 `docs/decisions/`. Drop a finding that only disputes a recorded decision. Report it if the code no
 longer does what the record says.
 
-Your reply IS the report. Return it complete and raw - not a summary, not a preamble. You hold
-no write tool on purpose; the session that dispatched you copies your reply verbatim into
-`state/audit/contract-auditor.txt`, and that file is what the operator reads.
+Your reply IS the report. Return it complete and raw - not a summary, not a preamble.
+You write it to disk yourself, as the last section says.
 
 ## Recording your findings
 
