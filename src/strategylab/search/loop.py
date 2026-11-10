@@ -125,7 +125,8 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: reproduced from the artifact that reports it. ``5`` adds
 #: ``config_content_hash``, without which a config edited after the search loads
 #: silently under the winner's parameters. ``6`` adds ``noise_gate`` and, inside
-#: ``noise_ceiling``, ``trial_best_sharpe``. ``7`` adds ``benchmark``.
+#: ``noise_ceiling``, ``trial_best_sharpe``. ``7`` adds ``benchmark``. ``8`` adds
+#: ``equity_curves``.
 #:
 #: THE BUMP TO 4 IS THE INSTRUCTIVE ONE. Those two fields were added under
 #: version 3 rather than bumping, so artifacts written hours apart both claimed
@@ -133,7 +134,7 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: exists to prevent, made in the same session as the comment saying so. Bump on
 #: every field change, including the ones that feel too small to matter.
 #: :func:`write_search_result` enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 7
+SEARCH_SCHEMA_VERSION = 8
 
 #: Where a search artifact is written, and - since ``validate/`` was built - the
 #: default directory for a validation artifact too. ``cli.status`` counts
@@ -165,6 +166,15 @@ _SIZE_PARAM = "position_size_pct"
 #: and if it ever is not, this constant starts affecting results and belongs in
 #: the protocol instead.
 STARTING_EQUITY = 10_000.0
+
+#: The most points any one equity curve is stored at.
+#:
+#: FOR DRAWING, NOT FOR MEASURING. Every metric in an artifact is computed on the
+#: full curve before it is thinned; nothing downstream may recompute a Sharpe or a
+#: drawdown from the stored points, which skip bars and are rounded. Ninety curves
+#: at every one of three and a half thousand bars is megabytes of JSON for a page
+#: that draws them a few hundred pixels wide.
+EQUITY_CURVE_MAX_POINTS = 400
 
 #: Neighbourhood half-width, in grid steps, used for both plateau scoring and
 #: the degeneracy check. A call-time default rather than pre-registered data;
@@ -329,6 +339,12 @@ class SearchResult:
             APPLIED: nothing is rejected for losing to it.
         benchmark_basis: ``"winner"`` or ``"window"``, saying which of those two
             spans ``benchmark`` covers.
+        closes: The instrument's closing prices over the window, by timestamp.
+            Kept so the curves can be drawn beside what holding did.
+        equity: Each cell's full equity curve, keyed by the cell's values in the
+            order the searched parameters are declared. A cell whose backtest
+            failed has no entry. In account currency units, starting at that
+            cell's first evaluable bar.
         costs: The broker parameters every cell was charged, every rate a
             FRACTION. Recorded for the same reason as the ceiling, and with
             more force: costs are the single largest determinant of every
@@ -376,6 +392,8 @@ class SearchResult:
     noise_gate: NoiseGate
     benchmark: BuyAndHold | None
     benchmark_basis: str
+    closes: pd.Series
+    equity: dict[tuple[int, ...], pd.Series]
     costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
@@ -1106,6 +1124,7 @@ def run_search(
     grid = expand_grid(definition.search)
 
     rows: list[dict[str, Any]] = []
+    curves: dict[tuple[int, ...], pd.Series] = {}
     rejections: list[Rejection] = []
     pending_records: list[tuple[dict[str, int], dict[str, float], str]] = []
     failed = 0
@@ -1140,6 +1159,7 @@ def run_search(
                 FINGERPRINT_COLUMN: trade_fingerprint(result.fills),
             }
         )
+        curves[tuple(cell.values())] = result.equity
 
     # EVERY CELL FAILING IS AN ERROR, NOT A FINDING. An earlier version of this
     # function returned an ordinary result reporting `failed_cells ==
@@ -1258,6 +1278,8 @@ def run_search(
         noise_gate=gate,
         benchmark=benchmark,
         benchmark_basis="window" if winner is None else "winner",
+        closes=window["close"],
+        equity=curves,
         costs=protocol.costs,
         results=scored,
         winner=winner,
@@ -1339,6 +1361,63 @@ def _ceiling_payload(
         # distribution and recount the gate rather than trust three percentiles.
         # An unscoreable trial is `null`, in its place, not dropped.
         "trial_best_sharpe": [_finite_or_none(float(value)) for value in ceiling],
+    }
+
+
+def sample_positions(length: int, max_points: int = EQUITY_CURVE_MAX_POINTS) -> list[int]:
+    """Choose which bars of a window a stored curve keeps.
+
+    Evenly spaced from the first bar, a whole number of bars apart, and ALWAYS
+    including the last bar: where a curve ends is the one point a reader checks
+    against the printed figures.
+
+    Args:
+        length: Number of bars in the window. Must be positive.
+        max_points: The most evenly spaced points to keep. The last bar may make
+            it one more.
+
+    Returns:
+        Ascending bar positions, starting at zero and ending at ``length - 1``.
+
+    Raises:
+        ValueError: If ``length`` or ``max_points`` is not positive.
+    """
+    if length <= 0 or max_points <= 0:
+        raise ValueError(
+            f"cannot sample {length} bar(s) at {max_points} point(s); both must be positive"
+        )
+    stride = -(-length // max_points)
+    positions = list(range(0, length, stride))
+    if positions[-1] != length - 1:
+        positions.append(length - 1)
+    return positions
+
+
+def _curves_payload(result: SearchResult, parameters: list[str]) -> dict[str, Any]:
+    """Render every cell's equity curve, thinned, on one shared set of dates.
+
+    Args:
+        result: The search to record.
+        parameters: The searched-parameter column names, in declaration order.
+
+    Returns:
+        The object described in :func:`write_search_result`.
+    """
+    positions = sample_positions(len(result.closes))
+    stamps = result.closes.index[positions]
+    cells: list[list[float | None] | None] = []
+    for row in result.results.to_dict(orient="records"):
+        curve = result.equity.get(tuple(int(row[name]) for name in parameters))
+        if curve is None:
+            cells.append(None)
+            continue
+        aligned = curve.reindex(stamps)
+        cells.append([None if pd.isna(value) else round(float(value), 2) for value in aligned])
+    return {
+        "max_points": EQUITY_CURVE_MAX_POINTS,
+        "dates": [pd.Timestamp(stamp).date().isoformat() for stamp in stamps],
+        "close": [round(float(value), 4) for value in result.closes.to_numpy()[positions]],
+        "cells": cells,
     }
 
 
@@ -1478,6 +1557,14 @@ def write_search_result(
     - ``rejections`` — a list of ``params``, ``reason``, ``detail``, in the
       order selection made them. A winner the noise gate refused is not among
       them; see :attr:`SearchResult.rejections`.
+    - ``equity_curves`` — FOR DRAWING ONLY. ``dates`` is a thinned run of the
+      window's dates, at most :data:`EQUITY_CURVE_MAX_POINTS` evenly spaced plus
+      the last; ``close`` is the instrument's close on each; ``cells`` holds one
+      list per grid cell IN THE SAME ORDER AS ``cells`` below, each the cell's
+      equity on those dates in account currency units rounded to two places,
+      ``null`` on dates before the cell's first evaluable bar. A cell that
+      failed is ``null`` in place of its list. No metric may be recomputed from
+      these: they skip bars.
     - ``cells`` — one object per grid cell, each with ``params``, ``sharpe``,
       ``max_drawdown_pct``, ``trade_count``, ``trade_fingerprint``,
       ``plateau_score`` and ``neighbour_count``. A metric that is not finite is
@@ -1578,6 +1665,7 @@ def write_search_result(
             {"params": rejection.cell, "reason": rejection.reason, "detail": rejection.detail}
             for rejection in result.rejections
         ],
+        "equity_curves": _curves_payload(result, parameters),
         "cells": [
             _cell_payload(row, parameters) for row in result.results.to_dict(orient="records")
         ],

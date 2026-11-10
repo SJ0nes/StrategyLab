@@ -86,7 +86,7 @@ is what stands between paper and real money.
 | Cost model — hand-verified arithmetic | A hundred-trial ceiling for the committed grid — the gate exists, and no search here has yet been run through it |
 | Strategy-config loader — closed schema, closed vocabulary, and a content hash a search records and a later reader checks | Fold panels in a report — a verdict is JSON, invisible in every figure |
 | The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | The backtester emitting the decision schema — the replay stands in for it |
-| Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
+| Strategy evaluation (`core.evaluate`), with the lookahead test | Click-through from a cell to its equity curve — the curves are now stored, thinned, and no page draws them yet |
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A daily-loss limit that latches — the gate is stateless, so a recovery re-permits |
 | Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(untested)* | |
 
-**1669 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1682 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -179,13 +179,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1669 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1682 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1669 tests, none touching the network
+uv run pytest                   # 1682 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

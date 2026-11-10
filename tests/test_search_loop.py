@@ -81,6 +81,7 @@ from strategylab.search.loop import (
     SearchResult,
     failed_fingerprint,
     run_search,
+    sample_positions,
     select_candidate,
     trade_fingerprint,
     write_search_result,
@@ -1316,8 +1317,9 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
     # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
     # briefly two different shapes, because those last fields went in without a
     # bump. 5 added `config_content_hash`. 6 added `noise_gate`, and
-    # `trial_best_sharpe` inside `noise_ceiling`. 7 added `benchmark`.
-    assert SEARCH_SCHEMA_VERSION == 7
+    # `trial_best_sharpe` inside `noise_ceiling`. 7 added `benchmark`. 8 added
+    # `equity_curves`.
+    assert SEARCH_SCHEMA_VERSION == 8
 
     documented = {
         "schema_version",
@@ -1343,6 +1345,7 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
         "benchmark",
         "winner",
         "rejections",
+        "equity_curves",
         "cells",
     }
     bars = pd.read_parquet(FIXTURE_BARS)
@@ -1688,6 +1691,135 @@ def test_the_artifact_carries_the_benchmark_and_what_it_covers(
         "sharpe": pytest.approx(result.benchmark.sharpe),
         "max_drawdown_pct": pytest.approx(result.benchmark.max_drawdown_pct),
     }
+
+
+# --------------------------------------------------------------------------
+# Equity curves: stored thinned, for drawing and for nothing else.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("length", "max_points", "expected"),
+    [
+        (10, 4, [0, 3, 6, 9]),
+        (11, 4, [0, 3, 6, 9, 10]),
+        (4, 4, [0, 1, 2, 3]),
+        (3, 400, [0, 1, 2]),
+        (1, 400, [0]),
+        (9, 2, [0, 5, 8]),
+    ],
+)
+def test_a_curve_is_thinned_evenly_and_always_keeps_its_last_bar(
+    length: int, max_points: int, expected: list[int]
+) -> None:
+    # The stride is the smallest whole number of bars that fits the limit: ten
+    # bars at four points is a stride of three, giving bars 0, 3, 6 and 9. Eleven
+    # bars at the same stride stops at 9, so bar 10 is added - the end of a curve
+    # is the point a reader checks against the printed figures.
+    assert sample_positions(length, max_points) == expected
+
+
+@pytest.mark.parametrize(("length", "max_points"), [(0, 4), (-1, 4), (10, 0)])
+def test_a_curve_with_nothing_to_sample_is_refused(length: int, max_points: int) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        sample_positions(length, max_points)
+
+
+def test_the_committed_window_is_stored_at_a_few_hundred_points() -> None:
+    # 3,523 in-sample bars at 400 points is a stride of nine: 392 points, and the
+    # last bar, 3522, is a multiple of nine away from none of them, so 393.
+    positions = sample_positions(3523)
+
+    assert positions[:3] == [0, 9, 18]
+    assert positions[-1] == 3522
+    assert len(positions) == 393
+
+
+def test_the_artifact_carries_every_cells_curve_on_one_set_of_dates(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    protocol = _wide_protocol()
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        protocol,
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    curves = payload["equity_curves"]
+
+    stamps = pd.DatetimeIndex(fixture_bars.index).normalize()
+    inside = fixture_bars[
+        (stamps >= pd.Timestamp(protocol.windows.in_sample.start))
+        & (stamps <= pd.Timestamp(protocol.windows.in_sample.end))
+    ]
+    # The fixture window is under 400 bars, so nothing is thinned away here.
+    assert len(inside) <= 400
+    assert curves["dates"] == [stamp.date().isoformat() for stamp in inside.index]
+    assert curves["close"] == pytest.approx([round(float(c), 4) for c in inside["close"]])
+    assert len(curves["cells"]) == len(payload["cells"]) == result.grid_size
+
+    # One cell, checked against the engine: same order as `cells`, null before
+    # its first evaluable bar, and its own equity rounded to pence after it.
+    for position in (0, len(payload["cells"]) - 1):
+        cell = payload["cells"][position]["params"]
+        equity = run_backtest(_small_strategy(), cell, inside, protocol.costs).equity
+        stored = curves["cells"][position]
+        lead = len(inside) - len(equity)
+        assert lead > 0
+        assert stored[:lead] == [None] * lead
+        # Exactly, not approximately: two places is the stored precision, and an
+        # approximate comparison would not notice the rounding being skipped.
+        assert stored[lead:] == [round(float(v), 2) for v in equity]
+        assert any(round(float(v), 2) != float(v) for v in equity), "nothing to round"
+
+
+def test_the_stored_curves_stop_at_the_end_of_the_window(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # A window that ends inside the fixture. The dates and closes stored for
+    # drawing are the window's, not the frame's, or the page would draw prices
+    # the search was never allowed to read.
+    protocol = _split_protocol()
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        protocol,
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    curves = json.loads(path.read_text(encoding="utf-8"))["equity_curves"]
+
+    assert len(fixture_bars) > result.bars_used
+    assert curves["dates"][-1] <= protocol.windows.in_sample.end.isoformat()
+    assert len(curves["dates"]) == len(curves["close"]) == result.bars_used
+
+
+def test_a_cell_that_failed_has_no_curve_rather_than_a_flat_one(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    result = run_search(
+        _mixed_failure_strategy(),
+        fixture_bars,
+        _protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert result.failed_cells > 0
+    for cell, curve in zip(payload["cells"], payload["equity_curves"]["cells"], strict=True):
+        assert (curve is None) == (cell["sharpe"] is None)
 
 
 # --------------------------------------------------------------------------
