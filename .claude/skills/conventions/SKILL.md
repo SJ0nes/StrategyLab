@@ -72,6 +72,15 @@ macOS user root, the Linux one, the Windows one under a drive letter - all embed
 and this repository will be read by strangers. Paths are relative to the repository root, or
 derived at runtime. The hygiene gate blocks the turn on any it finds.
 
+## Finishing a change
+
+**Say what was left.** If part of a change turned out to be blocked, finish the rest and state
+what was dropped and why. A silently narrowed change reads as a complete one.
+
+**Write each fact where it belongs.** What is always true goes in `CLAUDE.md`. What is true
+today goes in the README's *Current state*. Depth that only one kind of work needs goes in
+`docs/`. `CLAUDE.md` is read on every turn, so it carries no status snapshot.
+
 ## Experiments
 
 Anything experimental lives on a branch. `main` holds only work that is finished, tested, and

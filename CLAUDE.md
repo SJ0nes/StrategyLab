@@ -92,6 +92,9 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
 - **Ask before adding a dependency.** Name what it does and what it replaces.
 - **One component per commit**, with its tests, conventional message
   (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`).
+- **`validate` runs only from the main checkout.** `protocol.yaml` is tracked, so
+  a worktree holds its own `access_log.walk_forward_touches`, and a held-back read
+  spent there never reaches the counter on `main`.
 - **Tests accompany code.** Priority: the lookahead test, cost arithmetic, Sharpe
   and drawdown, venue implementations behaving identically, and a regression test
   that a known config produces a known equity curve.
@@ -110,6 +113,13 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
 - `data/`, `state/`, `*.log` gitignored — decision logs contain real trading
   activity. Commit small synthetic fixtures, never live output.
 - DEMO Trading 212 credentials only. A live key is a separate, later decision.
+- **Stage by name.** Never `git add -A` or `git add .`. Name the files the change
+  touched, so nothing else in the folder reaches a public history.
+- `.claude/hooks/check_secrets.py` refuses a commit carrying a credential. If it
+  fires, unstage the file and tell the operator. Never work around it.
+- **Run `/security-review` before committing** a change to `.claude/settings.json`,
+  to a hook, or to anything that makes a call leaving this machine
+  (`YFinanceSource.fetch`, the Trading 212 adapter).
 - **Pushing is manual.** Public git history is permanent. Run the pre-push audit,
   read it, then push by hand.
 
