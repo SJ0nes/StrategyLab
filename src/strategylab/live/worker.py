@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 
@@ -44,7 +44,14 @@ from strategylab.core.strategy import evaluate
 from strategylab.core.types import Action, Intent, Side, StrategyDef
 from strategylab.execution.venue import Balance, Order, OrderType, Position
 from strategylab.logging.decisions import SCHEMA_VERSION, DecisionRecord
-from strategylab.risk.limits import PortfolioState, RiskLimits, RiskVerdict, Verdict, check
+from strategylab.risk.limits import (
+    PortfolioState,
+    RiskLimits,
+    RiskVerdict,
+    Verdict,
+    check,
+    daily_loss_reached,
+)
 
 #: Where the session open is remembered, relative to the working directory.
 DEFAULT_SESSION_PATH = Path("state/session.json")
@@ -88,17 +95,23 @@ class Session:
         day: The session date.
         start_of_day_equity: Equity at the first observation of that day, in
             account currency units.
+        daily_loss_tripped: Whether the daily loss limit has been reached at any
+            run so far on that day. Once true it stays true until the day
+            changes, which is what makes the limit stop the day rather than
+            pause it.
     """
 
     day: date
     start_of_day_equity: float
+    daily_loss_tripped: bool = False
 
 
 def load_session(path: Path, today: date, equity: float) -> Session:
     """Return today's session, starting a new one if the file is stale, absent, or unreadable.
 
-    A malformed file, a missing key, or a non-finite stored open all start a
-    new session at current equity - which resets the daily-loss denominator, so
+    A malformed file, one that is not a JSON object, a missing key, or a
+    non-finite stored open all start a new session at current equity - which
+    resets the daily-loss denominator and the latch with it, so
     the reset is deliberate rather than silent: a figure that cannot be read is
     not a figure to divide by. ``equity`` itself is not validated here; a
     non-finite one is written and refused by the gate on the same run, and
@@ -119,7 +132,21 @@ def load_session(path: Path, today: date, equity: float) -> Session:
     """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        stored = Session(day=date.fromisoformat(raw["day"]), start_of_day_equity=float(raw["sod"]))
+        if not isinstance(raw, dict):
+            raise TypeError("the session file does not hold a JSON object")
+        # ABSENT IS UNTRIPPED: a file written before the latch existed has no
+        # such key. PRESENT AND NOT A BOOLEAN IS TRIPPED. The rest of the file
+        # reads, so the session stands; the one field nobody can vouch for is
+        # the latch, and treating a latch that might be set as clear is the
+        # unsafe direction.
+        tripped = raw.get("tripped", False)
+        if not isinstance(tripped, bool):
+            tripped = True
+        stored = Session(
+            day=date.fromisoformat(raw["day"]),
+            start_of_day_equity=float(raw["sod"]),
+            daily_loss_tripped=tripped,
+        )
         if stored.day == today and math.isfinite(stored.start_of_day_equity):
             return stored
     except (OSError, ValueError, KeyError, TypeError):
@@ -142,7 +169,14 @@ def save_session(session: Session, path: Path) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"day": session.day.isoformat(), "sod": session.start_of_day_equity}) + "\n",
+        json.dumps(
+            {
+                "day": session.day.isoformat(),
+                "sod": session.start_of_day_equity,
+                "tripped": session.daily_loss_tripped,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -173,7 +207,34 @@ def portfolio_state(
         start_of_day_equity=session.start_of_day_equity,
         open_exposure=exposure,
         realised_pnl_today=0.0,
+        daily_loss_tripped=session.daily_loss_tripped,
     )
+
+
+def trip_if_reached(session: Session, state: PortfolioState, limits: RiskLimits) -> Session:
+    """Return the session with its daily-loss latch set if the limit is reached now.
+
+    Asked on EVERY run, before the strategy is consulted, so that a limit
+    reached on a bar where the strategy asks for nothing is still remembered on
+    the next bar where it asks for something. A latch already set is never
+    cleared here; only a new day clears it, by starting a new session.
+
+    Args:
+        session: Today's session.
+        state: The account as the venue reports it.
+        limits: The risk limits.
+
+    Returns:
+        ``session`` unchanged, or a copy with ``daily_loss_tripped`` true.
+
+    Raises:
+        ValueError: Propagated from
+            :func:`~strategylab.risk.limits.daily_loss_reached` for a session
+            open that is not positive and finite.
+    """
+    if session.daily_loss_tripped or not daily_loss_reached(state, limits):
+        return session
+    return replace(session, daily_loss_tripped=True)
 
 
 def decide(

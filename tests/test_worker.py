@@ -7,6 +7,7 @@ them directly - which is the point of keeping the worker pure.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -28,9 +29,10 @@ from strategylab.live.worker import (
     record,
     replay,
     save_session,
+    trip_if_reached,
 )
 from strategylab.logging.decisions import DecisionRecord, read_decisions, write_decisions
-from strategylab.risk.limits import RiskLimits, RiskVerdict, Verdict
+from strategylab.risk.limits import RiskLimits, RiskVerdict, Verdict, check
 
 PARAMS = {"fast": 3, "slow": 5}
 TICKER = "VUAG.L"
@@ -408,3 +410,128 @@ def test_a_tiny_value_difference_within_tolerance_is_not_a_divergence() -> None:
     assert "indicator_values" in fields
     assert fields <= {"indicator_values", "conditions_met", "conditions_failed"}
     assert report.diverging_bars == report.compared
+
+
+# ---------------------------------------------------------------------------
+# the daily-loss latch
+# ---------------------------------------------------------------------------
+#
+# The committed limit is 3%. On a session open of 10,000 that is 300: equity of
+# 9,700 has reached it and 9,701 has not.
+
+
+def _limits_3pct() -> RiskLimits:
+    return RiskLimits(
+        max_position_pct=95.0, max_daily_loss_pct=3.0, max_open_exposure_pct=95.0, kill_switch=False
+    )
+
+
+def test_a_session_starts_untripped() -> None:
+    assert _session().daily_loss_tripped is False
+
+
+@pytest.mark.parametrize(("equity", "tripped"), [(9_700.0, True), (9_701.0, False)])
+def test_the_latch_sets_when_the_account_reaches_the_limit(equity: float, tripped: bool) -> None:
+    session = _session(10_000.0)
+    state = portfolio_state(_balance(equity=equity), [], session)
+
+    assert trip_if_reached(session, state, _limits_3pct()).daily_loss_tripped is tripped
+
+
+def test_the_latch_is_not_cleared_by_a_recovery() -> None:
+    tripped = dataclasses.replace(_session(10_000.0), daily_loss_tripped=True)
+    recovered = portfolio_state(_balance(equity=10_500.0), [], tripped)
+
+    assert trip_if_reached(tripped, recovered, _limits_3pct()) == tripped
+
+
+def test_a_tripped_session_reaches_the_gate_as_a_tripped_state() -> None:
+    tripped = dataclasses.replace(_session(10_000.0), daily_loss_tripped=True)
+
+    assert portfolio_state(_balance(), [], tripped).daily_loss_tripped is True
+    assert portfolio_state(_balance(), [], _session()).daily_loss_tripped is False
+
+
+def test_the_latch_survives_a_restart_on_the_same_day(tmp_path: Path) -> None:
+    path = tmp_path / "s.json"
+    save_session(dataclasses.replace(_session(10_000.0), daily_loss_tripped=True), path)
+
+    # A later run the same day, with the account back above its open.
+    reloaded = load_session(path, date(2026, 9, 12), 10_500.0)
+
+    assert reloaded.daily_loss_tripped is True
+    assert reloaded.start_of_day_equity == 10_000.0
+
+
+def test_a_new_day_starts_untripped(tmp_path: Path) -> None:
+    path = tmp_path / "s.json"
+    save_session(dataclasses.replace(_session(10_000.0), daily_loss_tripped=True), path)
+
+    assert load_session(path, date(2026, 9, 13), 9_000.0).daily_loss_tripped is False
+
+
+def test_a_session_file_written_before_the_latch_existed_reads_as_untripped(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"day": "2026-09-12", "sod": 10_000.0}), encoding="utf-8")
+
+    session = load_session(path, date(2026, 9, 12), 9_000.0)
+
+    assert session == Session(day=date(2026, 9, 12), start_of_day_equity=10_000.0)
+
+
+@pytest.mark.parametrize("flag", ["true", "false", 1, 0, None, [True]])
+def test_a_latch_that_is_not_a_boolean_is_read_as_set(tmp_path: Path, flag: object) -> None:
+    # FAILS CLOSED. The rest of the file is readable, so the session open is
+    # kept; the one field nobody can vouch for is the latch, and a latch that
+    # might be set is treated as set. Reading it as an unreadable file instead
+    # would start a new session and clear it, which is the unsafe direction -
+    # an earlier version did exactly that, and a review caught it.
+    path = tmp_path / "s.json"
+    path.write_text(
+        json.dumps({"day": "2026-09-12", "sod": 10_000.0, "tripped": flag}), encoding="utf-8"
+    )
+
+    session = load_session(path, date(2026, 9, 12), 9_000.0)
+
+    assert session == Session(
+        day=date(2026, 9, 12), start_of_day_equity=10_000.0, daily_loss_tripped=True
+    )
+
+
+@pytest.mark.parametrize("content", ["[1, 2]", '"a string"', "3", "null", "true"])
+def test_a_session_file_that_is_not_an_object_starts_a_new_session(
+    tmp_path: Path, content: str
+) -> None:
+    # Valid JSON, wrong shape. It must be read as unreadable like any other
+    # malformed file - not raise, which would take the worker down.
+    path = tmp_path / "s.json"
+    path.write_text(content, encoding="utf-8")
+
+    session = load_session(path, date(2026, 9, 12), 9_000.0)
+
+    assert session == Session(day=date(2026, 9, 12), start_of_day_equity=9_000.0)
+
+
+def test_a_limit_reached_on_a_bar_that_asked_for_nothing_still_refuses_the_next_entry() -> None:
+    """The whole reason the latch is asked on every run and not only inside the gate.
+
+    The gate looks at the loss only when an intent carries a size. A limit
+    reached while the strategy says "hold" would never be seen by it, and an
+    entry after the account recovered would go through.
+    """
+    limits = _limits_3pct()
+    session = _session(10_000.0)
+
+    # Run one: down 3.5%, and nothing is being asked for.
+    down = portfolio_state(_balance(equity=9_650.0), [], session)
+    session = trip_if_reached(session, down, limits)
+
+    # Run two, same day: back at the open, and the strategy wants in.
+    recovered = portfolio_state(_balance(equity=10_000.0), [], session)
+    entry = Intent(action=Action.ENTER_LONG, size_pct=95.0, conditions_met=("c",))
+    verdict = check(entry, recovered, limits)
+
+    assert verdict.verdict is Verdict.REJECT
+    assert "earlier in this session" in verdict.reason

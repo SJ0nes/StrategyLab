@@ -27,6 +27,7 @@ deliberately does not consult the risk layer.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from datetime import date
@@ -41,6 +42,7 @@ from strategylab.risk.limits import (
     RiskLimits,
     Verdict,
     check,
+    daily_loss_reached,
     load_limits,
 )
 
@@ -110,6 +112,7 @@ def _state(
     start_of_day_equity: float | None = None,
     open_exposure: float = 0.0,
     realised_pnl_today: float = 0.0,
+    daily_loss_tripped: bool = False,
 ) -> PortfolioState:
     """An account state, flat and unchanged on the day unless told otherwise.
 
@@ -122,6 +125,7 @@ def _state(
         start_of_day_equity=equity if start_of_day_equity is None else start_of_day_equity,
         open_exposure=open_exposure,
         realised_pnl_today=realised_pnl_today,
+        daily_loss_tripped=daily_loss_tripped,
     )
 
 
@@ -1117,3 +1121,105 @@ def test_the_verdict_vocabulary_is_closed() -> None:
     # logging/decisions.py records `risk_verdict` as this enum's string value, so
     # these two strings are part of the decision log's schema.
     assert {member.value for member in Verdict} == {"allow", "reject"}
+
+
+# --------------------------------------------------------------------------
+# The latch: a limit reached earlier in the session stays reached.
+# --------------------------------------------------------------------------
+#
+# EVERY FIGURE IS AN EIGHTH OR A SIXTEENTH of the session open, so the
+# percentages are exact in binary and the same at every account size: an eighth
+# is 12.5% and a sixteenth is 6.25%. Against a limit of 12.5%, an eighth is
+# reached - the comparison is inclusive - and a sixteenth is not.
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_a_mark_down_of_exactly_the_limit_is_reached_and_half_of_it_is_not(equity: float) -> None:
+    limits = _limits(max_daily_loss_pct=12.5)
+
+    at_the_limit = _state(equity - equity / 8, start_of_day_equity=equity)
+    half_way = _state(equity - equity / 16, start_of_day_equity=equity)
+
+    assert daily_loss_reached(at_the_limit, limits) is True
+    assert daily_loss_reached(half_way, limits) is False
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_a_realised_loss_of_exactly_the_limit_is_reached_and_half_of_it_is_not(
+    equity: float,
+) -> None:
+    limits = _limits(max_daily_loss_pct=12.5)
+
+    assert daily_loss_reached(_state(equity, realised_pnl_today=-equity / 8), limits) is True
+    assert daily_loss_reached(_state(equity, realised_pnl_today=-equity / 16), limits) is False
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_an_account_that_is_ahead_has_reached_nothing(equity: float) -> None:
+    ahead = _state(equity + equity / 8, start_of_day_equity=equity, realised_pnl_today=equity / 8)
+
+    assert daily_loss_reached(ahead, _limits(max_daily_loss_pct=12.5)) is False
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_whether_the_limit_is_reached_now_ignores_whether_it_was_before(equity: float) -> None:
+    # It reports where the account stands. Remembering is the caller's job, and
+    # an answer that echoed the latch back could never be used to set it.
+    recovered = _state(equity, daily_loss_tripped=True)
+
+    assert daily_loss_reached(recovered, _limits(max_daily_loss_pct=12.5)) is False
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_a_tripped_limit_refuses_a_sized_intent_on_an_account_that_has_recovered(
+    equity: float,
+) -> None:
+    limits = _limits(max_daily_loss_pct=12.5)
+    # Back at the session open with nothing realised: neither route is anywhere
+    # near the limit now.
+    untripped = check(_enter(95.0), _state(equity), limits)
+    tripped = check(_enter(95.0), _state(equity, daily_loss_tripped=True), limits)
+
+    assert untripped.verdict is Verdict.ALLOW, "the control: without the latch this is allowed"
+    assert tripped.verdict is Verdict.REJECT
+    assert tripped.limited_size_pct == 0.0
+    assert "earlier in this session" in tripped.reason
+
+
+@pytest.mark.parametrize("equity", EQUITIES)
+def test_a_tripped_limit_still_lets_an_exit_through(equity: float) -> None:
+    # The latch is a limit on NEW exposure. Blocking the exit would forbid the
+    # one action that stops the loss the limit is measuring.
+    verdict = check(_exit_long(), _state(equity, daily_loss_tripped=True), _limits())
+
+    assert verdict.verdict is Verdict.ALLOW
+    assert verdict.limited_size_pct == 0.0
+
+
+def test_the_kill_switch_is_named_before_a_tripped_limit() -> None:
+    verdict = check(
+        _enter(95.0), _state(10_000.0, daily_loss_tripped=True), _limits(kill_switch=True)
+    )
+
+    assert verdict.verdict is Verdict.REJECT
+    assert "kill switch" in verdict.reason
+
+
+def test_a_state_is_untripped_unless_somebody_says_otherwise() -> None:
+    assert _state(10_000.0).daily_loss_tripped is False
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, math.nan, math.inf])
+def test_asking_whether_the_limit_is_reached_needs_a_session_open_to_divide_by(
+    bad: float,
+) -> None:
+    with pytest.raises(ValueError, match="start_of_day_equity"):
+        daily_loss_reached(_state(10_000.0, start_of_day_equity=bad), _limits())
+
+
+@pytest.mark.parametrize("field", ["equity", "realised_pnl_today"])
+def test_a_loss_that_cannot_be_read_has_not_been_shown_to_be_reached(field: str) -> None:
+    state = _state(10_000.0)
+    unreadable = dataclasses.replace(state, **{field: math.nan})
+
+    assert daily_loss_reached(unreadable, _limits()) is False

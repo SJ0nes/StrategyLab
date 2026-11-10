@@ -245,6 +245,15 @@ class PortfolioState:
         open_exposure: Total value of open positions in account currency units.
         realised_pnl_today: Realised profit and loss so far today, in account
             currency units. Negative when losing.
+        daily_loss_tripped: Whether the daily loss limit was reached at any
+            earlier point in this session. :func:`check` refuses a sized intent
+            while this is set, however far the account has recovered since. THE
+            CALLER REMEMBERS IT, not this module: :func:`check` is still a pure
+            function of what it is handed, and
+            :func:`strategylab.live.worker.trip_if_reached` is what sets this
+            from :func:`daily_loss_reached` and keeps it in the session file.
+            False by default, which is an account that has not reached the
+            limit today - and also one whose caller never looked.
     """
 
     as_of: date
@@ -252,6 +261,7 @@ class PortfolioState:
     start_of_day_equity: float
     open_exposure: float
     realised_pnl_today: float
+    daily_loss_tripped: bool = False
 
 
 @dataclass(frozen=True)
@@ -516,6 +526,60 @@ def _reject(reason: str) -> RiskVerdict:
     return RiskVerdict(verdict=Verdict.REJECT, reason=reason, limited_size_pct=0.0)
 
 
+def _loss_routes(state: PortfolioState) -> tuple[float, float]:
+    """Return the day's loss by its two routes, each a PERCENTAGE of the session open.
+
+    Args:
+        state: The account. ``start_of_day_equity`` must already be known to be
+            positive and finite; the caller checks.
+
+    Returns:
+        The realised loss and the mark-down from the session open, in that
+        order, each as a positive percentage when the account is losing and a
+        negative one when it is ahead. Both divide by ``start_of_day_equity``.
+    """
+    realised = -state.realised_pnl_today / state.start_of_day_equity * PERCENT_PER_UNIT
+    marked = (
+        (state.start_of_day_equity - state.equity) / state.start_of_day_equity * PERCENT_PER_UNIT
+    )
+    return realised, marked
+
+
+def daily_loss_reached(state: PortfolioState, limits: RiskLimits) -> bool:
+    """Say whether the account is at or past the daily loss limit right now.
+
+    The same two routes and the same inclusive comparison :func:`check` applies,
+    asked without an intent. It exists so a caller can find out on EVERY run,
+    not only on the runs where the strategy happens to ask for a size - a limit
+    reached on a day the strategy said "hold" is still reached.
+
+    Args:
+        state: The account. ``daily_loss_tripped`` is NOT consulted: this
+            reports where the account stands now, and remembering is the
+            caller's job.
+        limits: The hard limits, as percentages.
+
+    Returns:
+        True when either route is at or past ``max_daily_loss_pct``. False when
+        the figure behind a route is not finite, because a loss that cannot be
+        read has not been shown to be reached; :func:`check` refuses a sized
+        intent on such a state by its own rule.
+
+    Raises:
+        ValueError: If ``state.start_of_day_equity`` is not positive and finite,
+            on the same terms as :func:`check`.
+    """
+    if not math.isfinite(state.start_of_day_equity) or state.start_of_day_equity <= 0:
+        raise ValueError(
+            "start_of_day_equity must be a positive, finite amount in account currency units, "
+            f"got {state.start_of_day_equity}; it is the denominator of the daily loss limit"
+        )
+    realised, marked = _loss_routes(state)
+    return any(
+        math.isfinite(route) and route >= limits.max_daily_loss_pct for route in (realised, marked)
+    )
+
+
 def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerdict:
     """Decide whether an intent may proceed, and at what size.
 
@@ -569,16 +633,18 @@ def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerd
     ceiling refuses an intent carrying a size, and reaching it is enough: the
     comparison is inclusive.
 
-    THE DAILY LOSS LIMIT DOES NOT LATCH, AND THE NAME SUGGESTS IT DOES. This
-    function is pure in ``(intent, state, limits)``: it holds no flag, remembers no
-    previous verdict, and recomputes both routes from the state it is handed. A
-    worker refused at a realised 12.5% that then books a gain back to 1%, or whose
-    equity recovers to the session open, is permitted a sized intent on the very
-    next call. A limit that stayed tripped until the session ended would need
-    somewhere to remember being tripped, and nothing in this project holds session
-    state - which is the same absence that makes ``as_of`` unread. Stated here
-    rather than in ``LIMITATIONS.md`` alone because the phrase "stops for the day"
-    appeared in four places in this module and was wrong in all four.
+    THE DAILY LOSS LIMIT LATCHES ONLY IF THE CALLER MAKES IT. This function is
+    pure in ``(intent, state, limits)``: it holds no flag and remembers no
+    previous verdict. What it does is honour one it is handed -
+    ``state.daily_loss_tripped`` refuses a sized intent on an account that has
+    since recovered to the session open. Setting that field is the caller's
+    work: the live worker asks :func:`daily_loss_reached` on every run and keeps
+    the answer in its session file, so a limit reached this morning still holds
+    this afternoon. A caller that never sets the field gets the old behaviour - a
+    worker refused at a realised 12.5% that books a gain back to 1% is permitted
+    a sized intent on the very next call - and nothing here can tell which kind
+    of caller it has. It lasts a SESSION, not longer: a new day is a new session
+    with a new open, and the limit is a daily one.
 
     THE TWO CEILINGS ARE INCLUSIVE IN OPPOSITE DIRECTIONS, which is coherent but
     has to be said. Reaching ``max_daily_loss_pct`` REJECTS. Reaching
@@ -686,16 +752,20 @@ def check(intent: Intent, state: PortfolioState, limits: RiskLimits) -> RiskVerd
         )
         permitted = limits.max_position_pct
 
-    realised_loss_pct = -state.realised_pnl_today / state.start_of_day_equity * PERCENT_PER_UNIT
+    if state.daily_loss_tripped:
+        return _reject(
+            f"max_daily_loss_pct {limits.max_daily_loss_pct:g} was reached earlier in this "
+            "session and stays reached until the session ends, whatever the account has "
+            "recovered to since. No intent carrying a size is permitted; one asking for none "
+            "still is"
+        )
+    realised_loss_pct, marked_loss_pct = _loss_routes(state)
     if realised_loss_pct >= limits.max_daily_loss_pct:
         return _reject(
             f"max_daily_loss_pct {limits.max_daily_loss_pct:g} reached: realised loss today is "
             f"{realised_loss_pct:.4g}% of start-of-day equity. No intent carrying a size is "
             "permitted while that holds; one asking for none still is"
         )
-    marked_loss_pct = (
-        (state.start_of_day_equity - state.equity) / state.start_of_day_equity * PERCENT_PER_UNIT
-    )
     if marked_loss_pct >= limits.max_daily_loss_pct:
         return _reject(
             f"max_daily_loss_pct {limits.max_daily_loss_pct:g} reached: equity is "

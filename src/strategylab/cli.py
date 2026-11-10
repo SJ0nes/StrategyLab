@@ -41,6 +41,7 @@ from strategylab.live.worker import (
     record,
     replay,
     save_session,
+    trip_if_reached,
 )
 from strategylab.logging.decisions import read_decisions, write_decision, write_decisions
 from strategylab.protocol import Protocol, ProtocolError, load_protocol
@@ -1097,6 +1098,22 @@ def run(
         err_console.print(f"[bold red]session file[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     state = portfolio_state(balance, positions, session)
+    # THE LATCH IS SET AND SAVED BEFORE THE STRATEGY IS ASKED ANYTHING. A limit
+    # reached on a bar where the strategy says "hold" must still be remembered
+    # on a later bar where it says "enter", and a run that dies between here and
+    # the order must not forget it.
+    try:
+        latched = trip_if_reached(session, state, limits)
+        if latched != session:
+            save_session(latched, DEFAULT_SESSION_PATH)
+            console.print(
+                "  [yellow]daily loss limit reached[/yellow] - no sized order for the rest of "
+                "this session"
+            )
+        state = portfolio_state(balance, positions, latched)
+    except (ValueError, OSError) as exc:
+        err_console.print(f"[bold red]session[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     bar_stamp = bars.index[-1].to_pydatetime()
     try:

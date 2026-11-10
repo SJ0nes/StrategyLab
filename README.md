@@ -88,7 +88,7 @@ is what stands between paper and real money.
 | The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | The backtester emitting the decision schema — the replay stands in for it |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | A test that opens the report in a browser — the click-through script was checked by hand, in a screenshot |
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
-| Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A daily-loss limit that latches — the gate is stateless, so a recovery re-permits |
+| Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A latch that survives its own file — the daily-loss limit now holds for the session, and deleting `state/session.json` clears it |
 | Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
 | The graveyard — append-only JSON Lines, closed reason vocabulary | |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 
-**1824 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1876 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -108,8 +108,9 @@ loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log, the risk layer, the Trading 212 adapter, the live
 worker, the command-line wiring and the commit-time credential scan in
 `.claude/hooks/` — twenty-two areas, one per test file. 42 of the 124 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
-486 of them are the risk layer's, which is a statement about parameterisation
-rather than about size. 316 of the 486 are the same assertions repeated at four
+518 of them are the risk layer's, which is a statement about parameterisation
+rather than about size. Thirty-two more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and four a returned value, one of them a rejection from `check`. Of the 486 before
+that, 316 are the same assertions repeated at four
 account equities, because at an equity of 100 a cash exposure and its percentage
 of equity are the same number and an implementation that never divided would pass.
 `test_the_committed_daily_loss_ceiling_binds` deliberately runs at one account
@@ -182,13 +183,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1824 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1876 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1824 tests, none touching the network
+uv run pytest                   # 1876 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

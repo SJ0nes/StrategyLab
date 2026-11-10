@@ -228,16 +228,17 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1824 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1876 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring and the
 commit-time credential scan — twenty-two areas, one per test file.
-486 of the 1824 are the risk layer's,
-and that is a statement about parameterisation rather than about importance. 316
-of those 486 are assertions repeated at four account equities, because at an
+518 of the 1876 are the risk layer's,
+and that is a statement about parameterisation rather than about importance.
+Thirty-two more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and four a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
+that. 316 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
 `test_the_committed_daily_loss_ceiling_binds` runs at one account size instead,
 because bracketing the shipped 3% ceiling wants round cash amounts rather than the
@@ -897,10 +898,15 @@ decision record until it has been read beside the venue's own account page.
   taken before the worker ran is invisible to the daily-loss limit until the next
   day's open resets it. A worker restarted mid-session keeps the file's figure,
   which is the right behaviour; the gap is at the first run.
-- **The daily-loss limit does not latch.** The gate is a pure function of the
-  state it is handed, and the worker runs once per bar and exits, so a refusal
-  today and a recovery tomorrow morning is an allowance tomorrow. Nothing holds
-  the flag that "stops for the day" would need.
+- **The daily-loss limit latches for the session, and the latch lives in a
+  file.** The worker asks on every run whether the limit is reached, remembers a
+  yes in `state/session.json`, and hands it to the gate, which then refuses any
+  sized intent for the rest of that day whatever the account recovers to
+  (`docs/decisions/0013`). A new day clears it, which is the intent: the limit
+  is daily. What is not intended is that an unreadable or deleted session file
+  clears it too, and nothing detects that. The command wiring that sets and
+  saves the latch is past the point `strategylab run` talks to the venue, so no
+  test reaches it.
 - **`diff` compares seven fields and deliberately not the three risk fields.** The
   replay does not run the gate, so `risk_verdict`, `risk_reason` and
   `approved_size_pct` differ by construction and comparing them would report the
@@ -940,7 +946,7 @@ decision record until it has been read beside the venue's own account page.
 
 **The risk layer is built, and its one caller has never run.** All three parts
 `CLAUDE.md` demands exist: its own module, its own config file
-(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 486 of
+(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 518 of
 them). `live/worker.py` is its caller and the backtester deliberately is not, so
 no research figure here is gated - and since `strategylab run` has never been
 invoked against the venue, every verdict this layer has produced was still
