@@ -11,16 +11,15 @@ strategy — there will never be enough live trades to judge a strategy.
   alike. Never write the logic twice — divergence silently invalidates every
   backtest result.
 - **No lookahead.** `core.evaluate` may read up to and including the current bar
-  and nothing after it. The test that proves it ships in the same commit as the
-  implementation. BOTH NOW EXIST - but read the docstring
-  at the top of `tests/test_strategy.py` before treating this as settled. The
-  test named in this rule CANNOT FAIL - `evaluate` is handed a window ending at
-  the bar it evaluates, so the corrupted rows are sliced away before the call.
-  The test beside it, that a bar's intent does not change with the history in
-  front of it, is the one that catches a real leak. The guarantee itself rests
-  on the ENGINE's slicing, and that now has a test that can fail:
-  `tests/test_engine.py` hands `run_backtest` a frame whose future has been
-  corrupted, intact, and asserts no earlier decision moves.
+  and nothing after it. The guarantee rests on the ENGINE's slicing, and the
+  test that can fail is in `tests/test_engine.py`: it hands `run_backtest` a
+  frame whose future has been corrupted, intact, and asserts no earlier decision
+  moves. A test that corrupts the future and then calls `evaluate` CANNOT FAIL -
+  `evaluate` is handed a window ending at the bar it evaluates, so the corrupted
+  rows are sliced away before the call. Read the docstring at the top of
+  `tests/test_strategy.py` before adding one: the test there that catches a real
+  leak asserts that a bar's intent does not change with the history in front of
+  it. A change to either module keeps all three green in the same commit.
 - **Config stays declarative.** Strategy conditions are a flat list combined with
   AND, from a fixed vocabulary. No nesting, no OR, no expressions in YAML. When a
   proposal needs more, that is a code change with a test. A config format that
@@ -85,10 +84,10 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
   fixture in `tests/fixtures/`. The FETCH path - `YFinanceSource.fetch` and the
   vendor-frame normalisation behind it - has no test at all, and cannot get one
   without either a recorded HTTP fixture or a fake source.
-- **Determinism.** Same config, same data, same result. Required of the engine,
-  and the test asserting it ships with the engine. BOTH NOW EXIST -
+- **Determinism.** Same config, same data, same result. Required of the engine:
   `tests/test_engine.py` asserts an identical equity curve, decision log, fill
-  list and metric set across two runs.
+  list and metric set across two runs, and an engine change keeps it green in
+  the same commit.
 - **Ask before adding a dependency.** Name what it does and what it replaces.
 - **One component per commit**, with its tests, conventional message
   (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`).
