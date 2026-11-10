@@ -82,9 +82,27 @@ $benign = @{
         # times, and every one of them was reported as a possible account
         # number. Both years must be plausible calendar years, so this does not
         # suppress an eight-digit run that merely happens to contain a hyphen.
-        '^(19|20)\d{2}-(19|20)\d{2}$'
+        '^(19|20)\d{2}-(19|20)\d{2}$',
+        # A TIMESTAMP's date and hour. "2024-03-15 00" is the front of
+        # "2024-03-15 00:00:00" - the scan stops at the colon. A date, one
+        # space and two digits is a time of day, not a grouped number.
+        '^\d{4}-\d{2}-\d{2} \d{2}$',
+        # THE DIGIT ALPHABET. "0123456789" is what str.lstrip() is handed to
+        # strip digits, and what a fake key in a test is padded with. Ten
+        # digits in counting order is a placeholder. Eleven are not exempt.
+        '^0123456789$',
+        # A POWER OF TEN. "1000000000" is the integer part of 1000000000.0, a
+        # magnitude a test picked for being large. A one followed only by
+        # zeros, and nothing else, so 10000000001 still hits.
+        '^10+$'
     )
 }
+
+# THE CREDENTIAL SCAN HAS NO EXEMPTIONS, and two were tried. One tested the matched
+# text and hid a real key given as a fallback; its replacement tested the whole
+# line and still hid a key left in a trailing comment. Both were caught in
+# review before they were committed. A line that trips this scan is renamed at
+# the source instead - see the comment where `run` reads its key in cli.py.
 
 $lines.Add('=== scan of all tracked files ===')
 $hits = 0
