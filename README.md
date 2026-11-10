@@ -85,7 +85,7 @@ is what stands between paper and real money.
 | Price data layer — validation, provenance, parquet cache | A comparison of two searches side by side on one page |
 | Cost model — hand-verified arithmetic | A hundred-trial ceiling for the committed grid — the gate exists, and no search here has yet been run through it |
 | Strategy-config loader — closed schema, closed vocabulary, and a content hash a search records and a later reader checks | A real verdict to draw — the fold page exists and has only ever rendered a fixture |
-| The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | The backtester emitting the decision schema — the replay stands in for it |
+| The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | `diff` reading the backtester's own log — the engine now emits the schema and is tested to agree with the replay, which `diff` still uses |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | A test that opens the report in a browser — the click-through script was checked by hand, in a screenshot |
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A latch that survives its own file — the daily-loss limit now holds for the session, and deleting `state/session.json` clears it |
@@ -94,13 +94,13 @@ is what stands between paper and real money.
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, every Sharpe and the surrogate band on one axis, click a cell for its equity curve against buy-and-hold; self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter, and a page drawing the folds side by side | |
-| The decision-log schema — append-only JSON Lines, exact round trip *(emitted by the worker and the replay; not by the backtester)* | |
+| The decision-log schema — append-only JSON Lines, exact round trip *(emitted by the worker, the replay and now the backtester; nothing writes the backtester's to disk)* | |
 | The risk layer — its own config file, the kill switch, three limits *(called by the worker; not by the backtester)* | |
 | The Trading 212 adapter — demo or live by explicit choice, no retry, key masked *(tested against a mock transport only)* | |
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 
-**1876 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1884 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -183,13 +183,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1876 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1884 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1876 tests, none touching the network
+uv run pytest                   # 1884 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

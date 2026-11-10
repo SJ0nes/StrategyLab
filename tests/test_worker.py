@@ -15,6 +15,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from strategylab.backtest.costs import CostModel
+from strategylab.backtest.engine import decision_records, run_backtest
 from strategylab.core.types import Action, Condition, IndicatorRef, Intent, Side, StrategyDef
 from strategylab.execution.venue import Balance, Position
 from strategylab.live.worker import (
@@ -535,3 +537,39 @@ def test_a_limit_reached_on_a_bar_that_asked_for_nothing_still_refuses_the_next_
 
     assert verdict.verdict is Verdict.REJECT
     assert "earlier in this session" in verdict.reason
+
+
+# ---------------------------------------------------------------------------
+# the backtester and the replay agree
+# ---------------------------------------------------------------------------
+
+
+def test_the_backtesters_own_log_agrees_with_the_replay_on_every_compared_field() -> None:
+    """Two routes to a backtest-side decision log, one answer.
+
+    The replay re-decides each live bar by calling `evaluate` on the bars up to
+    it. The engine steps through the same bars and keeps what `evaluate`
+    returned. If the engine ever handed `evaluate` a different window than the
+    replay does, this is where it would show.
+    """
+    bars = _bars(RISING_LATE)
+    stamped = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    params = {"fast": 3, "slow": 5}
+    result = run_backtest(
+        _definition(),
+        params,
+        bars,
+        CostModel(spread_frac=0.0, slippage_frac=0.0, commission_frac=0.0),
+    )
+    engine_log = decision_records(result, ticker="VUAG.L", protocol_version=1, recorded_at=stamped)
+    assert len(engine_log) >= 3
+
+    # A live log needs only a bar, a ticker and a protocol for the replay to
+    # know which bars to re-decide; the engine's own records name exactly those.
+    replayed = replay(_definition(), params, bars, engine_log, stamped)
+
+    assert [r.bar_timestamp for r in replayed] == [r.bar_timestamp for r in engine_log]
+    report = compare(engine_log, replayed)
+    assert report.divergences == ()
+    assert report.compared == len(engine_log)
+    assert report.missing_in_replay == ()

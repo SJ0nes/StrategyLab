@@ -21,12 +21,22 @@ the derivation, which is the reason the table below is spelled out bar by bar.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from strategylab.backtest.costs import CostModel
-from strategylab.backtest.engine import run_backtest
+from strategylab.backtest.engine import (
+    UNGATED_REASON,
+    UNGATED_VERDICT,
+    BacktestResult,
+    decision_records,
+    run_backtest,
+)
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
+from strategylab.logging.decisions import DecisionRecord, read_decisions, write_decisions
 
 # closes 13..10 down, up to 14, back down to 10. On a 2-bar and 3-bar SMA this
 # crosses ABOVE at i=5 and BELOW at i=9, and nowhere else.
@@ -382,3 +392,82 @@ def test_a_starting_equity_that_is_not_positive_and_finite_is_refused(equity: fl
 def test_a_missing_parameter_is_refused() -> None:
     with pytest.raises(ValueError, match="params omits 'slow'"):
         run_backtest(crossover(), {"fast": 2}, frame(CLOSES), FREE)
+
+
+# --------------------------------------------------------------------------
+# The decisions in the project's one decision-log schema.
+# --------------------------------------------------------------------------
+
+STAMPED = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+
+
+def _records() -> tuple[BacktestResult, list[DecisionRecord]]:
+    """Run the fixture backtest and render its decisions in the shared schema."""
+    result = run_backtest(crossover(), PARAMS, frame(CLOSES), FREE)
+    return result, decision_records(result, ticker="SPY", protocol_version=1, recorded_at=STAMPED)
+
+
+def test_there_is_one_record_per_evaluated_bar_in_bar_order() -> None:
+    result, records = _records()
+
+    # Twelve bars and a warm-up of four: the first evaluable bar is the fourth,
+    # so nine bars are evaluated.
+    assert len(records) == len(CLOSES) - (WARMUP - 1) == 9
+    assert [r.bar_timestamp for r in records] == [s.to_pydatetime() for s in result.equity.index]
+    assert all(r.bar_timestamp.tzinfo is None for r in records)
+
+
+def test_each_record_says_what_the_frame_says_about_that_bar() -> None:
+    result, records = _records()
+
+    for record, (_, row) in zip(records, result.decisions.iterrows(), strict=True):
+        assert record.action.value == row["action"]
+        assert record.requested_size_pct == row["requested_size_pct"]
+        assert " AND ".join(record.conditions_met) == row["conditions_met"]
+        assert " AND ".join(record.conditions_failed) == row["conditions_failed"]
+
+
+def test_a_record_carries_the_numbers_the_frame_leaves_out() -> None:
+    _, records = _records()
+
+    # The fast average is over 2 bars and the slow over 3. On the last bar the
+    # closes end 12, 11, 10: the close is 10, the fast average is
+    # (11 + 10) / 2 = 10.5 and the slow is (12 + 11 + 10) / 3 = 11.
+    last = records[-1]
+    assert sorted(last.indicator_values.values()) == pytest.approx([10.0, 10.5, 11.0])
+    # The one literal a condition compares against.
+    assert 0.5 in last.thresholds.values()
+
+
+def test_every_record_is_stamped_as_a_backtest_that_asked_no_gate() -> None:
+    _, records = _records()
+
+    for record in records:
+        assert record.source == "backtest"
+        assert record.ticker == "SPY"
+        assert record.protocol_version == 1
+        assert record.params == PARAMS
+        assert record.recorded_at == STAMPED
+        assert record.risk_verdict == UNGATED_VERDICT == "allow"
+        assert record.risk_reason == UNGATED_REASON
+        assert record.approved_size_pct == record.requested_size_pct
+
+
+def test_the_records_survive_being_written_and_read_back(tmp_path: Path) -> None:
+    _, records = _records()
+    path = tmp_path / "decisions.jsonl"
+
+    write_decisions(records, path)
+
+    assert read_decisions(path) == records
+
+
+def test_the_same_backtest_renders_the_same_records() -> None:
+    assert _records()[1] == _records()[1]
+
+
+def test_a_result_keeps_one_intent_for_each_row_of_its_frame() -> None:
+    result, _ = _records()
+
+    assert len(result.intents) == len(result.decisions)
+    assert [intent.action.value for intent in result.intents] == list(result.decisions["action"])

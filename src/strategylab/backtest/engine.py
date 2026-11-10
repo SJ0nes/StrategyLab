@@ -50,6 +50,7 @@ a side effect of wanting readable logs rather than a designed one.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -57,8 +58,17 @@ import pandas as pd
 from strategylab.backtest.costs import CostModel, Fill, apply_costs
 from strategylab.backtest.metrics import max_drawdown, sharpe
 from strategylab.core.strategy import evaluate, required_history
-from strategylab.core.types import Action, Side, StrategyDef
+from strategylab.core.types import Action, Intent, Side, StrategyDef
 from strategylab.data.source import REQUIRED_COLUMNS
+from strategylab.logging.decisions import SCHEMA_VERSION, DecisionRecord
+
+#: What a backtest writes into the risk verdict it does not compute. The same
+#: word the gate uses for an allowance, because nothing was refused.
+UNGATED_VERDICT = "allow"
+
+#: What a backtest writes into the risk reason, so a reader of a record can tell
+#: an allowance the gate gave from one nobody asked it for.
+UNGATED_REASON = "backtest: the risk gate was not consulted, by design"
 
 
 @dataclass(frozen=True)
@@ -90,32 +100,18 @@ class BacktestResult:
             bars in that specific way, and a reader who assumes otherwise will
             misread every entry and exit in the log.
 
-            THIS FRAME IS NOT THE PROJECT'S DECISION-LOG SCHEMA, and the two do
-            not yet agree. ``docs/architecture.md`` says the schema is defined
-            once, in ``logging/decisions.py``, so that a backtest log and a live
-            log can be diffed - which is the whole reason ``strategylab diff``
-            can exist. ``DecisionRecord`` there carries sixteen fields including
-            the ticker, the risk verdict, the protocol version and the indicator
-            values; this frame carries seven and is built ad hoc.
-
-            ``logging/`` IS NOW BUILT, tested and reachable, and this frame has
-            not converged on it. The obligation is unchanged and its direction
-            is unchanged - these must converge on THAT schema, not on this one -
-            but the reason they have not is no longer that one of them is
-            missing. ``risk/limits.py`` is BUILT now too, so
-            ``risk_verdict``, ``risk_reason`` and ``approved_size_pct`` no longer
-            describe a gate that does not exist - which removes the blocker this
-            docstring used to name and replaces it with a decision nobody has
-            made: whether a BACKTEST should run that gate at all. Running it makes
-            the two logs comparable and stops this being a measurement of the
-            strategy alone; not running it means a live log and a backtest log of
-            the same period differ in those three fields by construction. What
-            also remains is that this frame carries three columns
-            ``DecisionRecord`` deliberately does not: the position, the cash and
-            the equity, which are account state rather than a decision.
-            ``LIMITATIONS.md`` records the decision - since made, in the replay's
-            favour: ``strategylab diff`` replays through ``evaluate`` directly and
-            does not run the gate, so this frame is no longer what any diff reads.
+            THIS FRAME IS NOT THE PROJECT'S DECISION-LOG SCHEMA, and is not
+            meant to become it. It carries the position, the cash and the equity
+            beside each decision, which are account state rather than a
+            decision, and it leaves out the indicator values the shared schema
+            records. The shared schema is ``logging/decisions.py``, and a
+            backtest's decisions in THAT shape come from
+            :func:`decision_records`, built from ``intents`` below. The two
+            views are of the same bars and neither replaces the other.
+        intents: The intent ``evaluate`` returned on each bar, in the same order
+            as the rows of ``decisions``. Kept whole, because the frame above
+            renders an intent down to strings and the decision-log schema needs
+            the numbers it was decided on.
         sharpe: Annualised Sharpe ratio of ``returns``, or ``0.0`` when there
             are fewer than two returns to take a deviation of.
         max_drawdown_pct: Largest peak-to-trough decline of ``equity``, as a
@@ -135,6 +131,7 @@ class BacktestResult:
     max_drawdown_pct: float
     trade_count: int
     params: dict[str, int]
+    intents: tuple[Intent, ...] = ()
 
 
 def _validate(bars: pd.DataFrame, starting_equity: float) -> None:
@@ -245,6 +242,7 @@ def run_backtest(
     records: list[dict[str, Any]] = []
     equity_values: list[float] = []
     equity_index: list[Any] = []
+    intents: list[Intent] = []
     trade_count = 0
     pending: Action | None = None
     pending_size_pct = 0.0
@@ -279,6 +277,7 @@ def run_backtest(
         intent = evaluate(definition, bars.iloc[: i + 1], params)
         pending = intent.action
         pending_size_pct = intent.size_pct
+        intents.append(intent)
 
         # 3. Mark to this bar's close.
         equity = cash + units * closes[i]
@@ -312,4 +311,61 @@ def run_backtest(
         max_drawdown_pct=max_drawdown(equity_series),
         trade_count=trade_count,
         params=dict(params),
+        intents=tuple(intents),
     )
+
+
+def decision_records(
+    result: BacktestResult,
+    *,
+    ticker: str,
+    protocol_version: int,
+    recorded_at: datetime,
+) -> list[DecisionRecord]:
+    """Render a backtest's decisions in the project's one decision-log schema.
+
+    One record per evaluated bar, in bar order, with ``source`` set to
+    ``backtest``. This is the shape the live worker writes, so a backtest log
+    and a live log of the same bars can be compared field by field.
+
+    THE THREE RISK FIELDS ARE FILLED IN, NOT COMPUTED. A backtest does not run
+    the risk gate - running it would stop the result being a measurement of the
+    strategy alone - so every record carries :data:`UNGATED_VERDICT`,
+    :data:`UNGATED_REASON`, and an approved size equal to the requested one. A
+    comparison against a live log must leave those three out, as
+    ``strategylab diff`` does.
+
+    Args:
+        result: A finished backtest.
+        ticker: The instrument the bars were of. A backtest result does not
+            know, so the caller says.
+        protocol_version: The protocol in force, recorded on every record.
+        recorded_at: Stamped on every record. Timezone-aware at UTC; passed in
+            rather than read from a clock, so the output is a function of the
+            arguments.
+
+    Returns:
+        The records. Empty only for a result with no evaluated bar, which
+        :func:`run_backtest` never returns.
+    """
+    return [
+        DecisionRecord(
+            schema_version=SCHEMA_VERSION,
+            bar_timestamp=pd.Timestamp(stamp).to_pydatetime(),
+            recorded_at=recorded_at,
+            source="backtest",
+            ticker=ticker,
+            action=intent.action,
+            indicator_values=dict(intent.indicator_values),
+            thresholds=dict(intent.thresholds),
+            conditions_met=intent.conditions_met,
+            conditions_failed=intent.conditions_failed,
+            requested_size_pct=intent.size_pct,
+            approved_size_pct=intent.size_pct,
+            risk_verdict=UNGATED_VERDICT,
+            risk_reason=UNGATED_REASON,
+            params=dict(result.params),
+            protocol_version=protocol_version,
+        )
+        for stamp, intent in zip(result.decisions.index, result.intents, strict=True)
+    ]

@@ -150,21 +150,21 @@ index", and a candidate can pass while losing to it. The benchmark pays no
 costs and is always fully invested, which sets the bar slightly too high, and
 on back-adjusted closes it is a total-return figure.
 
-**There are still two decision-log shapes, and now one of them is built and
-unused.** `docs/architecture.md` states the schema is defined once, in
+**The backtester emits the decision-log schema, and `diff` does not read it.**
+`docs/architecture.md` states the schema is defined once, in
 `logging/decisions.py`, because a backtest log and a live log have to be
-diffable - that is what makes `strategylab diff` possible at all. That module is
-now built, tested and reachable: `DecisionRecord` round-trips through
-`write_decisions`/`read_decisions` exactly. **The live worker and the replay emit
-it; the backtester does not.** `run_backtest` still writes its ad-hoc
-seven-column frame, and `diff` compares the live log against a replay built from
-`core.evaluate` directly rather than against the engine's frame.
+diffable. The live worker, the replay and now the engine all emit it:
+`backtest.engine.decision_records` renders a finished backtest as
+`DecisionRecord`s, one per evaluated bar, and `tests/test_worker.py` asserts
+that log and the replay's agree on every compared field. What has not changed
+is which one `strategylab diff` uses - still the replay - and nothing writes
+the engine's log to disk.
 
-So the "defined once" rule is no longer aspirational in the sense that the one
-definition is missing - it is aspirational in the sense that nobody has adopted
-it. That is a smaller gap and a different one, and it is worth being precise
-about which: the risk was that two shapes would drift apart, and it is now that
-one shape sits unused beside another that is in use.
+`run_backtest` also still returns its seven-column frame, and that is no longer
+a second shape waiting to converge. The frame carries the position, the cash
+and the equity beside each decision, which are account state and belong in no
+decision record; the records carry the indicator values the frame leaves out.
+They are two views of the same bars and the engine keeps both.
 
 **What blocked the backtester adopting it used to be two things, then one, and
 is now a decision nobody has made.**
@@ -194,8 +194,10 @@ answers cost something:
 The second was chosen, in the replay's favour, when `diff` was built: the
 replay does not run the gate, and `compare` excludes the three risk fields
 rather than reporting them. The cost named above is paid knowingly and is
-recorded again in the section on the live half. The backtester itself still
-emits nothing; the replay stands in for it.
+recorded again in the section on the live half. The backtester made the same
+choice when it began emitting the schema: its records carry an allowance, a
+reason saying the gate was not consulted, and an approved size equal to the
+requested one.
 
 **The keying of `indicator_values` IS now settled: by reference.**
 `sma($fast)` and `sma($slow)`, not `sma` twice - so `close above sma(150)` and
@@ -228,14 +230,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1876 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1884 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring and the
 commit-time credential scan — twenty-two areas, one per test file.
-518 of the 1876 are the risk layer's,
+518 of the 1884 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-two more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and four a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an

@@ -677,9 +677,8 @@ def validate(
     them, and a verdict recorded without them cannot be traced to what produced
     it.
 
-    A second file is a second thing to drift. This repository already carries
-    one instance of that mistake - two decision-log shapes where the design says
-    one - and it is documented in ``LIMITATIONS.md`` as a cost still being paid.
+    A second file is a second thing to drift, and a duplicated schema is a cost
+    this repository has already paid once.
 
     And it keeps the chain honest end to end: a verdict points at a search,
     which points at a snapshot hash and a config hash. Nothing in between can be
