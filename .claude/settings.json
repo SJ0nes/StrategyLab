@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/secrets-guard.ps1\"",
+            "command": "h=\".claude/hooks/secrets-guard.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 20
           }
         ]
@@ -43,12 +43,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.ps1\"",
+            "command": "h=\".claude/hooks/commit-gate.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "h=\".claude/hooks/check_secrets.py\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; py -3 \"$d/$h\"",
+            "command": "h=\".claude/hooks/check_secrets.py\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -f \"$d/$h\" ] || exit 0; py -3 \"$d/$h\" || exit 2",
             "timeout": 30
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-types.ps1\"",
+            "command": "h=\".claude/hooks/lint-types.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 120
           }
         ]
@@ -71,17 +71,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/test-gate.ps1\"",
+            "command": "h=\".claude/hooks/test-gate.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 600
           },
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/hygiene-gate.ps1\"",
+            "command": "h=\".claude/hooks/hygiene-gate.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 120
           },
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/audit-dispatch.ps1\"",
+            "command": "h=\".claude/hooks/audit-dispatch.ps1\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; CLAUDE_PROJECT_DIR=\"$d\" powershell -NoProfile -ExecutionPolicy Bypass -File \"$d/$h\"",
             "timeout": 60
           }
         ]
