@@ -285,6 +285,17 @@ def test_a_commit_that_also_says_where_is_refused_whatever_anything_holds(
     assert "changes directory or names a repository" in done.stderr
 
 
+def test_an_unbalanced_quote_does_not_hide_a_word_that_says_where(tmp_path: Path) -> None:
+    """A command the shell splitter gives up on is still read for where it goes."""
+    home = make_repo(tmp_path / "home")
+    other = make_repo(tmp_path / "other")
+
+    done = run_hook(f'cd {other.as_posix()} && git commit -m "unfinished', home)
+
+    assert done.returncode == 2
+    assert "changes directory or names a repository" in done.stderr
+
+
 @pytest.mark.parametrize("form", sorted(REDIRECTED))
 def test_git_is_never_run_in_another_repository(
     tmp_path: Path, form: str, fsmonitor_payload: tuple[str, Path]

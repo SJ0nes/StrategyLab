@@ -6,12 +6,13 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Twenty-three modules have working bodies: `protocol.py`, `windows.py`,
+Twenty-four modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
 `search/surrogate.py`, `search/noise.py`, `report/render.py`,
-`report/surface.py`, `report/palette.py`, `validate/walkforward.py`,
+`report/surface.py`, `report/palette.py`, `report/verdict.py`,
+`validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
 `execution/t212.py`, `live/worker.py`, and all seven commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
@@ -42,7 +43,7 @@ that `evaluate` looks each placeholder up in, which is what lets one parsed
 definition serve all ninety cells. A reader expecting a definition with numbers
 in it will not find one.
 
-**A search now runs, and no figure from one appears in this repository.**
+**A search now runs, and no result from one is reported.**
 `strategylab search configs/ma_crossover.yaml` walks all ninety cells over
 2005-2018, scores the surface by neighbourhood median, rejects edge winners and
 drawdown breaches into the graveyard, and writes every cell to
@@ -112,7 +113,7 @@ the whole grid against `N` block-resampled surrogates and reports where the
 candidate falls in that distribution. Without it the artifact records
 `"noise_ceiling": null` and every output says nothing printed is evidence of an
 edge. The default is zero because one trial costs a full grid — about four
-minutes — so a hundred trials is most of a day. That default is a real hazard
+minutes — so a hundred trials is on the order of seven hours. That default is a real hazard
 worth naming: the cheap path is the unbenchmarked one, and a reader who runs
 `search` without reading its output will get a plausible Sharpe and no warning
 they sought out.
@@ -166,19 +167,18 @@ and the equity beside each decision, which are account state and belong in no
 decision record; the records carry the indicator values the frame leaves out.
 They are two views of the same bars and the engine keeps both.
 
-**What blocked the backtester adopting it used to be two things, then one, and
-is now a decision nobody has made.**
+**What blocked the backtester adopting it used to be two things, then one, then
+a decision, and the decision is made.**
 
 The first blocker is GONE. `Intent` now carries `indicator_values` and
 `thresholds` as numbers rather than only as rendered strings, so `core.evaluate`
 supplies what a record needs. That was a change to the shared brain and it is
 its own commit.
 
-The second blocker is gone in the sense that mattered and open in a way that did
-not exist before. `risk/limits.py` is built and tested, so `risk_verdict`,
-`risk_reason` and `approved_size_pct` CAN now be filled with something true. What
-nobody has decided is what a BACKTEST should put there, and both available
-answers cost something:
+The second blocker went when `risk/limits.py` was built and tested, so that
+`risk_verdict`, `risk_reason` and `approved_size_pct` COULD be filled with
+something true. That left the question of what a BACKTEST should put there, and
+both available answers cost something:
 
 - **Run the gate in the backtest too.** Then the two logs are produced the same
   way and `diff` measures the simulator, which is its whole purpose. But the
@@ -230,16 +230,16 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1884 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1891 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring and the
 commit-time credential scan — twenty-two areas, one per test file.
-518 of the 1884 are the risk layer's,
+520 of the 1891 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
-Thirty-two more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and four a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
+Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
 `test_the_committed_daily_loss_ceiling_binds` runs at one account size instead,
@@ -333,9 +333,10 @@ was WRONG — seven was the count within `tests/test_engine.py` alone and the
 sentence did not say so, and the figure across the whole suite is larger. No
 replacement number is quoted here, because a replacement would have the same
 problem as the original. And it was not
-reproducible: the mutation was run from a scratch directory and no harness is
-committed, which is the same defect this file labels on the content-hash
-measurement below and did not label here.
+reproducible: the mutation was run from a scratch directory and no harness was
+committed then, which is the same defect this file labels on the content-hash
+measurement below and did not label here. A harness is committed now, under
+`tests/mutation/`, and it quotes no count for this mutation either.
 
 ## What this project's own verification is worst at
 
@@ -574,7 +575,7 @@ day is therefore unmodelled.
   by the write-once rule that protects the pass bar.
 - **Three searched parameters, 90 grid cells.** The config's own comment notes
   that this much data supports three or four parameters at most. `expand_grid`
-  confirms the count is 90; nothing yet decides which of the 90 to believe.
+  confirms the count is 90.
 - **Integer parameters only.** Lookbacks are whole bars, and the loader refuses a
   config where they are not — every bound of a searched range, not merely its
   start, because a fractional step puts some of the cells it generates off the
@@ -592,10 +593,10 @@ day is therefore unmodelled.
   rather than reporting a hundred percent drawdown. The engine's own docstring
   calls this a real limitation and not a considered decision, and it matters for
   the search: a cell that blows up does not score badly, it fails. What to do
-  with one is now decided, though nothing executes the decision yet:
+  with one is decided, and the search loop does it:
   `search/plateau.py` requires the row to be kept with a `NaN` metric, so the
   grid stays complete and the failure is visible in `neighbour_count`, and
-  `search/graveyard.py` carries a `backtest_failed` reason to record it under.
+  the loop records the cell in the graveyard under `backtest_failed`.
 - **Zero risk-free rate, and not configurable.** Sharpe is computed against zero.
   The 2005–2024 window spans rates from 5% to 0% and back to 5%, so Sharpe
   figures are not comparable across it.
@@ -631,7 +632,7 @@ silently repairing data — but it means the tool can decline to ingest history
 that is perfectly real.
 
 **The held-back window is cached in the same file as the in-sample window, and
-exactly one consumer is guarded.**
+the guard has two consumers.**
 `fetch` downloads 2005-01-01 through 2024-12-31 in one request and writes one
 parquet file. Nothing partitions it, and the whole 5,033-bar frame is what
 `run_search` is handed. The split is this project's central claim, and it is now
@@ -940,15 +941,19 @@ decision record until it has been read beside the venue's own account page.
   What is not covered is everything after them - the fetch-and-merge of the
   execution instrument's bars, the order of writes, and every error branch a
   venue can cause.
-- **The mutation figures in this repository's commit messages cannot be re-run
-  from the repository.** The harness that produced them lives outside it.
-  `docs/decisions/0006` already lists this as a past finding, and it has now
-  recurred: either the harness gets committed under a `tools/` directory or the
-  figures stop appearing in messages that ship.
+- **The mutation figures in older commit messages cannot be re-run from the
+  repository; newer mutants can.** The harness that produced the early figures
+  lived outside it, and `docs/decisions/0006` lists that as a past finding.
+  `tests/mutation/` now holds a harness and a list of named mutants in nine
+  groups: `uv run python tests/mutation/run.py` applies each one, runs the
+  tests named for its group, restores the file, and exits non-zero if any
+  mutant survives. It covers the work done since it was written, not the whole
+  codebase, and it is run by hand - CI does not run it. A mutant list is also
+  only as good as the mutants someone thought of.
 
 **The risk layer is built, and its one caller has never run.** All three parts
 `CLAUDE.md` demands exist: its own module, its own config file
-(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 518 of
+(`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 520 of
 them). `live/worker.py` is its caller and the backtester deliberately is not, so
 no research figure here is gated - and since `strategylab run` has never been
 invoked against the venue, every verdict this layer has produced was still

@@ -51,6 +51,9 @@ ignore = ["D203", "D213", "ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D100", "D103"]
+# One mutant per line. The text to find is quoted from the source exactly, so it is as
+# long as the line it names and cannot be wrapped without changing what it matches.
+"tests/mutation/mutants.py" = ["D100", "D103", "E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

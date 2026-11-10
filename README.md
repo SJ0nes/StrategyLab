@@ -100,16 +100,19 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 
-**1884 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1891 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log, the risk layer, the Trading 212 adapter, the live
 worker, the command-line wiring and the commit-time credential scan in
-`.claude/hooks/` — twenty-two areas, one per test file. 42 of the 124 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
-518 of them are the risk layer's, which is a statement about parameterisation
-rather than about size. Thirty-two more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and four a returned value, one of them a rejection from `check`. Of the 486 before
+`.claude/hooks/` — twenty-two areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
+`uv run python tests/mutation/run.py` breaks the code in named ways, one at a
+time, and fails if the tests stay green; it covers nine areas of recent work,
+not the whole codebase, and CI does not run it.
+520 of them are the risk layer's, which is a statement about parameterisation
+rather than about size. Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. Of the 486 before
 that, 316 are the same assertions repeated at four
 account equities, because at an equity of 100 a cash exposure and its percentage
 of equity are the same number and an implementation that never divided would pass.
@@ -183,13 +186,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1884 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1891 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1884 tests, none touching the network
+uv run pytest                   # 1891 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -263,7 +266,7 @@ failure as shuffling arriving more quietly
 ([docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md)).
 
 It is **off by default** because one trial costs a full grid: the committed
-search takes about four minutes, so a hundred trials is most of a day. A search
+search takes about four minutes, so a hundred trials is on the order of seven hours. A search
 run without it says on every line of output that nothing it printed is evidence
 of an edge. That default diverges from a rule `CLAUDE.md` calls non-negotiable,
 and the divergence is argued out in
@@ -336,8 +339,8 @@ version in force, and the content hash of the data it used.
 the only time such a document gets written honestly. The most important entries:
 the strategy is searched on `SPY` but would be traded as `VUAG.L`, which did not
 exist for most of the in-sample window; the cost model's minimum-commission and
-FX-conversion terms are both configured to zero; the noise ceiling does not feed
-the pass decision; the buy-and-hold benchmark is reported and decides nothing; and the committed
+FX-conversion terms are both configured to zero; the noise ceiling gates
+which candidate may be validated but is not part of the pass arithmetic; the buy-and-hold benchmark is reported and decides nothing; and the committed
 strategy trades too rarely for the pre-registered trade floors to be reachable,
 which is a finding about the validation design rather than a reason to move a
 threshold.

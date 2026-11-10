@@ -515,6 +515,20 @@ def test_a_vendor_that_returns_no_rows_is_an_error_not_an_empty_cache(
         _fetch_with(_Vendor(answer), monkeypatch)
 
 
+def test_a_column_the_vendor_names_twice_is_kept_once_and_the_first_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # "Close" and "close" are one name once lowercased. Kept twice, `close`
+    # would be two columns and every later read of it a frame, not a series.
+    doubled = _vendor_frame()
+    doubled["close"] = 999.0
+
+    bars = _fetch_with(_Vendor(doubled), monkeypatch)
+
+    assert list(bars.columns).count("close") == 1
+    assert bars.loc["2020-01-06", "close"] == 103.5
+
+
 def test_a_vendor_frame_missing_a_column_is_refused_naming_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

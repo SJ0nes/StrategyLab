@@ -1217,9 +1217,15 @@ def test_asking_whether_the_limit_is_reached_needs_a_session_open_to_divide_by(
         daily_loss_reached(_state(10_000.0, start_of_day_equity=bad), _limits())
 
 
+# NaN alone cannot fail here: `nan >= limit` is already False without any guard.
+# Minus infinity makes the loss plus infinity, which IS at or past every limit,
+# so it is the case the finiteness check exists for.
+@pytest.mark.parametrize("unreadable_value", [math.nan, -math.inf])
 @pytest.mark.parametrize("field", ["equity", "realised_pnl_today"])
-def test_a_loss_that_cannot_be_read_has_not_been_shown_to_be_reached(field: str) -> None:
+def test_a_loss_that_cannot_be_read_has_not_been_shown_to_be_reached(
+    field: str, unreadable_value: float
+) -> None:
     state = _state(10_000.0)
-    unreadable = dataclasses.replace(state, **{field: math.nan})
+    unreadable = dataclasses.replace(state, **{field: unreadable_value})
 
     assert daily_loss_reached(unreadable, _limits()) is False

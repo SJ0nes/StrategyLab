@@ -502,6 +502,31 @@ def test_a_latch_that_is_not_a_boolean_is_read_as_set(tmp_path: Path, flag: obje
     )
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"day": "2026-09-12", "tripped": true}',
+        '{"day": "2026-09-12", "sod": NaN, "tripped": true}',
+        '{"day": "2026-09-12", "sod": Infinity, "tripped": true}',
+    ],
+    ids=["no-open", "open-not-a-number", "open-infinite"],
+)
+def test_a_session_open_that_cannot_be_read_clears_the_latch_with_it(
+    tmp_path: Path, content: str
+) -> None:
+    # THE UNSAFE DIRECTION, stated rather than hidden. A tripped session whose
+    # open cannot be read has nothing to measure the day's loss against, so a
+    # new session starts at current equity - and a new session is untripped.
+    path = tmp_path / "s.json"
+    path.write_text(content, encoding="utf-8")
+
+    session = load_session(path, date(2026, 9, 12), 9_000.0)
+
+    assert session == Session(
+        day=date(2026, 9, 12), start_of_day_equity=9_000.0, daily_loss_tripped=False
+    )
+
+
 @pytest.mark.parametrize("content", ["[1, 2]", '"a string"', "3", "null", "true"])
 def test_a_session_file_that_is_not_an_object_starts_a_new_session(
     tmp_path: Path, content: str
