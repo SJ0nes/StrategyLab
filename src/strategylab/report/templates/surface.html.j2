@@ -12,48 +12,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ strategy }} — search surface</title>
 <style>
-  :root {
-    --font: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    --font-text: ui-sans-serif, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
-    --s1: 4px;  --s2: 8px;  --s3: 16px;  --s4: 24px;  --s5: 40px;
-    --ink: #16181d;
-    --ink-soft: #5c6270;
-    --rule: #d9dce3;
-    --page: #ffffff;
-    --panel: #f6f7f9;
-    --accent: {{ accent }};
-    --warn-bg: #fff6ea;
-    --warn-rule: #e0a558;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --ink: #e7e9ee; --ink-soft: #99a0ae; --rule: #2c313b;
-      --page: #14161a; --panel: #1b1e24;
-      --warn-bg: #2a2113; --warn-rule: #8a6427;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: var(--s5) var(--s4);
-    background: var(--page); color: var(--ink);
-    font-family: var(--font-text); line-height: 1.5;
-    font-variant-numeric: tabular-nums;
-  }
-  main { max-width: 1180px; margin: 0 auto; }
-  h1 { font-size: 1.35rem; margin: 0 0 var(--s1); font-weight: 600; }
-  h2 { font-size: 0.95rem; margin: var(--s5) 0 var(--s2); font-weight: 600; }
-  .sub { color: var(--ink-soft); font-size: 0.85rem; margin: 0 0 var(--s4); }
-  .mono { font-family: var(--font); font-variant-numeric: tabular-nums; }
+{% include "_tokens.css.j2" %}
 
-  .facts { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4);
-           font-family: var(--font); font-size: 0.78rem; color: var(--ink-soft);
-           border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
-           padding: var(--s2) 0; margin-bottom: var(--s4); }
-  .facts b { font-weight: 600; color: var(--ink); }
 
-  .banner { background: var(--warn-bg); border-left: 3px solid var(--warn-rule);
-            padding: var(--s3); margin: var(--s4) 0; font-size: 0.85rem; }
-  .banner b { display: block; margin-bottom: var(--s1); }
 
   .panels { display: flex; flex-wrap: wrap; gap: var(--s4); align-items: flex-start; }
   .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
@@ -63,7 +24,6 @@
   .cellrect:hover { stroke: var(--ink); stroke-width: 2; }
   .winner { stroke: var(--accent); stroke-width: 3; fill: none; pointer-events: none; }
   .rejected { stroke: var(--ink); stroke-width: 1.25; opacity: 0.55; pointer-events: none; }
-  .tick { font-family: var(--font); font-size: 10px; fill: var(--ink-soft); }
   .band { fill: var(--accent); opacity: 0.22; }
   .bandedge { stroke: var(--accent); stroke-width: 1.5; }
   .axisline { stroke: var(--rule); stroke-width: 1; }
@@ -78,7 +38,6 @@
   .curve .held { stroke: var(--ink-soft); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
   .curve .base { stroke: var(--rule); stroke-width: 1; }
   .cellrect.chosen { stroke: var(--ink); stroke-width: 3; }
-  .axis { font-family: var(--font); font-size: 11px; fill: var(--ink); font-weight: 600; }
 
   .readout { position: sticky; bottom: 0; margin-top: var(--s4);
              background: var(--page); border-top: 2px solid var(--rule);
@@ -96,9 +55,6 @@
   th, td { text-align: left; padding: var(--s1) var(--s3) var(--s1) 0; }
   th { color: var(--ink-soft); font-weight: 600; }
   td.num { text-align: right; padding-right: var(--s4); }
-  footer { margin-top: var(--s5); padding-top: var(--s3); border-top: 1px solid var(--rule);
-           color: var(--ink-soft); font-size: 0.75rem; font-family: var(--font);
-           word-break: break-all; }
 </style>
 </head>
 <body>

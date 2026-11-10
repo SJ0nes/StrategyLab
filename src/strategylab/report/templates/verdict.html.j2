@@ -1,0 +1,164 @@
+{#
+  A validation verdict.
+
+  One file, no external requests, no build step, and no script: nothing on this
+  page is interactive, because there is nothing to choose between. The folds
+  are drawn side by side on one vertical scale so that an inconsistent
+  walk-forward reads as a shape.
+#}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ strategy }} — validation verdict</title>
+<style>
+{% include "_tokens.css.j2" %}
+  .verdict { border: 2px solid var(--ink); border-radius: 6px; padding: var(--s3) var(--s4);
+             margin: var(--s4) 0; }
+  .verdict .word { font-family: var(--font); font-size: 1.6rem; font-weight: 700;
+                   letter-spacing: 0.04em; text-transform: uppercase; }
+  .verdict p { margin: var(--s2) 0 0; font-size: 0.9rem; }
+  /* Three outcomes, three treatments, one weight. None is a muted version of another. */
+  .outcome-pass { border-style: solid; }
+  .outcome-fail { border-style: double; border-width: 6px; }
+  .outcome-insufficient_data { border-style: dashed; }
+  svg { display: block; overflow: visible; }
+  .panelbox { fill: var(--panel); stroke: var(--rule); stroke-width: 1; }
+  .foldbar { fill: var(--ink); }
+  .hatch { stroke: var(--ink); stroke-width: 1.5; }
+  .unmeasured { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .zero { stroke: var(--ink-soft); stroke-width: 1; }
+  .barline { stroke: var(--accent); stroke-width: 2; }
+  .pooled { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  .held { stroke: var(--ink-soft); stroke-width: 1.5; stroke-dasharray: 7 4; }
+  .foldword { font-family: var(--font); font-size: 10px; font-weight: 700; fill: var(--ink);
+              text-transform: uppercase; }
+  .foldfig { font-family: var(--font); font-size: 10px; fill: var(--ink); }
+  table { border-collapse: collapse; font-family: var(--font); font-size: 0.8rem; }
+  th, td { text-align: left; padding: var(--s1) var(--s4) var(--s1) 0; }
+  th { color: var(--ink-soft); font-weight: 600; }
+  td.num { text-align: right; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>{{ strategy }} — validation verdict</h1>
+<p class="sub">
+  {{ params|dictsort|map('join', '=')|join(', ') }}, walked through the held-back window in
+  folds of {{ window.fold_months }} month(s).
+</p>
+
+<div class="facts">
+  <span><b>protocol</b> v{{ protocol_version }}</span>
+  <span><b>window</b> {{ window.start }} → {{ window.end }} ({{ window.bars }} bars)</span>
+  <span><b>instrument</b> {{ instrument }}</span>
+  <span><b>snapshot</b> {{ fixture_hash[:16] }}</span>
+  <span><b>warm-up</b> {{ warmup_bars }} bars</span>
+  <span><b>held-back reads so far</b> {{ walk_forward_touches }}</span>
+</div>
+
+<div class="verdict outcome-{{ outcome }}">
+  <div class="word">{{ outcome|replace('_', ' ') }}</div>
+  <p>{{ reason }}</p>
+  {% if outcome == "insufficient_data" %}
+  <p><b>This is not a soft failure.</b> The candidate was not refuted; it was not tested.
+  The fix is more history or a strategy that trades more often, never a lower floor.</p>
+  {% endif %}
+</div>
+
+<h2>The folds, side by side</h2>
+<p class="sub">
+  One scale for every fold. The solid line is the bar the POOLED result had to clear,
+  {{ '%.2f'|format(criteria.effective_sharpe_bar) }}; a fold is drawn against it for scale and
+  is not judged on it alone. A fold's own outcome is advisory: the verdict above is made on
+  the pooled figures.
+</p>
+<svg width="{{ figure_width }}" height="{{ figure_height }}"
+     viewBox="0 0 {{ figure_width }} {{ figure_height }}" role="img"
+     aria-label="Sharpe by fold, {{ folds|length }} folds">
+  {% for fold in folds %}
+  <rect class="panelbox" x="{{ fold.left + 4 }}" y="4" width="{{ fold_width - 8 }}"
+        height="{{ figure_height - 8 }}" rx="4"/>
+  <text class="tick" x="{{ fold.left + fold_width / 2 }}" y="20" text-anchor="middle">{{ fold.start }}</text>
+  {% if fold.measured %}
+  <rect class="foldbar" x="{{ fold.bar_x }}" y="{{ fold.bar_y }}" width="{{ bar_width }}"
+        height="{{ fold.bar_height }}"/>
+  {% else %}
+  <rect class="unmeasured" x="{{ fold.bar_x }}" y="{{ chart_top }}" width="{{ bar_width }}"
+        height="{{ chart_height }}"/>
+  {% endif %}
+  {% if fold.outcome == "insufficient_data" %}
+  {# Hatched across the whole panel, so it survives greyscale and is never an empty tile. #}
+  {% for step in range(0, chart_height, 14) %}
+  <line class="hatch" x1="{{ fold.left + 10 }}" x2="{{ fold.left + fold_width - 10 }}"
+        y1="{{ chart_top + step + 12 }}" y2="{{ chart_top + step }}" opacity="0.28"/>
+  {% endfor %}
+  {% endif %}
+  <text class="foldword" x="{{ fold.left + fold_width / 2 }}" y="{{ chart_top + chart_height + 22 }}"
+        text-anchor="middle">{{ fold.outcome|replace('_', ' ') }}</text>
+  <text class="foldfig" x="{{ fold.left + fold_width / 2 }}" y="{{ chart_top + chart_height + 40 }}"
+        text-anchor="middle">{% if fold.measured %}sharpe {{ '%.2f'|format(fold.sharpe) }}{% else %}not measurable{% endif %}</text>
+  <text class="foldfig" x="{{ fold.left + fold_width / 2 }}" y="{{ chart_top + chart_height + 56 }}"
+        text-anchor="middle">{{ fold.trade_count }} trade(s){% if fold.max_drawdown_pct is not none %}, dd {{ '%.1f'|format(fold.max_drawdown_pct) }}%{% endif %}</text>
+  {% endfor %}
+  <line class="zero" x1="0" x2="{{ figure_width }}" y1="{{ scale.zero_y }}" y2="{{ scale.zero_y }}"/>
+  <line class="barline" x1="0" x2="{{ figure_width }}" y1="{{ scale.bar_y }}" y2="{{ scale.bar_y }}"/>
+  {% if scale.pooled_y is not none %}
+  <line class="pooled" x1="0" x2="{{ figure_width }}" y1="{{ scale.pooled_y }}" y2="{{ scale.pooled_y }}"/>
+  {% endif %}
+  {% if scale.held_y is not none %}
+  <line class="held" x1="0" x2="{{ figure_width }}" y1="{{ scale.held_y }}" y2="{{ scale.held_y }}"/>
+  {% endif %}
+</svg>
+<p class="sub">
+  Solid accent line: the bar. Dotted: the pooled Sharpe{% if scale.pooled_y is none %} (not measurable){% endif %}.
+  Long dashes: holding {{ instrument }}{% if scale.held_y is none %} (not recorded){% endif %}.
+  Thin line: zero. A dashed outline is a fold whose Sharpe could not be measured, which is
+  not a Sharpe of nought.
+</p>
+
+<h2>What the verdict is read against</h2>
+<table>
+  <tr><th></th><th>sharpe</th><th>drawdown %</th><th>trades</th></tr>
+  <tr><td>held back, pooled</td>
+      <td class="num">{% if pooled.sharpe is none %}not measurable{% else %}{{ '%.3f'|format(pooled.sharpe) }}{% endif %}</td>
+      <td class="num">{% if pooled.max_drawdown_pct is none %}—{% else %}{{ '%.2f'|format(pooled.max_drawdown_pct) }}{% endif %}</td>
+      <td class="num">{{ pooled.trades }}</td></tr>
+  <tr><td>the bar it had to clear</td>
+      <td class="num">{{ '%.3f'|format(criteria.effective_sharpe_bar) }}</td>
+      <td class="num">{{ '%.2f'|format(criteria.max_drawdown_ceiling_pct) }}</td>
+      <td class="num">{{ criteria.min_trades_pooled }}</td></tr>
+  <tr><td>in sample, where it was chosen</td>
+      <td class="num">{% if in_sample.sharpe is none %}—{% else %}{{ '%.3f'|format(in_sample.sharpe) }}{% endif %}</td>
+      <td class="num">—</td><td class="num">—</td></tr>
+  {% if benchmark %}
+  <tr><td>holding {{ benchmark.instrument }}, same bars</td>
+      <td class="num">{{ '%.3f'|format(benchmark.sharpe) }}</td>
+      <td class="num">{{ '%.2f'|format(benchmark.max_drawdown_pct) }}</td>
+      <td class="num">—</td></tr>
+  {% endif %}
+</table>
+<p class="sub" style="margin-top:var(--s2)">
+  The bar is {{ '%.2f'|format(criteria.min_sharpe) }} plus a margin of
+  {{ '%.2f'|format(criteria.pass_margin) }}, fixed before any search ran. Holding the
+  instrument is recorded beside the verdict and is no part of it: it pays no costs and is
+  always fully invested. Noise gate: {{ noise_gate.status|replace('_', ' ') }}
+  {%- if noise_gate.beaten is not none %}, the candidate beat {{ noise_gate.beaten }} of
+  {{ noise_gate.scoreable_trials }} surrogates where {{ noise_gate.required }} were needed{% endif %}.
+  {% if in_sample.degenerate %}The search flagged this candidate's plateau as degenerate.{% endif %}
+</p>
+
+<footer>
+  <div>{{ command }}</div>
+  <div>config {{ config }} · config hash {{ config_content_hash }} · generated {{ generated_at }}</div>
+  <div>from {{ source_search }}</div>
+  <div>snapshot {{ fixture_hash }}</div>
+  <div>costs, fractions — spread {{ costs_frac.spread }} · slippage {{ costs_frac.slippage }}
+       · commission {{ costs_frac.commission }} · fx {{ costs_frac.fx_conversion }}</div>
+  <div>{{ noise_ceiling_note }}</div>
+</footer>
+
+</main>
+</body>
+</html>

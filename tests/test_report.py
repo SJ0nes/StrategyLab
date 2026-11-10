@@ -56,7 +56,17 @@ from strategylab.report.surface import (
     build_context,
     render_surface,
 )
+from strategylab.report.verdict import (
+    BAR_WIDTH,
+    CHART_HEIGHT,
+    CHART_TOP,
+    FOLD_WIDTH,
+    VerdictReportError,
+    build_verdict_context,
+    render_verdict,
+)
 from strategylab.search.loop import SEARCH_SCHEMA_VERSION
+from strategylab.validate.walkforward import VALIDATION_SCHEMA_VERSION
 
 TRACEABLE: dict[str, Any] = {
     "protocol_version": 1,
@@ -781,3 +791,215 @@ def test_the_rendered_page_makes_no_external_request(tmp_path: Path) -> None:
 
     for marker in ("http://", "https://", "//cdn", "<script src", "<link "):
         assert marker not in html, f"the page references {marker!r}"
+
+
+# --------------------------------------------------------------------------
+# The verdict page. Folds side by side, on one scale derived by hand below.
+# --------------------------------------------------------------------------
+#
+# THE SCALE. The folds in the fixture score 2.0, -1.0, nothing at all, and 0.5;
+# the pooled Sharpe is 0.8, holding the instrument scored 0.6 and the bar is
+# 1.2. The lowest value present is -1 and the highest is 2: three Sharpe over a
+# chart 180 units tall, so ONE SHARPE IS 60 UNITS. The chart starts 28 units
+# down and a higher Sharpe is nearer the top, so v sits at 28 + (2 - v) * 60.
+
+
+def _fold(index: int, sharpe: float | None, outcome: str) -> dict[str, Any]:
+    """One fold as a validation artifact records it."""
+    return {
+        "index": index,
+        "start": f"{2019 + index}-01-01",
+        "end": f"{2019 + index}-12-31",
+        "sharpe": sharpe,
+        "max_drawdown_pct": None if sharpe is None else 7.5,
+        "trade_count": 0 if sharpe is None else 4,
+        "outcome": outcome,
+    }
+
+
+def _verdict(**overrides: Any) -> dict[str, Any]:
+    """A validation artifact carrying the fields the verdict page reads."""
+    artifact: dict[str, Any] = {
+        "schema_version": VALIDATION_SCHEMA_VERSION,
+        "generated_at": "2026-09-06T00:00:00+00:00",
+        "protocol_version": 1,
+        "strategy": "probe",
+        "config": "configs/small.yaml",
+        "config_content_hash": "not-a-real-config-hash",
+        "source_search": "state/search-20260822T213227Z.json",
+        "instrument": "SPY",
+        "data_content_hash": "not-a-real-snapshot-hash-000000000000000000000000000000000000",
+        "params": {"fast": 10, "slow": 80},
+        "in_sample": {"sharpe": 1.5, "plateau_score": 1.4, "degenerate": False},
+        "noise_ceiling_note": "100 trials supports reading the upper percentiles.",
+        "noise_gate": {
+            "status": "passed",
+            "candidate_sharpe": 1.5,
+            "scoreable_trials": 100,
+            "beaten": 97,
+            "required": 95,
+        },
+        "window": {"start": "2019-01-01", "end": "2022-12-31", "bars": 1008, "fold_months": 12},
+        "warmup_bars": 81,
+        "criteria": {
+            "min_sharpe": 1.0,
+            "pass_margin": 0.2,
+            "effective_sharpe_bar": 1.2,
+            "max_drawdown_ceiling_pct": 25.0,
+            "min_trades_per_fold": 10,
+            "min_trades_pooled": 30,
+        },
+        "costs_frac": {
+            "spread": 0.0003,
+            "slippage": 0.0005,
+            "commission": 0.0005,
+            "fx_conversion": 0.0,
+        },
+        "commission_min_flat": 0.0,
+        "outcome": "fail",
+        "reason": "pooled Sharpe 0.800 is below the bar of 1.20 (1.00 floor + 0.20 margin)",
+        "pooled": {"sharpe": 0.8, "max_drawdown_pct": 18.0, "trades": 12},
+        "benchmark": {
+            "kind": "buy_and_hold",
+            "instrument": "SPY",
+            "start": "2019-01-02",
+            "end": "2022-12-30",
+            "bars": 1008,
+            "sharpe": 0.6,
+            "max_drawdown_pct": 33.5,
+        },
+        "walk_forward_touches": 1,
+        "folds": [
+            _fold(0, 2.0, "pass"),
+            _fold(1, -1.0, "fail"),
+            _fold(2, None, "insufficient_data"),
+            _fold(3, 0.5, "insufficient_data"),
+        ],
+    }
+    artifact.update(overrides)
+    return artifact
+
+
+def test_the_verdict_geometry_constants_are_the_ones_assumed_below() -> None:
+    assert (FOLD_WIDTH, BAR_WIDTH, CHART_TOP, CHART_HEIGHT) == (132, 56, 28, 180)
+
+
+def test_every_fold_and_every_reference_line_shares_one_scale() -> None:
+    scale = build_verdict_context(_verdict(), "cmd")["scale"]
+
+    assert (scale["low"], scale["high"]) == (-1.0, 2.0)
+    # 28 + (2 - v) * 60 for zero, the bar of 1.2, the pooled 0.8 and holding at 0.6.
+    assert scale["zero_y"] == 148.0
+    assert scale["bar_y"] == 76.0
+    assert scale["pooled_y"] == 100.0
+    assert scale["held_y"] == 112.0
+
+
+def test_a_fold_is_a_bar_from_zero_to_its_sharpe() -> None:
+    folds = build_verdict_context(_verdict(), "cmd")["folds"]
+
+    # Fold 0 scored 2.0: its top is at 28 and it runs 120 units down to zero.
+    assert (folds[0]["bar_y"], folds[0]["bar_height"]) == (28.0, 120.0)
+    # Fold 1 scored -1.0: it hangs 60 units BELOW zero, so its top is the zero line.
+    assert (folds[1]["bar_y"], folds[1]["bar_height"]) == (148.0, 60.0)
+    # Fold 3 scored 0.5: 30 units above zero.
+    assert (folds[3]["bar_y"], folds[3]["bar_height"]) == (118.0, 30.0)
+    # Side by side, each 132 wide, the 56-wide bar centred: 38 in from its left.
+    assert [fold["left"] for fold in folds] == [0, 132, 264, 396]
+    assert [fold["bar_x"] for fold in folds] == [38.0, 170.0, 302.0, 434.0]
+
+
+def test_a_fold_that_could_not_be_measured_has_no_bar_rather_than_a_flat_one() -> None:
+    fold = build_verdict_context(_verdict(), "cmd")["folds"][2]
+
+    assert fold["measured"] is False
+    assert fold["bar_y"] is None
+    assert fold["bar_height"] is None
+
+
+def test_the_scale_always_holds_zero_and_the_bar() -> None:
+    # Every fold between 0.3 and 0.4: the scale still runs from 0 up to the 1.2
+    # bar, or the page would not show how far short they fell.
+    artifact = _verdict(
+        folds=[_fold(0, 0.3, "fail"), _fold(1, 0.4, "fail")],
+        pooled={"sharpe": 0.35, "max_drawdown_pct": 5.0, "trades": 40},
+        benchmark=None,
+    )
+
+    scale = build_verdict_context(artifact, "cmd")["scale"]
+
+    assert (scale["low"], scale["high"]) == (0.0, 1.2)
+    assert scale["bar_y"] == 28.0
+    assert scale["zero_y"] == 208.0
+    assert scale["held_y"] is None
+
+
+@pytest.mark.parametrize("outcome", ["pass", "fail", "insufficient_data"])
+def test_each_outcome_is_stated_with_its_own_treatment(tmp_path: Path, outcome: str) -> None:
+    path = tmp_path / "validation-probe.json"
+    path.write_text(json.dumps(_verdict(outcome=outcome)), encoding="utf-8")
+    html = render_verdict(path, tmp_path / "reports").read_text(encoding="utf-8")
+
+    assert f'class="verdict outcome-{outcome}"' in html
+    assert f'<div class="word">{outcome.replace("_", " ")}</div>' in html
+    assert ("This is not a soft failure." in html) == (outcome == "insufficient_data")
+
+
+def test_a_fold_with_insufficient_data_is_drawn_as_heavily_as_any_other(tmp_path: Path) -> None:
+    path = tmp_path / "validation-probe.json"
+    path.write_text(json.dumps(_verdict()), encoding="utf-8")
+    html = render_verdict(path, tmp_path / "reports").read_text(encoding="utf-8")
+
+    # Four panels, four outcome words, and hatching on the two that could not be
+    # judged - one of which has a bar and one of which has none.
+    assert html.count('class="panelbox"') == 4
+    assert html.count('class="foldword"') == 4
+    assert html.count('class="foldbar"') == 3
+    assert html.count('class="unmeasured"') == 1
+    assert html.count('class="hatch"') == 2 * len(range(0, CHART_HEIGHT, 14))
+    assert "not measurable" in html
+
+
+def test_the_verdict_page_is_traceable_and_self_contained(tmp_path: Path) -> None:
+    artifact = _verdict()
+    path = tmp_path / "validation-probe.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    out = render_verdict(path, tmp_path / "reports")
+    html = out.read_text(encoding="utf-8")
+
+    assert out.name == "validation-probe.html"
+    assert artifact["data_content_hash"] in html
+    assert "uv run strategylab validate state/search-20260822T213227Z.json" in html
+    assert f"v{artifact['protocol_version']}" in html
+    assert artifact["reason"] in html
+    assert "the candidate beat 97 of" in html
+    assert "holding SPY, same bars" in html
+    for marker in ("http://", "https://", "//cdn", "<script", "<link "):
+        assert marker not in html, f"the page references {marker!r}"
+
+
+def test_a_verdict_from_another_schema_is_not_redrawn() -> None:
+    with pytest.raises(VerdictReportError, match="schema version"):
+        build_verdict_context(_verdict(schema_version=VALIDATION_SCHEMA_VERSION - 1), "cmd")
+
+
+@pytest.mark.parametrize("where", ["pooled", "fold"])
+def test_an_outcome_outside_the_three_is_refused(where: str) -> None:
+    artifact = (
+        _verdict(outcome="maybe")
+        if where == "pooled"
+        else _verdict(folds=[_fold(0, 1.0, "inconclusive")])
+    )
+
+    with pytest.raises(VerdictReportError, match="outcome"):
+        build_verdict_context(artifact, "cmd")
+
+
+def test_both_pages_take_their_styling_from_one_place() -> None:
+    tokens = (TEMPLATE_DIR / "_tokens.css.j2").read_text(encoding="utf-8")
+
+    assert "--font:" in tokens
+    for name in ("surface.html.j2", "verdict.html.j2"):
+        page = (TEMPLATE_DIR / name).read_text(encoding="utf-8")
+        assert '{% include "_tokens.css.j2" %}' in page
+        assert "--font:" not in page, f"{name} redeclares a token"

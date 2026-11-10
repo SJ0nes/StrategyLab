@@ -228,14 +228,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1692 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1706 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker and the commit-time credential scan —
 twenty-one areas, one per test file.
-486 of the 1692 are the risk layer's,
+486 of the 1706 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -793,32 +793,28 @@ between loader and engine — something nothing in this repository detects and n
 test covers. It does not extend beyond names, which is exactly why arity and
 position size needed their own checks rather than following from the vocabulary.
 
-**The report meets two of the five interactions its own standard requires.**
+**The report meets four of the five interactions its own standard requires.**
 `report-design` and `render`'s contract both ask for five things. Hovering a
-cell for its metrics works, and every figure carries its protocol version,
-snapshot hash and originating command. The other three cannot exist yet and the
-gap is structural rather than unfinished work:
+cell for its metrics works; clicking one draws its equity curve against holding
+the instrument; the surrogates' distribution sits on the same Sharpe axis as
+every cell and the candidate; and a verdict's folds are drawn side by side.
+Every figure carries its protocol version, snapshot hash and originating
+command. What is missing, and what the four are worth:
 
-- **No equity curve on click.** The search artifact stores per-cell metrics and
-  no curves. Ninety curves over 3,523 bars is tens of megabytes of JSON against
-  a 38 KB file, so this needs a decision — downsample, store only the top few,
-  or recompute on demand — and nobody has taken it.
-- **No noise ceiling on the axis.** The standard is emphatic that the ceiling
-  belongs on the SAME axis as the result, so a winner inside the noise
-  distribution is *visible* rather than computed. A ceiling now exists, but the
-  page reports it as a sentence and a percentile — the reader has to do the
-  comparison the figure was supposed to make for them. Worse, the placement is
-  computed from the artifact's stored percentiles rather than the raw trials, so
-  it is coarse: it can say "above the 95th" or "around the 50th" and nothing
-  between. The band is roadmap session 8.
-- **No fold panels and no two-run comparison.** `validate/` now produces folds
-  and writes them to `state/validation-<stamp>.json`, but `report/` reads only
-  `search-*.json` and nothing yet loads two result sets. A verdict is therefore
-  readable as JSON and invisible in every figure. These are roadmap session 8.
+- **No two-run comparison.** One artifact draws one page. Nothing loads two
+  result sets and shows what changed between them.
+- **The click-through is untested.** It is JavaScript in the page, and no test
+  in this project runs a browser. It was checked by rendering a sample and
+  reading a screenshot, which proves it worked once.
+- **The curves are thinned.** A drawn curve is at most 400 points of a series
+  that may hold thousands, so a one-day spike can fall between two of them. The
+  figures beside it are from the full curve and are the ones to trust.
+- **The verdict page has only ever drawn a fixture.** No validation has been
+  run in this repository, so no real verdict exists for it to render.
 
-Reading the figure while three of its five affordances are missing is the risk
-worth naming: it looks finished, and a heatmap of unbenchmarked Sharpes is
-exactly the kind of thing that persuades by being well drawn.
+A well-drawn page persuades more than a table does, which is the risk worth
+naming: the surface is only evidence of anything when the banner above it says
+the noise gate passed.
 
 **The colour scale is a sampled approximation of viridis, not viridis.** Ten
 anchor stops with linear interpolation between them, hand-coded so the page

@@ -45,6 +45,7 @@ from strategylab.live.worker import (
 from strategylab.logging.decisions import read_decisions, write_decision, write_decisions
 from strategylab.protocol import Protocol, ProtocolError, load_protocol
 from strategylab.report.surface import ReportError, render_surface
+from strategylab.report.verdict import VerdictReportError, render_verdict
 from strategylab.risk.limits import load_limits
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH
 from strategylab.search.grid import expand_grid
@@ -875,9 +876,13 @@ def report() -> None:
 
     Every search artifact in state/ is re-rendered, not just the newest: a
     template change should improve every figure you have, and re-rendering one
-    of a set would leave the rest silently on an older design.
+    of a set would leave the rest silently on an older design. Every validation
+    artifact is drawn too, as its folds side by side; a verdict is the one
+    result that cannot be re-derived for free, so its page is read from the
+    file and from nothing else.
     """
     artifacts = sorted(STATE_DIR.glob("search-*.json")) if STATE_DIR.exists() else []
+    verdicts = sorted(STATE_DIR.glob("validation-*.json")) if STATE_DIR.exists() else []
     if not artifacts:
         err_console.print(f"[bold red]no search results in {STATE_DIR.as_posix()}/[/bold red]")
         err_console.print(
@@ -885,12 +890,13 @@ def report() -> None:
         )
         raise typer.Exit(code=1)
 
-    console.print(f"Rendering {len(artifacts)} result(s) ...")
+    console.print(f"Rendering {len(artifacts) + len(verdicts)} result(s) ...")
     written: list[Path] = []
-    for artifact in artifacts:
+    for artifact in [*artifacts, *verdicts]:
+        draw = render_verdict if artifact in verdicts else render_surface
         try:
-            written.append(render_surface(artifact))
-        except (ReportError, ValueError) as exc:
+            written.append(draw(artifact))
+        except (ReportError, VerdictReportError, KeyError, ValueError) as exc:
             # One unrenderable artifact must not cost the operator the rest of
             # their reports, so this reports and carries on rather than exiting.
             #
@@ -908,7 +914,7 @@ def report() -> None:
         console.print(f"  [green]{path.as_posix()}[/green]")
     console.print(
         "\n[dim]Self-contained pages - no network, no companion files. Hover a cell for "
-        "its metrics.[/dim]"
+        "its metrics, click it for its equity curve.[/dim]"
     )
     console.print(
         "[dim]A figure shows a noise ceiling only if its search was run with --trials, "

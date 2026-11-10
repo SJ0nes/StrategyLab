@@ -68,27 +68,20 @@ def render(template: str, context: dict[str, Any], out: Path) -> Path:
     and speed is most of what makes a tool feel good to use.
 
     WHAT THE RENDERED PAGES SUPPORT TODAY, against what the standard asks for.
-    The full list is five interactions; two of them are met and three cannot be:
+    The full list is five interactions; four of them are met and one is not:
 
     - hovering a grid cell to see its metrics without a page load - MET;
-    - clicking a cell to show that cell's equity curve - NOT MET. The search
-      artifact carries per-cell metrics and no curves; ninety curves over three
-      and a half thousand bars is tens of megabytes against a thirty-kilobyte
-      file, so what to store is a decision nobody has taken yet;
-    - the noise ceiling on the SAME axis as the result - NOT MET, though no
-      longer for want of a ceiling. ``search --trials`` computes one and the
-      page reports where the candidate falls in it, but as a sentence and a
-      percentile rather than a band drawn on the surface's own axis. A page
-      whose search had no ceiling says that instead;
-    - fold results side by side - NOT MET. ``validate/`` produces folds and
-      ``cli.validate`` prints them as a table; no page renders them;
-    - loading two result sets to compare runs - NOT MET.
+    - clicking a cell to show that cell's equity curve - MET. The search
+      artifact carries every cell's curve thinned for drawing, and the surface
+      page draws the chosen one against holding the instrument;
+    - the noise ceiling on the SAME axis as the result - MET. The surface page
+      lays every cell, every surrogate, the surrogates' band, the candidate and
+      buy-and-hold along one Sharpe axis;
+    - fold results side by side - MET, by ``report/verdict.py``;
+    - loading two result sets to compare runs - NOT MET. One artifact draws
+      one page and nothing diffs two.
 
-    One of those waits on a component that does not exist; two wait on a
-    rendering of something already computed; one on a storage decision. They
-    are listed here
-    rather than quietly dropped, because a contract that describes five
-    interactions and a module that offers two should say which two.
+    The click-through is JavaScript and no test in this project runs it.
 
     Every number shown is traceable: the protocol version, the fixture hash,
     and the command that produced it appear on the figure itself.
