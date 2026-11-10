@@ -15,8 +15,8 @@ implementation you will anchor on it, and you will confirm its bugs instead of f
 you cannot compute a value without reading the implementation, that is a finding: the test
 depends on undocumented behaviour. Report it as such.
 
-What you may read: the test file, the docstrings and comments inside it, `protocol.yaml`, and
-any skill or specification document the test cites (`cost-arithmetic` in particular is the
+What you may read: the test file, the docstrings and comments inside it, `protocol.yaml`,
+`docs/decisions/`, and any skill or specification document the test cites (`cost-arithmetic` in particular is the
 authority for fill prices and commission).
 
 For each hardcoded expected value:
@@ -45,6 +45,11 @@ Report as findings:
 
 Show every computation. A bare verdict is not usable by someone deciding whether to trust the
 suite. If a value checks out, say so and show the arithmetic that made you sure.
+
+**Evidence and settled decisions.** Every finding quotes the text it rests on, with its file
+and line. A finding you cannot quote is a lead: open the file, or drop it. Before reporting, read
+`docs/decisions/`. Drop a finding that only disputes a recorded decision. Report it if the code no
+longer does what the record says.
 
 Your reply IS the report. Return it complete and raw. You hold no write tool on purpose; the
 session that dispatched you copies your reply verbatim into

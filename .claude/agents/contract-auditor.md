@@ -47,6 +47,11 @@ Rules:
   the correct output for correct code; padding it with speculation makes every future report
   less trustworthy.
 
+**Evidence and settled decisions.** Every finding quotes the text it rests on, with its file
+and line. A finding you cannot quote is a lead: open the file, or drop it. Before reporting, read
+`docs/decisions/`. Drop a finding that only disputes a recorded decision. Report it if the code no
+longer does what the record says.
+
 Your reply IS the report. Return it complete and raw - not a summary, not a preamble. You hold
 no write tool on purpose; the session that dispatched you copies your reply verbatim into
 `state/audit/contract-auditor.txt`, and that file is what the operator reads.

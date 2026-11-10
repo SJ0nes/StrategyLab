@@ -47,6 +47,11 @@ Rules:
 - If the prompt and the repository agree, say so plainly and give the counts you verified. That
   is a real result and it should be short.
 
+**Evidence and settled decisions.** Every finding quotes the text it rests on, with its file
+and line. A finding you cannot quote is a lead: open the file, or drop it. Before reporting, read
+`docs/decisions/`. Drop a finding that only disputes a recorded decision. Report it if the code no
+longer does what the record says.
+
 Your reply IS the report. Return it complete and raw. You hold no write tool on purpose; the
 session that dispatched you copies your reply verbatim into `state/audit/drift-checker.txt`,
 and that file is what the operator reads.
