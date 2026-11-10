@@ -16,17 +16,32 @@ When the command also says ``add``, untracked files that are not ignored are rea
 The hook runs BEFORE the command, so in ``git add new.py && git commit`` the new file
 is still untracked when it is scanned, and neither diff lists it.
 
-A command is parsed to find which repository it commits in (``git -C <dir> commit``,
-``git --git-dir <dir> --work-tree <dir> commit``, ``git -c x=y commit``,
-``bash -c '...'``), following a ``cd``, ``pushd`` or ``Set-Location`` earlier in it, and
-reading from the repository's top level, which is where git names paths from. A ``cd``
-is followed but not trusted alone: a subshell or ``popd`` can undo it, so the starting
-directory is scanned as well. A command that names its repository through ``GIT_DIR``,
-``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, ``GIT_COMMON_DIR`` or ``core.worktree`` is
-refused, since the scan does not follow those. When the words appear but the parser finds no
-commit - a multi-line script, an environment prefix, a wrapper - the working directory is
-scanned anyway. Scanning a command that turns out not to commit costs one git call;
-missing one that does is permanent.
+A COMMAND THAT COMMITS MAY NOT SAY WHERE. Git is run in the repository the session is
+in and nowhere else, because git obeys the config of the repository it runs in -
+``core.fsmonitor`` alone names a command it will execute - so running git in a
+directory is trusting it. That leaves the question of whether the commit really runs
+in the session's repository, and four versions of this hook tried to answer it by
+working out where a ``cd``, a ``-C`` or a ``--git-dir`` led. Each was shown a way to be
+wrong: a subshell, a ``popd``, an unexpanded ``~``, a quoted option, a ``--git-dir``
+paired with an innocent ``--work-tree``. So this version does not work it out. If the
+command changes directory at all, or names a repository at all - ``cd``, ``pushd``,
+``popd``, ``Set-Location``, ``-C``, ``--git-dir``, ``--work-tree``, ``GIT_DIR`` and its
+relatives, ``core.worktree`` - it is refused, whether or not it would have ended up at
+home. A plain ``git add ... && git commit ...`` from where the session already is has
+nothing to refuse.
+
+The cost is honest commands refused: ``cd sub && git commit``, and ``git commit -C
+<commit>``, whose ``-C`` means "reuse that message" and reads the same. What this still
+cannot see is anything the words do not show: ``eval``, an alias, a function, a
+``$(...)``. It is a guard against an accident, not against an attempt.
+
+The text of a commit message is not a command. A quoted argument to ``-m`` and the body
+of a here-document on a line that says ``commit`` are left out of that check, so a
+message may describe a ``cd`` without being refused for it. THAT IS A KNOWN HOLE, kept
+on purpose: a ``$(cd elsewhere && git commit)`` written inside a message does run, and a
+here-document on a commit line can be a script rather than a message. Closing it would
+refuse every commit whose message mentions a directory change, and nobody writes
+either of those by accident.
 
 A matched value is never printed, only the file and the rule, because hook output is
 written into the session transcript.
@@ -72,18 +87,31 @@ CONTENT_RULES: list[tuple[str, re.Pattern[bytes]]] = [
 # is caught like any other.
 CONTENT_EXEMPT: tuple[str, ...] = (".claude/setup.md",)
 
-LOOKS_LIKE_COMMIT = re.compile(r"\bgit(\.exe)?\b[\s\S]*\bcommit\b")
-GIT_BASH_DRIVE = re.compile(r"^/([a-zA-Z])(/|$)")
+# Case-blind: PowerShell runs `Git Commit` as readily as `git commit`.
+LOOKS_LIKE_COMMIT = re.compile(r"\bgit(\.exe)?\b[\s\S]*\bcommit\b", re.I)
 
-# git's own options that take a separate value, or the value is read as the subcommand.
-GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
-SHELLS = {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}
-DIRECTORY_CHANGES = {"cd", "pushd", "set-location", "sl", "chdir"}
-# Ways of naming a repository that the scan does not follow, so a command using one is
-# refused rather than checked against the wrong tree.
-UNFOLLOWED = re.compile(
+# Words that move the shell somewhere else, compared in lower case.
+DIRECTORY_WORDS = frozenset(
+    {"cd", "chdir", "pushd", "popd", "sl", "set-location", "push-location", "pop-location"}
+)
+# Options that tell git, or the launcher starting it, which directory to use. Lower case.
+REPOSITORY_OPTIONS = ("--git-dir", "--work-tree", "--chdir", "-workingdirectory")
+# The variables that do the same, as a bare name: `Set-Item env:GIT_DIR` has no equals.
+REPOSITORY_NAMES = re.compile(r"GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)", re.I)
+# Environment and config that do the same. Matched anywhere in the command, message
+# included: a variable assignment can sit in places a tokenizer does not look.
+REPOSITORY_SETTINGS = re.compile(
     r"\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)\s*=|\bcore\.(worktree|bare)\b", re.I
 )
+# Options whose next argument is the commit's message, which is text and not a command.
+MESSAGE_OPTIONS = frozenset({"-m", "--message"})
+# A here-document: `<<TAG`, `<<'TAG'`, `<<"TAG"` or `<<-TAG`, capturing the tag.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+QUOTES = str.maketrans("", "", "'\"`\\")
+
+# Without this, ``git diff`` runs ``git status`` inside every nested repository the index
+# registers, and that inner status obeys the nested repository's own config.
+NO_SUBMODULES = ("--ignore-submodules=all",)
 
 # Bytes. Past this a file is refused unread rather than half-checked.
 MAX_SCAN_BYTES = 50_000_000
@@ -98,98 +126,99 @@ def git(root: Path, *args: str) -> bytes | None:
     return done.stdout if done.returncode == 0 else None
 
 
-def tokenise(command: str) -> list[str] | None:
-    """Split a shell command into tokens, or None if its quotes do not balance."""
-    try:
-        lexer = shlex.shlex(command, posix=False, punctuation_chars=True)
-        lexer.whitespace_split = True
-        return list(lexer)
-    except ValueError:
-        return None
+def without_message_bodies(command: str) -> str:
+    """Return ``command`` with the body of every here-document that feeds a commit removed.
 
-
-def commits(tokens: list[str], cwd: Path) -> list[tuple[list[str], Path]]:
-    """Return git's own options and the directory it runs in, for every commit in ``tokens``.
-
-    A ``cd``, ``pushd`` or ``Set-Location`` earlier in the command moves the directory
-    the later commits run in. Only the options before ``commit`` are returned: after it,
-    ``-C`` means "reuse this commit's message", not "run in this directory". A commit
-    message containing the words stays inside one quoted token and is not read as a
-    command.
+    ``git commit -F - <<'EOF'`` is how a long message is written, and its body is prose.
+    Only a here-document on a line that says ``commit`` is treated that way: one feeding
+    ``bash`` is a script, and its ``cd`` is as real as any other.
     """
-    found: list[tuple[list[str], Path]] = []
-    base = cwd
-    segments: list[list[str]] = [[]]
-    for token in tokens:
-        if set(token) <= set("();&|"):
-            segments.append([])
-        else:
-            segments[-1].append(token)
-
-    for segment in segments:
-        if not segment:
+    kept: list[str] = []
+    closing: str | None = None
+    for line in command.split("\n"):
+        if closing is not None:
+            if line.strip() == closing:
+                closing = None
             continue
-        name = Path(segment[0].strip("'\"")).stem.lower()
-        if name in DIRECTORY_CHANGES:
-            target = next((t for t in segment[1:] if not t.startswith("-")), None)
-            if target is not None:
-                base = resolve(target, base)
-        elif name in SHELLS:
-            for token in segment[1:]:
-                if len(token) >= 2 and token[0] in "'\"" and token[-1] == token[0]:
-                    inner = tokenise(token[1:-1])
-                    if inner is not None:
-                        found += commits(inner, base)
-        elif name == "git":
-            rest = segment[1:]
-            i = 0
-            while i < len(rest) and rest[i].startswith("-"):
-                i += 2 if rest[i] in GIT_OPTS_WITH_VALUE else 1
-            if i < len(rest) and rest[i] == "commit":
-                found.append((rest[:i], base))
+        kept.append(line)
+        opened = HEREDOC.search(line)
+        if opened and re.search(r"\bcommit\b", line):
+            closing = opened.group(2)
+    return "\n".join(kept)
+
+
+def words(text: str) -> list[str]:
+    """Split shell text into words, opening up quoted text that is not a commit message.
+
+    Quotes do not hide a word here. ``"-C"`` is ``-C``, ``c""d`` is ``cd``, and the
+    string handed to ``bash -c`` is split in its turn. The one quoted thing left whole
+    is the argument after ``-m``, which is a message. A ``#`` is never a comment: the
+    shell only treats it as one at the start of a word, and guessing wrong would hide
+    everything after it.
+    """
+    try:
+        lexer = shlex.shlex(text, posix=False, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        # Unbalanced quotes. Split on anything that is not part of a word instead, so
+        # nothing is skipped; a message may be split with it, which only costs a refusal.
+        tokens = re.split(r"[\s;&|(){}]+", text)
+
+    found: list[str] = []
+    after_message_option = False
+    for token in tokens:
+        quoted = len(token) >= 2 and token[0] in "'\"" and token[-1] == token[0]
+        bare = token.translate(QUOTES)
+        if quoted and after_message_option:
+            pass
+        elif quoted and re.search(r"\s", bare):
+            found += words(token[1:-1])
+        else:
+            found.append(bare)
+        after_message_option = bare in MESSAGE_OPTIONS
     return found
 
 
-def option_values(options: list[str]) -> dict[str, str]:
-    """Map each of git's own options to its value, in either ``--opt v`` or ``--opt=v`` form."""
-    values: dict[str, str] = {}
-    i = 0
-    while i < len(options):
-        option = options[i]
-        if "=" in option and option.startswith("--"):
-            name, value = option.split("=", 1)
-            values[name] = value
-        elif option in GIT_OPTS_WITH_VALUE and i + 1 < len(options):
-            values[option] = options[i + 1]
-            i += 1
-        i += 1
-    return values
+def redirections(command: str) -> list[str]:
+    """Return every word in ``command`` that moves the shell or names a repository."""
+    text = without_message_bodies(command)
+    found = [match.group(0).strip() for match in REPOSITORY_SETTINGS.finditer(command)]
+    for word in words(text):
+        # `$'cd'` is bash for the string cd, so a leading dollar hides nothing.
+        plain = word.lstrip("$").lower()
+        if plain in DIRECTORY_WORDS or word == "-C":
+            found.append(word)
+        elif plain.startswith(REPOSITORY_OPTIONS):
+            found.append(word.split("=", 1)[0])
+        elif named := REPOSITORY_NAMES.search(word):
+            found.append(named.group(0))
+    return sorted(set(found))
 
 
-def resolve(raw: str, base: Path) -> Path:
-    """Turn a path as typed in the command into one Windows Python can open.
+def is_repo_root(directory: Path) -> bool:
+    """Say whether git, run in ``directory``, would take it for a repository of its own.
 
-    A Git Bash ``/c/...`` path is rewritten to ``c:/...``; a relative one is taken from
-    ``base``.
+    Either it holds a ``.git`` entry, or it IS a git directory: one holding ``HEAD`` and
+    ``objects``.
     """
-    given = Path(GIT_BASH_DRIVE.sub(r"\1:\2", raw.strip("'\"")))
-    return given if given.is_absolute() else base / given
+    if (directory / ".git").exists():
+        return True
+    return (directory / "HEAD").is_file() and (directory / "objects").is_dir()
 
 
-def repo_for(options: list[str], cwd: Path) -> Path:
-    """Return the working tree a commit runs in, given git's own options.
+def enclosing_repo(directory: Path) -> Path | None:
+    """Return the nearest directory at or above ``directory`` that is a repository root.
 
-    ``--work-tree`` wins; otherwise the parent of ``--git-dir``, which assumes the usual
-    layout and makes git refuse, and so the hook block, when it is not; otherwise ``-C``
-    or ``cwd``.
+    Found by LOOKING, never by asking git, so that nothing is run in a directory before
+    it is known to be the session's own.
     """
-    values = option_values(options)
-    base = resolve(values["-C"], cwd) if "-C" in values else cwd
-    if "--work-tree" in values:
-        return resolve(values["--work-tree"], base)
-    if "--git-dir" in values:
-        return resolve(values["--git-dir"], base).parent
-    return base
+    try:
+        start = directory.resolve()
+        return next((d for d in (start, *start.parents) if is_repo_root(d)), None)
+    except OSError:
+        return None
 
 
 def changed_paths(root: Path, include_untracked: bool) -> list[str] | None:
@@ -199,8 +228,8 @@ def changed_paths(root: Path, include_untracked: bool) -> list[str] | None:
     are not ignored when ``include_untracked`` is set.
     """
     listings = [
-        git(root, "diff", "--cached", "--name-only", "--diff-filter=d", "-z"),
-        git(root, "diff", "--name-only", "--diff-filter=d", "-z"),
+        git(root, "diff", "--cached", "--name-only", "--diff-filter=d", "-z", *NO_SUBMODULES),
+        git(root, "diff", "--name-only", "--diff-filter=d", "-z", *NO_SUBMODULES),
     ]
     if include_untracked:
         listings.append(git(root, "ls-files", "--others", "--exclude-standard", "-z"))
@@ -266,38 +295,25 @@ def run(event: dict[str, Any]) -> int:
     if not LOOKS_LIKE_COMMIT.search(command):
         return 0
 
-    if UNFOLLOWED.search(command):
-        return refuse(["the command names its repository through GIT_DIR, GIT_WORK_TREE or "
-                       "core.worktree, which this guard does not follow"])
-    tokens = tokenise(command)
-    if tokens is None and re.search(r"\s(-C|--git-dir|--work-tree)\b|\b(cd|pushd)\b", command):
-        return refuse(["this command could not be parsed, so its repository is unknown"])
+    moved = redirections(command)
+    if moved:
+        return refuse([
+            f"the command commits and also changes directory or names a repository "
+            f"({', '.join(moved)}). This guard runs git only in the repository the session "
+            "is in, and it does not try to work out where such a command ends up: every "
+            "version that tried was shown a way to be wrong. Run the commit as a plain "
+            "`git add ... && git commit ...` from the directory the session is already in"
+        ])
 
-    cwd = Path(str(event.get("cwd") or Path.cwd()))
-    invocations = commits(tokens, cwd) if tokens is not None else []
-    # A parsed commit's repository must be readable. The starting directory is also scanned
-    # when no commit was parsed, or when a cd moved one: a subshell or popd can undo a cd,
-    # and the parser does not model either. It is skipped if it is not a repository.
-    targets = [(repo_for(options, base), True) for options, base in invocations]
-    if not invocations or any(base != cwd for _, base in invocations):
-        targets.append((cwd, False))
-    # An unparseable command may hide an add, so it is read as if it had one.
-    adds = tokens is None or re.search(r"\badd\b", command) is not None
+    home = enclosing_repo(Path(str(event.get("cwd") or Path.cwd())))
+    if home is None:
+        # Not in a repository, so git has nothing to commit to and there is nothing to read.
+        return 0
 
-    findings: list[str] = []
-    seen: set[Path] = set()
-    for root, required in targets:
-        # Git names changed paths from the top level, whichever directory it runs in.
-        listed = git(root, "rev-parse", "--show-toplevel")
-        top = Path(listed.decode().strip()) if listed else None
-        paths = changed_paths(top, adds) if top else None
-        if top is None or paths is None:
-            if required:
-                return refuse([f"git could not say what {root.name} would commit"])
-            continue
-        if top not in seen:
-            seen.add(top)
-            findings += scan(top, paths)
+    paths = changed_paths(home, re.search(r"\badd\b", command) is not None)
+    if paths is None:
+        return refuse([f"git could not say what {home.name} would commit"])
+    findings = scan(home, paths)
     return refuse(findings) if findings else 0
 
 

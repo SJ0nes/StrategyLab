@@ -180,35 +180,163 @@ def test_an_ignored_file_is_not_scanned_by_an_add(repo: Path) -> None:
     assert run_hook("git add a.txt && git commit -m x", repo).returncode == 0
 
 
-@pytest.mark.parametrize("form", ["separate", "joined"])
-def test_git_dir_and_work_tree_name_the_repository(tmp_path: Path, form: str) -> None:
-    dirty = make_repo(tmp_path / "dirty")
-    clean = make_repo(tmp_path / "clean")
-    stage(dirty, "a.txt", PEM)
-    git_dir, work_tree = (dirty / ".git").as_posix(), dirty.as_posix()
-    if form == "separate":
-        options = f"--git-dir {git_dir} --work-tree {work_tree}"
-    else:
-        options = f"--git-dir={git_dir} --work-tree={work_tree}"
-    assert run_hook(f"git {options} commit -m x", clean).returncode == 2
-    assert run_hook(f"git --git-dir={git_dir} commit -m x", clean).returncode == 2
+# --------------------------------------------------------------------------
+# Where. A command that commits may not say, and git runs only at home.
+# --------------------------------------------------------------------------
+#
+# Git obeys the config of the repository it runs in - `core.fsmonitor` alone
+# names a command it will execute - so running git somewhere is trusting it.
+# Four versions of this hook tried to work out where a `cd` or a `-C` led and
+# each was shown a command it got wrong. This one does not work it out: a
+# command that commits and also changes directory, or names a repository, is
+# refused whether or not it would have ended up at home.
+
+#: Commands that commit and also move or name a repository. `{other}` is a
+#: second repository and `{home}` the one the session is in.
+#:
+#: Many of these really do commit in `{home}` - the last block is nothing else.
+#: They are refused with the rest. That is the price of never guessing.
+REDIRECTED = {
+    # Aimed at another repository.
+    "dash-C": "git -C {other} commit -m x",
+    "dash-C-twice": "git -C sub -C {other} commit -m x",
+    "cd": "cd {other} && git commit -m x",
+    "pushd": "pushd {other} && git commit -m x",
+    "Set-Location": "Set-Location {other}; git commit -m x",
+    "git-dir-and-work-tree": "git --git-dir {other}/.git --work-tree {other} commit -m x",
+    "joined-options": "git --git-dir={other}/.git --work-tree={other} commit -m x",
+    "git-dir-alone": "git --git-dir={other}/.git commit -m x",
+    "work-tree-alone": "git --work-tree={other} commit -m x",
+    "other-git-dir-home-work-tree": "git --git-dir={other}/.git --work-tree=. commit -m x",
+    "home-git-dir-other-work-tree": "git --git-dir={home}/.git --work-tree={other} commit -m x",
+    "nested-shell": "bash -c 'cd {other} && git commit -m x'",
+    # Hidden behind quoting, wrappers or an unexpanded path.
+    "quoted-option": 'git "-C" {other} commit -m x',
+    "quoted-subcommand": 'git -C {other} "commit" -m x',
+    "option-before-dash-C": "git --attr-source HEAD -C {other} commit -m x",
+    "split-word": 'c""d {other} && git commit -m x',
+    "after-a-hash": "echo a#b; cd {other} && git commit -m x",
+    "command-wrapper": "command git -C {other} commit -m x",
+    "builtin-wrapper": "builtin cd {other} && git commit -m x",
+    "brace-group": "{{ cd {other}; git commit -m x; }}",
+    "tilde": "cd ~/elsewhere && git commit -m x",
+    "variable": 'cd "$OTHER" && git commit -m x',
+    "dash-C-variable": "git -C $HOME/elsewhere commit -m x",
+    "bare-cd": "cd && git commit -m x",
+    "escaped-space": "cd my\\ dir && git commit -m x",
+    "escaped-quotes": 'git commit -m "a \\" ; git -C {other} commit ; \\" b"',
+    "script-heredoc": "bash <<EOF\ncd {other}\ngit commit -m x\nEOF",
+    "capital-letters": "Set-Location {other}; Git Commit -m x",
+    "launcher-chdir": "env --chdir={other} git commit -m x",
+    "launcher-working-directory": (
+        "Start-Process git -ArgumentList 'commit','-m','y' -WorkingDirectory {other} -Wait"
+    ),
+    "variable-by-name": "Set-Item env:GIT_DIR {other}/.git; git commit -m x",
+    "dollar-quoted": "$'cd' {other} && git commit -m x",
+    # Passing through and coming home, or never leaving.
+    "subshell": "(cd {other} && ls); git commit -m x",
+    "pushd-and-popd": "pushd {other}; ls; popd; git commit -m x",
+    "cd-and-back": "cd {other}; cd -; git commit -m x",
+    "there-and-home-again": "cd {other} && ls && cd {home} && git commit -m x",
+    "into-a-subdirectory": "cd sub && git commit -m x",
+    "dash-C-subdirectory": "git -C sub commit -m x",
+    "home-by-name": "git --git-dir={home}/.git --work-tree={home} commit -m x",
+    "reuse-message": "git commit -C HEAD",
+}
 
 
-def test_work_tree_wins_over_the_git_dir_parent(tmp_path: Path) -> None:
-    """With a separate git directory, the working tree is not the git dir's parent.
+def _aimed(form: str, home: Path, other: Path) -> str:
+    """Fill one of the REDIRECTED commands with real paths."""
+    return REDIRECTED[form].format(home=home.as_posix(), other=other.as_posix())
 
-    A clean repository must pass. Reading the parent instead would find no
-    repository there and block a commit that carries nothing.
+
+@pytest.fixture(scope="module")
+def fsmonitor_payload(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, Path]:
+    """A `core.fsmonitor` value that leaves a marker file, once proven to work here.
+
+    Git runs the command a repository names in `core.fsmonitor` whenever it
+    refreshes the index. If the installed git does not, a test built on it would
+    pass for the wrong reason, so those tests skip instead.
     """
-    git_dir, work_tree = tmp_path / "store" / "repo.git", tmp_path / "tree"
-    work_tree.mkdir()
-    git_dir.parent.mkdir()
-    git(tmp_path, "init", "-q", f"--separate-git-dir={git_dir}", str(work_tree))
-    stage(work_tree, "a.txt", "fine\n")
-    options = f"--git-dir={git_dir.as_posix()} --work-tree={work_tree.as_posix()}"
-    assert run_hook(f"git {options} commit -m x", tmp_path).returncode == 0
-    stage(work_tree, "b.txt", PEM)
-    assert run_hook(f"git {options} commit -m x", tmp_path).returncode == 2
+    root = tmp_path_factory.mktemp("fsmonitor")
+    marker = root / "ran.txt"
+    payload = f"echo ran > '{marker.as_posix()}' #"
+    probe = make_repo(root / "probe")
+    git(probe, "config", "core.fsmonitor", payload)
+    subprocess.run(["git", "diff", "--name-only"], cwd=probe, capture_output=True, check=False)
+    if not marker.exists():
+        pytest.skip("this git does not run a core.fsmonitor command")
+    marker.unlink()
+    return payload, marker
+
+
+@pytest.mark.parametrize("form", sorted(REDIRECTED))
+def test_a_commit_that_also_says_where_is_refused_whatever_anything_holds(
+    tmp_path: Path, form: str
+) -> None:
+    """Both repositories are clean. The refusal is about the command, not the contents."""
+    home = make_repo(tmp_path / "home")
+    other = make_repo(tmp_path / "other")
+    (home / "sub").mkdir()
+
+    done = run_hook(_aimed(form, home, other), home)
+
+    assert done.returncode == 2
+    assert "changes directory or names a repository" in done.stderr
+
+
+@pytest.mark.parametrize("form", sorted(REDIRECTED))
+def test_git_is_never_run_in_another_repository(
+    tmp_path: Path, form: str, fsmonitor_payload: tuple[str, Path]
+) -> None:
+    """The other repository names a command for git to run. The hook must not run it."""
+    payload, marker = fsmonitor_payload
+    home = make_repo(tmp_path / "home")
+    other = make_repo(tmp_path / "other")
+    (home / "sub").mkdir()
+    git(other, "config", "core.fsmonitor", payload)
+
+    assert run_hook(_aimed(form, home, other), home).returncode == 2
+    assert not marker.exists()
+
+
+def test_the_payload_does_run_when_git_is_used_in_that_repository(
+    tmp_path: Path, fsmonitor_payload: tuple[str, Path]
+) -> None:
+    """The control for the test above: the marker appears the moment git looks."""
+    payload, marker = fsmonitor_payload
+    other = make_repo(tmp_path / "other")
+    git(other, "config", "core.fsmonitor", payload)
+
+    subprocess.run(["git", "diff", "--name-only"], cwd=other, capture_output=True, check=False)
+
+    assert marker.exists()
+    marker.unlink()
+
+
+#: Commit messages that talk about moving, in every way a message is written.
+#: None of them moves anything.
+MESSAGES = {
+    "dash-m": 'git commit -m "fix: follow cd and pushd, refuse -C and --git-dir"',
+    "single-quoted": "git commit -m 'docs: explain why cd is refused'",
+    "names-a-variable": 'git commit -m "docs: why GIT_DIR and --work-tree are refused"',
+    "long-option": 'git commit --message "revert the -C handling"',
+    "two-paragraphs": 'git commit -m "fix: cd" -m "popd was never modelled"',
+    "heredoc": "git commit -F - <<'EOF'\nfix: stop following cd\n\npushd and -C too.\nEOF",
+    "heredoc-after-add": "git add a.txt && git commit -q -F - <<EOF\nno more --git-dir\nEOF\n"
+    "git log --oneline -1",
+}
+
+
+@pytest.mark.parametrize("form", sorted(MESSAGES))
+def test_a_message_that_only_talks_about_moving_is_not_refused(repo: Path, form: str) -> None:
+    stage(repo, "a.txt", "fine\n")
+    assert run_hook(MESSAGES[form], repo).returncode == 0
+
+    stage(repo, "b.txt", PEM)
+    done = run_hook(MESSAGES[form], repo)
+    assert done.returncode == 2
+    assert "b.txt" in done.stderr, "still scanned, and blocked for what it found"
 
 
 def test_a_commit_from_a_subdirectory_reads_the_working_copy(repo: Path) -> None:
@@ -218,38 +346,20 @@ def test_a_commit_from_a_subdirectory_reads_the_working_copy(repo: Path) -> None
     assert run_hook("git commit -am x", repo / "sub").returncode == 2
 
 
-@pytest.mark.parametrize("cd", ["cd", "pushd", "Set-Location"])
-def test_a_directory_change_before_the_commit_is_followed(tmp_path: Path, cd: str) -> None:
-    dirty = make_repo(tmp_path / "dirty")
-    clean = make_repo(tmp_path / "clean")
-    stage(dirty, "a.txt", PEM)
-    assert run_hook(f"{cd} {dirty.as_posix()} && git commit -m x", clean).returncode == 2
-    assert run_hook(f"{cd} {clean.as_posix()} && git commit -m x", clean).returncode == 0
+def test_a_work_tree_with_a_separate_git_directory_is_found(tmp_path: Path) -> None:
+    """A work tree whose `.git` is a file pointing elsewhere is still a repository."""
+    git_dir, work_tree = tmp_path / "store" / "repo.git", tmp_path / "tree"
+    work_tree.mkdir()
+    git_dir.parent.mkdir()
+    git(tmp_path, "init", "-q", f"--separate-git-dir={git_dir}", str(work_tree))
 
+    stage(work_tree, "a.txt", "fine\n")
+    assert run_hook("git commit -m x", work_tree).returncode == 0
 
-def test_the_starting_directory_is_scanned_too_when_a_cd_is_seen(tmp_path: Path) -> None:
-    """A subshell or popd can undo a cd, so the hook does not trust it alone.
-
-    The cost is a refusal when the starting repository holds a credential and
-    the commit really does run elsewhere; the alternative is a scan of the
-    wrong tree.
-    """
-    dirty = make_repo(tmp_path / "dirty")
-    clean = make_repo(tmp_path / "clean")
-    stage(dirty, "a.txt", PEM)
-    subshell = f"(cd {clean.as_posix()} && git status) && git commit -m x"
-    assert run_hook(subshell, dirty).returncode == 2
-    assert run_hook(f"cd {clean.as_posix()} && git commit -m x", dirty).returncode == 2
-
-
-def test_a_cd_from_outside_any_repository_is_still_followed(tmp_path: Path) -> None:
-    dirty = make_repo(tmp_path / "dirty")
-    clean = make_repo(tmp_path / "clean")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    stage(dirty, "a.txt", PEM)
-    assert run_hook(f"cd {dirty.as_posix()} && git commit -m x", outside).returncode == 2
-    assert run_hook(f"cd {clean.as_posix()} && git commit -m x", outside).returncode == 0
+    stage(work_tree, "b.txt", PEM)
+    done = run_hook("git commit -m x", work_tree)
+    assert done.returncode == 2
+    assert "b.txt" in done.stderr
 
 
 @pytest.mark.parametrize(
@@ -263,30 +373,36 @@ def test_a_cd_from_outside_any_repository_is_still_followed(tmp_path: Path) -> N
         "git -c core.worktree={work_tree} ",
     ],
 )
-def test_a_repository_named_another_way_is_refused(tmp_path: Path, prefix: str) -> None:
-    """The scan cannot follow these, so it refuses rather than scan the wrong tree."""
+def test_a_repository_named_through_the_environment_is_refused(tmp_path: Path, prefix: str) -> None:
     dirty = make_repo(tmp_path / "dirty")
     clean = make_repo(tmp_path / "clean")
     named = prefix.format(git_dir=(dirty / ".git").as_posix(), work_tree=dirty.as_posix())
     command = named + ("commit -m x" if named.startswith("git ") else "git commit -m x")
-    assert run_hook(command, clean).returncode == 2
+
+    done = run_hook(command, clean)
+
+    assert done.returncode == 2
+    assert "changes directory or names a repository" in done.stderr
 
 
-def test_dash_c_scans_the_named_repository(tmp_path: Path) -> None:
-    dirty = make_repo(tmp_path / "dirty")
-    clean = make_repo(tmp_path / "clean")
-    stage(dirty, "a.txt", PEM)
-    assert run_hook(f"git -C {dirty.as_posix()} commit -m x", clean).returncode == 2
-    assert run_hook(f"git -C {clean.as_posix()} commit -m x", dirty).returncode == 0
+def test_a_nested_repository_registered_in_the_index_is_not_entered(
+    repo: Path, fsmonitor_payload: tuple[str, Path]
+) -> None:
+    """`git diff` runs `git status` inside a gitlink unless told not to.
 
+    That inner status obeys the nested repository's config, so a repository
+    cloned into the project and added would run its command on every commit.
+    """
+    payload, marker = fsmonitor_payload
+    nested = make_repo(repo / "vendored")
+    git(repo, "add", "vendored")
+    git(repo, "commit", "-qm", "embed")
+    git(nested, "config", "core.fsmonitor", payload)
+    (nested / "tracked.txt").write_text("changed\n")
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Git Bash drive paths exist only on Windows")
-def test_dash_c_accepts_a_git_bash_drive_path(tmp_path: Path) -> None:
-    dirty = make_repo(tmp_path / "dirty")
-    stage(dirty, "a.txt", PEM)
-    posix = dirty.as_posix()
-    git_bash = "/" + posix[0].lower() + posix[2:]
-    assert run_hook(f"git -C {git_bash} commit -m x", tmp_path).returncode == 2
+    assert run_hook("git commit -m x", repo).returncode == 0
+    assert run_hook("git add a.txt && git commit -m x", repo).returncode == 0
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("command", ["git status", "echo hello"])
@@ -299,8 +415,9 @@ def test_the_words_outside_a_repository_pass(tmp_path: Path) -> None:
     assert run_hook('echo "git commit"', tmp_path).returncode == 0
 
 
-def test_an_explicit_commit_outside_a_repository_blocks(tmp_path: Path) -> None:
-    assert run_hook(COMMIT, tmp_path).returncode == 2
+def test_a_commit_outside_any_repository_has_nothing_to_guard(tmp_path: Path) -> None:
+    """Git itself refuses to commit here, and there is no index to read."""
+    assert run_hook(COMMIT, tmp_path).returncode == 0
 
 
 def test_unreadable_input_blocks(tmp_path: Path) -> None:
