@@ -107,9 +107,9 @@ covers.
 | `risk/limits.py` | `load_limits` — the risk layer's own reader of its own file, `configs/risk_limits.yaml`: closed schema, nothing defaulted, a repeated key refused, and percentages left as percentages because the thresholds are compared against other percentages. `check` — the veto gate, in the documented order: kill switch, position cap, daily loss by BOTH routes (realised, and equity marked down from the session open, because each can hide the other), then exposure headroom. A size limit reduces, and the exposure limit reduces to the headroom left and rejects when there is none; the kill switch and the daily loss limit always reject. An intent asking for nothing is allowed at nothing, so no loss or exposure limit can block an intent that asks for no new exposure — which is what a well-formed exit is, while a malformed one carrying a size is gated like any other request. The kill switch is the one thing that refuses even a zero-size intent, and that is deliberate, per `docs/decisions/0010`. One branch returns no verdict at all: a `start_of_day_equity` that is not positive and finite RAISES, before even the kill switch is read, because it is the denominator of the daily loss limit and an account whose session open is zero is a programming error rather than a risk decision. Its one caller is `live/worker.py`, which has never run against the venue. | 486 |
 | `cli.py` | All seven commands. `run` writes the decision record BEFORE sending the order, so a venue failure never costs the log the decision; `diff` uses no network. | none |
 
-**1520 tests pass** — 34 + 40 + 81 + 84 + 58 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143 + 486 + 39 + 29, plus 32 for
+**1527 tests pass** — 34 + 40 + 81 + 84 + 58 + 28 + 33 + 74 + 51 + 33 + 82 + 48 + 36 + 16 + 52 + 41 + 143 + 486 + 39 + 29, plus 39 for
 `.claude/hooks/check_secrets.py`, the commit-time credential scan, which is repository tooling
-rather than a module in the table. One of the 32 runs only on Windows and is skipped elsewhere. Run `uv run pytest` to see the
+rather than a module in the table. One of the 39 runs only on Windows and is skipped elsewhere. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame

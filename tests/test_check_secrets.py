@@ -27,7 +27,9 @@ HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "check_secret
 PEM = "-----BEGIN " + "PRIVATE KEY-----\nabc\n"
 T212_VALUE = "abcdefghijkl"
 T212 = "T212_API_" + f"KEY={T212_VALUE}\n"
-ENV_EXAMPLE = "T212_ENVIRONMENT=demo\nT212_API_KEY=\nT212_API_SECRET=\nT212_TICKER=\n"
+ENV_EXAMPLE = "\n".join(
+    ["T212_ENVIRONMENT=demo", "T212_API_KEY=", "T212_API_SECRET=", "T212_TICKER=", ""]
+)
 
 
 def git(repo: Path, *args: str) -> None:
@@ -85,7 +87,7 @@ def test_a_clean_staged_file_passes(repo: Path) -> None:
     [
         ("a.txt", PEM),
         ("a.txt", T212),
-        ("config.json", '{"private_key": "-----BEGIN RSA ' + 'PRIVATE KEY-----"}'),
+        ("config.json", '{"private_key": "-----' + "BEGIN RSA PRI" + 'VATE KEY-----"}'),
     ],
     ids=["pem-block", "t212-key", "private-key-field"],
 )
@@ -207,6 +209,35 @@ def test_work_tree_wins_over_the_git_dir_parent(tmp_path: Path) -> None:
     assert run_hook(f"git {options} commit -m x", tmp_path).returncode == 0
     stage(work_tree, "b.txt", PEM)
     assert run_hook(f"git {options} commit -m x", tmp_path).returncode == 2
+
+
+def test_a_commit_from_a_subdirectory_reads_the_working_copy(repo: Path) -> None:
+    """Git lists changed paths from the top level, whatever directory it runs in."""
+    (repo / "sub").mkdir()
+    (repo / "tracked.txt").write_text(T212)
+    assert run_hook("git commit -am x", repo / "sub").returncode == 2
+
+
+@pytest.mark.parametrize("cd", ["cd", "pushd", "Set-Location"])
+def test_a_directory_change_before_the_commit_is_followed(tmp_path: Path, cd: str) -> None:
+    dirty = make_repo(tmp_path / "dirty")
+    clean = make_repo(tmp_path / "clean")
+    stage(dirty, "a.txt", PEM)
+    assert run_hook(f"{cd} {dirty.as_posix()} && git commit -m x", clean).returncode == 2
+    assert run_hook(f"{cd} {clean.as_posix()} && git commit -m x", dirty).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["GIT_DIR={git_dir} ", "GIT_WORK_TREE={work_tree} ", "git -c core.worktree={work_tree} "],
+)
+def test_a_repository_named_another_way_is_refused(tmp_path: Path, prefix: str) -> None:
+    """The scan cannot follow these, so it refuses rather than scan the wrong tree."""
+    dirty = make_repo(tmp_path / "dirty")
+    clean = make_repo(tmp_path / "clean")
+    named = prefix.format(git_dir=(dirty / ".git").as_posix(), work_tree=dirty.as_posix())
+    command = named + ("commit -m x" if named.startswith("git ") else "git commit -m x")
+    assert run_hook(command, clean).returncode == 2
 
 
 def test_dash_c_scans_the_named_repository(tmp_path: Path) -> None:

@@ -51,7 +51,7 @@ $scans = [ordered]@{
     'account-number-shaped string' = '(?<![\w.])\d[\d -]{7,19}\d\b'
     'credential-shaped assignment' = '(?i)(?<![a-z0-9])(api[_-]?key|secret|token|password|passwd)[ \t]*[:=][ \t]*\S{8,}'
 }
-$exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1', '.claude/hooks/check_secrets.py')
+$exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1')
 
 # Shapes that satisfy a scan pattern and are not the thing it hunts for.
 #

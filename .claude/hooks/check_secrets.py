@@ -18,7 +18,10 @@ is still untracked when it is scanned, and neither diff lists it.
 
 A command is parsed to find which repository it commits in (``git -C <dir> commit``,
 ``git --git-dir <dir> --work-tree <dir> commit``, ``git -c x=y commit``,
-``bash -c '...'``). When the words appear but the parser finds no
+``bash -c '...'``), following a ``cd``, ``pushd`` or ``Set-Location`` earlier in it, and
+reading from the repository's top level, which is where git names paths from. A command
+that names its repository through ``GIT_DIR``, ``GIT_WORK_TREE`` or ``core.worktree`` is
+refused, since the scan does not follow those. When the words appear but the parser finds no
 commit - a multi-line script, an environment prefix, a wrapper - the working directory is
 scanned anyway. Scanning a command that turns out not to commit costs one git call;
 missing one that does is permanent.
@@ -62,8 +65,10 @@ CONTENT_RULES: list[tuple[str, re.Pattern[bytes]]] = [
 ]
 
 # Named one by one: an exemption on a folder would cover whatever is later parked in it.
-# setup.md holds a deliberately fake key, the fixture for proving the guards fire.
-CONTENT_EXEMPT: tuple[str, ...] = (".claude/hooks/check_secrets.py", ".claude/setup.md")
+# setup.md holds a deliberately fake key, the fixture for proving the guards fire. This
+# file is not exempt: no pattern here matches its own source, so a key pasted into it
+# is caught like any other.
+CONTENT_EXEMPT: tuple[str, ...] = (".claude/setup.md",)
 
 LOOKS_LIKE_COMMIT = re.compile(r"\bgit(\.exe)?\b[\s\S]*\bcommit\b")
 GIT_BASH_DRIVE = re.compile(r"^/([a-zA-Z])(/|$)")
@@ -71,6 +76,10 @@ GIT_BASH_DRIVE = re.compile(r"^/([a-zA-Z])(/|$)")
 # git's own options that take a separate value, or the value is read as the subcommand.
 GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 SHELLS = {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}
+DIRECTORY_CHANGES = {"cd", "pushd", "set-location", "sl", "chdir"}
+# Ways of naming a repository that the scan does not follow, so a command using one is
+# refused rather than checked against the wrong tree.
+UNFOLLOWED = re.compile(r"\bGIT_(DIR|WORK_TREE)=|\bcore\.(worktree|bare)\b", re.I)
 
 # Bytes. Past this a file is refused unread rather than half-checked.
 MAX_SCAN_BYTES = 50_000_000
@@ -95,14 +104,17 @@ def tokenise(command: str) -> list[str] | None:
         return None
 
 
-def commits(tokens: list[str]) -> list[list[str]]:
-    """Return git's own options, before the subcommand, for every commit in ``tokens``.
+def commits(tokens: list[str], cwd: Path) -> list[tuple[list[str], Path]]:
+    """Return git's own options and the directory it runs in, for every commit in ``tokens``.
 
-    Only the options before ``commit`` are returned: after it, ``-C`` means "reuse this
-    commit's message", not "run in this directory". A commit message containing the
-    words stays inside one quoted token and is not read as a command.
+    A ``cd``, ``pushd`` or ``Set-Location`` earlier in the command moves the directory
+    the later commits run in. Only the options before ``commit`` are returned: after it,
+    ``-C`` means "reuse this commit's message", not "run in this directory". A commit
+    message containing the words stays inside one quoted token and is not read as a
+    command.
     """
-    found: list[list[str]] = []
+    found: list[tuple[list[str], Path]] = []
+    base = cwd
     segments: list[list[str]] = [[]]
     for token in tokens:
         if set(token) <= set("();&|"):
@@ -114,19 +126,23 @@ def commits(tokens: list[str]) -> list[list[str]]:
         if not segment:
             continue
         name = Path(segment[0].strip("'\"")).stem.lower()
-        if name in SHELLS:
+        if name in DIRECTORY_CHANGES:
+            target = next((t for t in segment[1:] if not t.startswith("-")), None)
+            if target is not None:
+                base = resolve(target, base)
+        elif name in SHELLS:
             for token in segment[1:]:
                 if len(token) >= 2 and token[0] in "'\"" and token[-1] == token[0]:
                     inner = tokenise(token[1:-1])
                     if inner is not None:
-                        found += commits(inner)
+                        found += commits(inner, base)
         elif name == "git":
             rest = segment[1:]
             i = 0
             while i < len(rest) and rest[i].startswith("-"):
                 i += 2 if rest[i] in GIT_OPTS_WITH_VALUE else 1
             if i < len(rest) and rest[i] == "commit":
-                found.append(rest[:i])
+                found.append((rest[:i], base))
     return found
 
 
@@ -135,12 +151,12 @@ def option_values(options: list[str]) -> dict[str, str]:
     values: dict[str, str] = {}
     i = 0
     while i < len(options):
-        token = options[i]
-        if "=" in token and token.startswith("--"):
-            name, value = token.split("=", 1)
+        option = options[i]
+        if "=" in option and option.startswith("--"):
+            name, value = option.split("=", 1)
             values[name] = value
-        elif token in GIT_OPTS_WITH_VALUE and i + 1 < len(options):
-            values[token] = options[i + 1]
+        elif option in GIT_OPTS_WITH_VALUE and i + 1 < len(options):
+            values[option] = options[i + 1]
             i += 1
         i += 1
     return values
@@ -246,24 +262,30 @@ def run(event: dict[str, Any]) -> int:
     if not LOOKS_LIKE_COMMIT.search(command):
         return 0
 
+    if UNFOLLOWED.search(command):
+        return refuse(["the command names its repository through GIT_DIR, GIT_WORK_TREE or "
+                       "core.worktree, which this guard does not follow"])
     tokens = tokenise(command)
-    if tokens is None and re.search(r"\s(-C|--git-dir|--work-tree)\b", command):
+    if tokens is None and re.search(r"\s(-C|--git-dir|--work-tree)\b|\b(cd|pushd)\b", command):
         return refuse(["this command could not be parsed, so its repository is unknown"])
 
     cwd = Path(str(event.get("cwd") or Path.cwd()))
-    invocations = commits(tokens) if tokens is not None else []
-    roots = [repo_for(options, cwd) for options in invocations]
+    invocations = commits(tokens, cwd) if tokens is not None else []
+    roots = [repo_for(options, base) for options, base in invocations]
     # An unparseable command may hide an add, so it is read as if it had one.
     adds = tokens is None or re.search(r"\badd\b", command) is not None
 
     findings: list[str] = []
     for root in roots or [cwd]:
-        paths = changed_paths(root, include_untracked=adds)
-        if paths is None:
+        # Git names changed paths from the top level, whichever directory it runs in.
+        listed = git(root, "rev-parse", "--show-toplevel")
+        top = Path(listed.decode().strip()) if listed else None
+        paths = changed_paths(top, adds) if top else None
+        if top is None or paths is None:
             if roots:
                 return refuse([f"git could not say what {root.name} would commit"])
             continue
-        findings += scan(root, paths)
+        findings += scan(top, paths)
     return refuse(findings) if findings else 0
 
 
