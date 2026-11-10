@@ -66,6 +66,8 @@ import pandas as pd
 import pytest
 
 from strategylab.backtest.costs import CostBreakdown, CostModel, Fill
+from strategylab.backtest.engine import run_backtest
+from strategylab.backtest.metrics import buy_and_hold
 from strategylab.core.config import load_strategy
 from strategylab.core.types import Condition, IndicatorRef, Side, StrategyDef
 from strategylab.protocol import Instruments, Protocol, Validation, Window, Windows
@@ -1314,8 +1316,8 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
     # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
     # briefly two different shapes, because those last fields went in without a
     # bump. 5 added `config_content_hash`. 6 added `noise_gate`, and
-    # `trial_best_sharpe` inside `noise_ceiling`.
-    assert SEARCH_SCHEMA_VERSION == 6
+    # `trial_best_sharpe` inside `noise_ceiling`. 7 added `benchmark`.
+    assert SEARCH_SCHEMA_VERSION == 7
 
     documented = {
         "schema_version",
@@ -1338,6 +1340,7 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
         "noise_ceiling",
         "noise_ceiling_note",
         "noise_gate",
+        "benchmark",
         "winner",
         "rejections",
         "cells",
@@ -1563,6 +1566,128 @@ def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number
     # Two trials decide nothing, and the artifact says so rather than guessing.
     assert payload["noise_gate"]["status"] == "undetermined"
     assert payload["noise_gate"]["scoreable_trials"] == 2
+
+
+# --------------------------------------------------------------------------
+# The benchmark: what holding the instrument did over the winner's own bars.
+# --------------------------------------------------------------------------
+
+
+def test_the_benchmark_covers_the_bars_the_winner_was_measured_on(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    protocol = _wide_protocol()
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        protocol,
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    assert result.winner is not None
+    assert result.benchmark is not None
+
+    # THE ENGINE'S OWN CURVE IS THE REFERENCE, not a warm-up worked out here. An
+    # earlier version of this test took the warm-up to be the cell's longest
+    # lookback and was one bar out: a crossover needs the bar before as well.
+    # The winner's equity curve says which bars it was actually scored on.
+    stamps = pd.DatetimeIndex(fixture_bars.index).normalize()
+    inside = fixture_bars[
+        (stamps >= pd.Timestamp(protocol.windows.in_sample.start))
+        & (stamps <= pd.Timestamp(protocol.windows.in_sample.end))
+    ]
+    curve = run_backtest(_small_strategy(), result.winner.cell, inside, protocol.costs).equity
+    held = inside["close"].loc[curve.index[0] :]
+
+    assert result.benchmark_basis == "winner"
+    assert result.benchmark.bars == len(curve)
+    assert result.benchmark.start == curve.index[0].date()
+    assert result.benchmark.end == curve.index[-1].date()
+    assert result.benchmark == buy_and_hold(held)
+    # And it is not the whole window's figure: the warm-up is left out.
+    assert result.benchmark.bars < len(inside)
+    assert result.benchmark != buy_and_hold(inside["close"])
+
+
+def test_a_search_with_no_winner_is_benchmarked_over_the_whole_window(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # A drawdown ceiling of zero refuses every cell that ever dipped, so nothing
+    # survives and there is no winner's span to hold over.
+    protocol = _protocol(max_drawdown_ceiling_pct=0.0)
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        protocol,
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    stamps = pd.DatetimeIndex(fixture_bars.index).normalize()
+    inside = fixture_bars[
+        (stamps >= pd.Timestamp(protocol.windows.in_sample.start))
+        & (stamps <= pd.Timestamp(protocol.windows.in_sample.end))
+    ]
+
+    assert result.winner is None
+    assert result.benchmark_basis == "window"
+    assert result.benchmark == buy_and_hold(inside["close"])
+
+
+def test_the_benchmark_reads_no_bar_after_the_window(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    protocol = _split_protocol()
+    kwargs: dict[str, Any] = {
+        "config_path": Path("configs/small.yaml"),
+        "data_content_hash": "x",
+        "config_content_hash": "y",
+    }
+    clean = run_search(
+        _small_strategy(), fixture_bars, protocol, graveyard_path=tmp_path / "a.jsonl", **kwargs
+    )
+    corrupted = run_search(
+        _small_strategy(),
+        _corrupt_after(fixture_bars, protocol.windows.in_sample.end),
+        protocol,
+        graveyard_path=tmp_path / "b.jsonl",
+        **kwargs,
+    )
+
+    assert clean.benchmark is not None
+    assert clean.benchmark == corrupted.benchmark
+    assert clean.benchmark.end <= protocol.windows.in_sample.end
+
+
+def test_the_artifact_carries_the_benchmark_and_what_it_covers(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _wide_protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    recorded = json.loads(path.read_text(encoding="utf-8"))["benchmark"]
+
+    assert result.benchmark is not None
+    assert recorded == {
+        "kind": "buy_and_hold",
+        "instrument": result.instrument,
+        "basis": "winner",
+        "start": result.benchmark.start.isoformat(),
+        "end": result.benchmark.end.isoformat(),
+        "bars": result.benchmark.bars,
+        "sharpe": pytest.approx(result.benchmark.sharpe),
+        "max_drawdown_pct": pytest.approx(result.benchmark.max_drawdown_pct),
+    }
 
 
 # --------------------------------------------------------------------------

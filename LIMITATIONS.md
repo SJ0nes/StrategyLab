@@ -140,12 +140,15 @@ reproducible from this repository alone — regenerating one needs a `fetch`
 against a vendor that revises history. What IS reproducible is the run against a
 given cached snapshot: the artifact records that snapshot's content hash.
 
-**There is a validation outcome and still no benchmark.** `validate/` is built
-and `strategylab validate` runs, but nothing anywhere computes buy-and-hold — so
-no result, in-sample or held-back, can be compared against simply owning the
-index, which a long-only trend strategy on the S&P 500 must beat to be worth
-anything. A `pass` from this validator means "cleared a pre-registered Sharpe
-bar", not "beat the index".
+**There is a benchmark, and it decides nothing.** A search and a validation
+each record what holding the instrument did over exactly the bars their own
+figures cover, so a result can now be read against simply owning the index,
+which a long-only trend strategy on the S&P 500 must beat to be worth anything.
+But the comparison is left to the reader. A `pass` from this validator still
+means "cleared the noise gate and a pre-registered Sharpe bar", not "beat the
+index", and a candidate can pass while losing to it. The benchmark pays no
+costs and is always fully invested, which sets the bar slightly too high, and
+on back-adjusted closes it is a total-return figure.
 
 **There are still two decision-log shapes, and now one of them is built and
 unused.** `docs/architecture.md` states the schema is defined once, in
@@ -225,14 +228,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1647 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1669 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker and the commit-time credential scan —
 twenty-one areas, one per test file.
-486 of the 1647 are the risk layer's,
+486 of the 1669 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -436,9 +439,12 @@ does not adjust the pass bar for them. And the gate is one comparison against
 one grid on one price series - no deflated Sharpe, no correction for how many
 searches have been run.
 
-**Nothing computes a benchmark.** There is no buy-and-hold comparison anywhere.
-A long-only trend strategy on the S&P 500 over 2005–2024 must beat simply
-holding the index to be worth anything, and no module computes that number.
+**The benchmark is not a criterion.** `buy_and_hold` computes what holding the
+index did over the candidate's own bars, and both artifacts carry it. Nothing
+compares the two: making "beat the index" a pass condition would be a new
+pre-registered threshold, and the protocol is written once. A long-only trend
+strategy on the S&P 500 over 2005–2024 must beat simply holding the index to be
+worth anything, and the reader is the one who has to check that it did.
 
 **Folds contain far too few trades, and this is now measured rather than
 feared.** `min_trades_per_fold` is 10 and `min_trades_pooled` is 30. The

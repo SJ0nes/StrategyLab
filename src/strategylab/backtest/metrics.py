@@ -32,6 +32,8 @@ implementations silently differ:
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from datetime import date
 
 import pandas as pd
 
@@ -116,3 +118,70 @@ def max_drawdown(equity: pd.Series) -> float:
 
     peak = equity.cummax()
     return float(((peak - equity) / peak).max()) * 100.0
+
+
+@dataclass(frozen=True)
+class BuyAndHold:
+    """What simply owning the instrument did over a run of bars.
+
+    Attributes:
+        sharpe: Annualised Sharpe ratio of the close-to-close returns, a
+            dimensionless ratio, by the same conventions as :func:`sharpe`.
+        max_drawdown_pct: Largest peak-to-trough decline of the closes, as a
+            positive PERCENTAGE, by the same conventions as
+            :func:`max_drawdown`.
+        start: Date of the first close held.
+        end: Date of the last close held.
+        bars: How many closes that is. One more than the number of returns.
+    """
+
+    sharpe: float
+    max_drawdown_pct: float
+    start: date
+    end: date
+    bars: int
+
+
+def buy_and_hold(closes: pd.Series) -> BuyAndHold:
+    """Measure holding the instrument from the first close to the last.
+
+    The benchmark a long-only strategy has to beat to be worth running: buy at
+    the first close, do nothing, and mark to every close after it.
+
+    TWO THINGS FLATTER IT, both on purpose. It pays NO COSTS - not the one entry
+    a real holder would pay, and nothing on the way out. And it is ALWAYS FULLY
+    INVESTED, where the strategy keeps a cash buffer. Both make the benchmark a
+    little better than a person could achieve, so a strategy compared against it
+    is held to a bar set slightly too high rather than too low.
+
+    WHAT THE CLOSES ARE DECIDES WHAT THIS MEASURES. On back-adjusted closes,
+    which is what this project caches, the returns include reinvested
+    dividends, so this is a total-return benchmark. On raw closes it would be
+    price-only.
+
+    Args:
+        closes: Closing prices by timestamp, ascending, in any currency unit.
+            Must be positive and finite. Give it exactly the bars the strategy
+            was measured on, or the comparison is between two different periods.
+
+    Returns:
+        The Sharpe ratio and drawdown of holding, with the span they cover.
+
+    Raises:
+        ValueError: If ``closes`` holds fewer than three values - two returns
+            are the least a standard deviation can be taken of - or a value
+            that is not positive and finite.
+    """
+    if len(closes) < 3:
+        raise ValueError(
+            f"buy_and_hold needs at least three closes to have two returns, got {len(closes)}"
+        )
+    drawdown = max_drawdown(closes)
+    returns = closes.pct_change().iloc[1:]
+    return BuyAndHold(
+        sharpe=sharpe(returns),
+        max_drawdown_pct=drawdown,
+        start=pd.Timestamp(closes.index[0]).date(),
+        end=pd.Timestamp(closes.index[-1]).date(),
+        bars=len(closes),
+    )

@@ -551,6 +551,7 @@ def search(
         err_console.print(f"[bold red]search could not run[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     path = write_search_result(result, started)
+    held = result.benchmark
 
     summary = Table(show_header=False, box=None, pad_edge=False)
     summary.add_column(style="dim", no_wrap=True)
@@ -611,6 +612,14 @@ def search(
                 "  [yellow]degenerate plateau[/yellow] - its neighbours executed the same "
                 "trades, so the flat region is insensitivity, not robustness"
             )
+
+    if held is not None:
+        span = "the candidate's own bars" if result.benchmark_basis == "winner" else "the window"
+        console.print(
+            f"  buy and hold over {span} ({held.start} to {held.end}): Sharpe "
+            f"{held.sharpe:.3f}, drawdown {held.max_drawdown_pct:.2f}%. No costs, always "
+            "fully invested. Reported, not applied: nothing is rejected for losing to it."
+        )
 
     if result.rejections:
         counts: dict[str, int] = {}

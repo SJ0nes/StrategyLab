@@ -78,7 +78,9 @@ import pandas as pd
 
 from strategylab.backtest.costs import CostModel, Fill
 from strategylab.backtest.engine import run_backtest
+from strategylab.backtest.metrics import BuyAndHold, buy_and_hold
 from strategylab.core.config import INDICATORS, OPERATORS
+from strategylab.core.strategy import required_history
 from strategylab.core.types import IndicatorRef, StrategyDef
 from strategylab.data.source import REQUIRED_COLUMNS
 from strategylab.protocol import Protocol
@@ -123,7 +125,7 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: reproduced from the artifact that reports it. ``5`` adds
 #: ``config_content_hash``, without which a config edited after the search loads
 #: silently under the winner's parameters. ``6`` adds ``noise_gate`` and, inside
-#: ``noise_ceiling``, ``trial_best_sharpe``.
+#: ``noise_ceiling``, ``trial_best_sharpe``. ``7`` adds ``benchmark``.
 #:
 #: THE BUMP TO 4 IS THE INSTRUCTIVE ONE. Those two fields were added under
 #: version 3 rather than bumping, so artifacts written hours apart both claimed
@@ -131,7 +133,7 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: exists to prevent, made in the same session as the comment saying so. Bump on
 #: every field change, including the ones that feel too small to matter.
 #: :func:`write_search_result` enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 6
+SEARCH_SCHEMA_VERSION = 7
 
 #: Where a search artifact is written, and - since ``validate/`` was built - the
 #: default directory for a validation artifact too. ``cli.status`` counts
@@ -318,6 +320,15 @@ class SearchResult:
             behind the answer. Always present, including when no ceiling was
             computed - that is a status, not an absence. THIS, NOT ``winner``,
             IS WHAT SAYS WHETHER A CANDIDATE MAY BE VALIDATED.
+        benchmark: What holding the instrument did over the bars the winner
+            was measured on - from its first evaluable bar to the window's end -
+            or over the whole window when there is no winner. ``None`` only when
+            that span holds fewer than three closes. It pays no costs and is
+            always fully invested, which sets the bar slightly too high; see
+            :func:`~strategylab.backtest.metrics.buy_and_hold`. REPORTED, NOT
+            APPLIED: nothing is rejected for losing to it.
+        benchmark_basis: ``"winner"`` or ``"window"``, saying which of those two
+            spans ``benchmark`` covers.
         costs: The broker parameters every cell was charged, every rate a
             FRACTION. Recorded for the same reason as the ceiling, and with
             more force: costs are the single largest determinant of every
@@ -363,6 +374,8 @@ class SearchResult:
     noise_block_bars: int | None
     noise_seed: int
     noise_gate: NoiseGate
+    benchmark: BuyAndHold | None
+    benchmark_basis: str
     costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
@@ -1214,6 +1227,15 @@ def run_search(
     for cell, metrics, reason in pending_records:
         record_rejection(cell, metrics, reason, graveyard_path)
 
+    # THE BENCHMARK COVERS THE BARS THE WINNER WAS MEASURED ON, not the whole
+    # window. A cell's curve starts at its first evaluable bar, so its Sharpe
+    # never saw the warm-up; holding the index through bars the strategy was not
+    # scored on would compare two different periods. With no winner there is no
+    # such span, and the whole window is the only honest one left.
+    first = 0 if winner is None else required_history(definition, winner.cell) - 1
+    held = window["close"].iloc[first:]
+    benchmark = buy_and_hold(held) if len(held) >= 3 else None
+
     in_sample = protocol.windows.in_sample
     return SearchResult(
         strategy=definition.name,
@@ -1234,6 +1256,8 @@ def run_search(
         noise_block_bars=block_bars,
         noise_seed=noise_seed,
         noise_gate=gate,
+        benchmark=benchmark,
+        benchmark_basis="window" if winner is None else "winner",
         costs=protocol.costs,
         results=scored,
         winner=winner,
@@ -1441,6 +1465,12 @@ def write_search_result(
       ``beaten`` and ``required``, the ``candidate_sharpe`` judged, and a
       ``summary`` sentence. ``beaten`` and ``required`` are ``null`` when there
       was no candidate or nothing scoreable to count against.
+    - ``benchmark`` — what holding the instrument did: ``kind`` (always
+      ``buy_and_hold``), ``instrument``, ``basis`` (``winner`` when it covers the
+      winner's own bars, ``window`` when there was no winner), ``start``,
+      ``end``, ``bars``, ``sharpe`` and ``max_drawdown_pct``, a PERCENTAGE. No
+      costs, always fully invested. ``null`` only when the span is too short to
+      have two returns.
     - ``winner`` — ``null``, or an object carrying ``params``, ``sharpe``,
       ``max_drawdown_pct``, ``plateau_score``, ``neighbour_count`` and
       ``degenerate``. The cell selection chose; ``noise_gate`` says whether it
@@ -1522,6 +1552,18 @@ def write_search_result(
             else trials_note(len(result.noise_ceiling))
         ),
         "noise_gate": _gate_payload(result.noise_gate),
+        "benchmark": None
+        if result.benchmark is None
+        else {
+            "kind": "buy_and_hold",
+            "instrument": result.instrument,
+            "basis": result.benchmark_basis,
+            "start": result.benchmark.start.isoformat(),
+            "end": result.benchmark.end.isoformat(),
+            "bars": result.benchmark.bars,
+            METRIC_COLUMN: _finite_or_none(result.benchmark.sharpe),
+            "max_drawdown_pct": _finite_or_none(result.benchmark.max_drawdown_pct),
+        },
         "winner": None
         if result.winner is None
         else {

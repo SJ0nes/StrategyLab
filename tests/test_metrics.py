@@ -16,7 +16,12 @@ import math
 import pandas as pd
 import pytest
 
-from strategylab.backtest.metrics import TRADING_DAYS_PER_YEAR, max_drawdown, sharpe
+from strategylab.backtest.metrics import (
+    TRADING_DAYS_PER_YEAR,
+    buy_and_hold,
+    max_drawdown,
+    sharpe,
+)
 
 
 def series(values: list[float]) -> pd.Series:
@@ -237,3 +242,79 @@ def test_a_nan_equity_value_is_refused() -> None:
 def test_an_infinite_equity_value_is_refused() -> None:
     with pytest.raises(ValueError, match="infinite"):
         max_drawdown(series([100.0, float("inf"), 50.0]))
+
+
+# --------------------------------------------------------------------------
+# Buy and hold: what simply owning the instrument did over the same bars.
+# --------------------------------------------------------------------------
+#
+# TWO HAND-DERIVED CASES, at different price levels and with different answers.
+#
+# A. Closes 100, 110, 99, 108.9. Returns +0.10, -0.10, +0.10.
+#    mean = 0.10 / 3. Deviations from it: +0.0667, -0.1333, +0.0667, whose
+#    squares sum to 0.08 / 3. Divided by n - 1 = 2 that is 0.04 / 3, so the
+#    sample deviation is 0.2 / sqrt(3). mean / deviation = 1 / (2 sqrt(3)),
+#    and times sqrt(252) that is sqrt(252 / 12) = sqrt(21).
+#    Drawdown: the peak of 110 falls to 99, which is exactly 10%.
+#
+# B. Closes 50, 55, 44. Returns +0.10, -0.20.
+#    mean = -0.05. Deviations +0.15 and -0.15, squares summing to 0.045,
+#    divided by n - 1 = 1. Deviation 0.15 sqrt(2). mean / deviation =
+#    -1 / (3 sqrt(2)), and times sqrt(252) that is -sqrt(252 / 18) = -sqrt(14).
+#    Drawdown: the peak of 55 falls to 44, which is exactly 20%.
+
+CASE_A = [100.0, 110.0, 99.0, 108.9]
+CASE_B = [50.0, 55.0, 44.0]
+
+
+def test_buy_and_hold_matches_the_first_hand_derived_case() -> None:
+    held = buy_and_hold(series(CASE_A))
+
+    assert held.sharpe == pytest.approx(math.sqrt(21.0))
+    assert held.max_drawdown_pct == pytest.approx(10.0)
+
+
+def test_buy_and_hold_matches_the_second_hand_derived_case() -> None:
+    held = buy_and_hold(series(CASE_B))
+
+    assert held.sharpe == pytest.approx(-math.sqrt(14.0))
+    assert held.max_drawdown_pct == pytest.approx(20.0)
+
+
+@pytest.mark.parametrize("scale", [0.01, 7.3, 1000.0])
+def test_buy_and_hold_does_not_depend_on_the_price_level(scale: float) -> None:
+    # Returns and drawdown are both ratios of prices, so quoting the same
+    # instrument in pence or in thousands changes neither.
+    held = buy_and_hold(series([value * scale for value in CASE_A]))
+
+    assert held.sharpe == pytest.approx(math.sqrt(21.0))
+    assert held.max_drawdown_pct == pytest.approx(10.0)
+
+
+def test_buy_and_hold_says_which_bars_it_covered() -> None:
+    closes = series(CASE_A)
+
+    held = buy_and_hold(closes)
+
+    assert held.start == closes.index[0].date()
+    assert held.end == closes.index[-1].date()
+    assert held.bars == 4
+
+
+def test_buy_and_hold_on_a_series_that_only_rises_has_no_drawdown() -> None:
+    held = buy_and_hold(series([10.0, 11.0, 12.5]))
+
+    assert held.max_drawdown_pct == 0.0
+    assert held.sharpe > 0.0
+
+
+@pytest.mark.parametrize("values", [[], [100.0], [100.0, 101.0]])
+def test_buy_and_hold_needs_two_returns_to_have_a_sharpe(values: list[float]) -> None:
+    with pytest.raises(ValueError, match="at least three closes"):
+        buy_and_hold(series(values))
+
+
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf")])
+def test_buy_and_hold_refuses_a_close_that_is_not_a_price(bad: float) -> None:
+    with pytest.raises(ValueError):
+        buy_and_hold(series([100.0, bad, 110.0, 120.0]))

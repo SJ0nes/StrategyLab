@@ -90,7 +90,7 @@ import numpy as np
 import pandas as pd
 
 from strategylab.backtest.engine import run_backtest
-from strategylab.backtest.metrics import max_drawdown, sharpe
+from strategylab.backtest.metrics import BuyAndHold, buy_and_hold, max_drawdown, sharpe
 from strategylab.core.strategy import required_history
 from strategylab.core.types import StrategyDef
 from strategylab.protocol import DEFAULT_PROTOCOL_PATH, Protocol, Validation, Window
@@ -105,8 +105,8 @@ from strategylab.windows import in_sample_bars, walk_forward_bars
 #: ``1`` was the first shape. ``2`` adds ``config_content_hash``, copied from the
 #: candidate, so a verdict names what its config said and not only where it was.
 #: ``3`` adds ``noise_gate``, the search's verdict on the candidate and the
-#: counts it rested on.
-VALIDATION_SCHEMA_VERSION = 3
+#: counts it rested on. ``4`` adds ``benchmark``.
+VALIDATION_SCHEMA_VERSION = 4
 
 
 class Outcome(Enum):
@@ -195,6 +195,14 @@ class ValidationResult:
             drawdown ceiling has two problems, and reporting one hides the
             other from whoever tries to fix it.
         walk_forward_touches: Value of the access counter AFTER this run.
+        benchmark: What holding the instrument did over exactly the bars the
+            pooled figures cover, or ``None`` when no curve was produced or it
+            holds fewer than three bars. No costs and always fully invested, so
+            the bar it sets is slightly too high; see
+            :func:`~strategylab.backtest.metrics.buy_and_hold`. REPORTED BESIDE
+            THE VERDICT, NOT PART OF IT: the pass decision is the pre-registered
+            one and nothing here changes it. A candidate can pass while losing
+            to this, and the artifact is where a reader finds that out.
     """
 
     outcome: Outcome
@@ -207,6 +215,7 @@ class ValidationResult:
     threshold: float
     reason: str
     walk_forward_touches: int
+    benchmark: BuyAndHold | None = None
 
 
 def _add_months(anchor: date, months: int) -> date:
@@ -678,6 +687,11 @@ def walk_forward(
             )
         )
 
+    # Held over the curve's own bars, read from the frame this run was already
+    # charged for. No second read of the held-back window is made to get it.
+    held = window["close"].loc[equity.index[0] :]
+    benchmark = buy_and_hold(held) if len(held) >= 3 else None
+
     pooled_sharpe = result.sharpe if len(returns) >= 2 else float("nan")
     outcome, reason = _verdict(
         pooled_sharpe, result.max_drawdown_pct, result.trade_count, protocol.validation
@@ -693,6 +707,7 @@ def walk_forward(
         threshold=protocol.validation.effective_sharpe_bar,
         reason=reason,
         walk_forward_touches=touches,
+        benchmark=benchmark,
     )
 
 
@@ -768,6 +783,10 @@ def write_validation_result(
     - ``outcome``, ``reason`` — the verdict and which criterion bound.
     - ``pooled`` — ``sharpe``, ``max_drawdown_pct`` and ``trades``. A
       non-finite metric is ``null``, never zero.
+    - ``benchmark`` — what holding the instrument did over the bars ``pooled``
+      covers: ``kind``, ``instrument``, ``start``, ``end``, ``bars``, ``sharpe``
+      and ``max_drawdown_pct``. ``null`` when no curve was produced. Recorded
+      beside the verdict and not part of it.
     - ``walk_forward_touches`` — the counter AFTER this run.
     - ``folds`` — one object per fold with ``index``, ``start``, ``end``,
       ``sharpe``, ``max_drawdown_pct``, ``trade_count`` and ``outcome``.
@@ -873,6 +892,17 @@ def write_validation_result(
             "sharpe": _finite_or_none(result.pooled_sharpe),
             "max_drawdown_pct": _finite_or_none(result.pooled_max_drawdown_pct),
             "trades": result.total_trades,
+        },
+        "benchmark": None
+        if result.benchmark is None
+        else {
+            "kind": "buy_and_hold",
+            "instrument": protocol.instruments.research,
+            "start": result.benchmark.start.isoformat(),
+            "end": result.benchmark.end.isoformat(),
+            "bars": result.benchmark.bars,
+            "sharpe": _finite_or_none(result.benchmark.sharpe),
+            "max_drawdown_pct": _finite_or_none(result.benchmark.max_drawdown_pct),
         },
         "walk_forward_touches": result.walk_forward_touches,
         "folds": [

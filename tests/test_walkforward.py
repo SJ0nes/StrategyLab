@@ -34,6 +34,7 @@ a strategy with the right Sharpe is a threshold test nobody writes.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -45,6 +46,7 @@ import pytest
 
 from strategylab.backtest.costs import CostModel
 from strategylab.backtest.engine import run_backtest
+from strategylab.backtest.metrics import BuyAndHold, buy_and_hold
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
 from strategylab.protocol import (
     Instruments,
@@ -486,6 +488,75 @@ def test_a_run_leaves_the_repositorys_own_counter_alone(
 # --------------------------------------------------------------------------
 # What the run actually reads.
 # --------------------------------------------------------------------------
+
+
+def test_the_benchmark_is_holding_over_exactly_the_held_back_bars(
+    bars: pd.DataFrame, protocol_copy: Path
+) -> None:
+    held_back = _held_back(bars)
+
+    result = walk_forward(_definition(), PARAMS, bars, _protocol(), protocol_path=protocol_copy)
+
+    # The curve covers the held-back window and nothing else, so holding over
+    # the curve's bars is holding over that window - not the warm-up before it.
+    assert result.benchmark == buy_and_hold(held_back["close"])
+    assert result.benchmark is not None
+    assert result.benchmark.bars == result.bars_used
+    assert result.benchmark.start == held_back.index[0].date()
+    assert result.benchmark.end == held_back.index[-1].date()
+
+
+def test_the_benchmark_costs_no_second_read_and_changes_no_verdict(
+    bars: pd.DataFrame, protocol_copy: Path
+) -> None:
+    result = walk_forward(_definition(), PARAMS, bars, _protocol(), protocol_path=protocol_copy)
+
+    assert result.walk_forward_touches == 1
+    # The reason names the pre-registered criteria only. Holding the instrument
+    # is recorded beside the verdict, never weighed in it.
+    assert "hold" not in result.reason.lower()
+    assert "benchmark" not in result.reason.lower()
+
+
+def test_the_artifact_records_the_benchmark_beside_the_verdict(tmp_path: Path) -> None:
+    held = BuyAndHold(
+        sharpe=0.75,
+        max_drawdown_pct=33.5,
+        start=date(2019, 1, 2),
+        end=date(2024, 12, 31),
+        bars=1510,
+    )
+    payload = json.loads(
+        write_validation_result(
+            dataclasses.replace(_result(), benchmark=held),
+            _candidate(),
+            _protocol(),
+            datetime(2026, 9, 6, tzinfo=UTC),
+            tmp_path,
+        ).read_text(encoding="utf-8")
+    )
+
+    assert payload["benchmark"] == {
+        "kind": "buy_and_hold",
+        "instrument": "SPY",
+        "start": "2019-01-02",
+        "end": "2024-12-31",
+        "bars": 1510,
+        "sharpe": 0.75,
+        "max_drawdown_pct": 33.5,
+    }
+    assert payload["outcome"] == "fail", "the verdict is the fixture's, untouched"
+
+
+def test_a_run_with_no_curve_records_a_null_benchmark(tmp_path: Path) -> None:
+    payload = json.loads(
+        write_validation_result(
+            _result(), _candidate(), _protocol(), datetime(2026, 9, 6, tzinfo=UTC), tmp_path
+        ).read_text(encoding="utf-8")
+    )
+
+    assert "benchmark" in payload
+    assert payload["benchmark"] is None
 
 
 def test_the_equity_curve_covers_the_held_back_window_and_nothing_else(
