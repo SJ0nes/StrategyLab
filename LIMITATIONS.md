@@ -219,13 +219,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1488 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1520 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
-the Trading 212 adapter and the live worker — twenty areas, one per test file.
-486 of the 1488 are the risk layer's,
+the Trading 212 adapter, the live worker and the commit-time credential scan —
+twenty-one areas, one per test file.
+486 of the 1520 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.

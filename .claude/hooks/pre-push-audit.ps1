@@ -49,9 +49,9 @@ $scans = [ordered]@{
     # 25.170068027210885 in a hand-derivation comment offered 170068027210885 -
     # fifteen digits - and the audit duly reported it as an account number.
     'account-number-shaped string' = '(?<![\w.])\d[\d -]{7,19}\d\b'
-    'credential-shaped assignment' = '(?i)\b(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*\S{8,}'
+    'credential-shaped assignment' = '(?i)(?<![a-z0-9])(api[_-]?key|secret|token|password|passwd)[ \t]*[:=][ \t]*\S{8,}'
 }
-$exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1')
+$exempt = @('.claude/guards.md', '.claude/setup.md', '.claude/hooks/pre-push-audit.ps1', '.claude/hooks/hygiene-gate.ps1', '.claude/hooks/check_secrets.py')
 
 # Shapes that satisfy a scan pattern and are not the thing it hunts for.
 #

@@ -45,6 +45,11 @@
             "type": "command",
             "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.ps1\"",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "h=\".claude/hooks/check_secrets.py\"; d=\"$CLAUDE_PROJECT_DIR\"; [ -f \"$d/$h\" ] || d=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; py -3 \"$d/$h\"",
+            "timeout": 30
           }
         ]
       }
