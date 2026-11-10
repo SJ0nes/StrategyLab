@@ -16,11 +16,11 @@
 > Grid expansion, plateau scoring, the edge check, the degeneracy check, the
 > graveyard, the loop that joins them, the noise ceiling, the surface report and
 > **walk-forward validation** are built, tested, and reachable as `strategylab
-> search`, `report` and `validate`. What is NOT built: anything computing
-> buy-and-hold, and any rejection on the noise ceiling — both corrections are
-> REPORTED rather than enforced, so a candidate can pass validation while
-> sitting inside the noise distribution and while losing to simply owning the
-> index. Sentences below about live trading describe a design rather than a
+> search`, `report` and `validate`. The noise ceiling now gates validation:
+> a candidate that has not cleared it is refused before the held-back window is
+> read ([decisions/0012](decisions/0012-the-noise-ceiling-becomes-a-gate.md)).
+> What is NOT built: anything computing buy-and-hold, so a candidate can still
+> pass validation while losing to simply owning the index. Sentences below about live trading describe a design rather than a
 > running system. See [architecture.md](architecture.md) for what exists and
 > [../LIMITATIONS.md](../LIMITATIONS.md) for what that costs.
 

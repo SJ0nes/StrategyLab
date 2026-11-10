@@ -55,6 +55,7 @@ from strategylab.protocol import (
     load_protocol,
 )
 from strategylab.search.loop import STARTING_EQUITY
+from strategylab.search.noise import GATE_PASSED, NoiseGate
 from strategylab.validate.candidate import CandidateRef
 from strategylab.validate.walkforward import (
     VALIDATION_SCHEMA_VERSION,
@@ -706,7 +707,8 @@ def _candidate() -> CandidateRef:
         search_sharpe=0.64,
         search_plateau_score=0.59,
         degenerate=False,
-        noise_ceiling_note="Not computed.",
+        noise_ceiling_note="100 trials supports reading the upper percentiles.",
+        noise_gate=NoiseGate(GATE_PASSED, 0.64, 100, 97, 95),
     )
 
 
@@ -1025,15 +1027,23 @@ def test_a_non_finite_fold_metric_is_written_as_null_not_zero(tmp_path: Path) ->
 
 
 def test_the_artifact_repeats_the_searchs_own_noise_caveat(tmp_path: Path) -> None:
-    # A candidate never benchmarked against noise says so in its verdict too,
-    # rather than the caveat being dropped at the boundary.
+    # The search's own sentence about what its ceiling supports is carried into
+    # the verdict verbatim, rather than being dropped at the boundary.
     payload = json.loads(
         write_validation_result(
             _result(), _candidate(), _protocol(), datetime(2026, 9, 6, tzinfo=UTC), tmp_path
         ).read_text(encoding="utf-8")
     )
 
-    assert payload["noise_ceiling_note"] == "Not computed."
+    assert payload["noise_ceiling_note"] == "100 trials supports reading the upper percentiles."
+    # And the verdict the gate reached on it, with the counts it rested on.
+    assert payload["noise_gate"] == {
+        "status": "passed",
+        "candidate_sharpe": 0.64,
+        "scoreable_trials": 100,
+        "beaten": 97,
+        "required": 95,
+    }
 
 
 def test_a_naive_timestamp_is_refused(tmp_path: Path) -> None:

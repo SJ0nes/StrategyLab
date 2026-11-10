@@ -76,6 +76,7 @@ from strategylab.search.loop import (
     SEARCH_SCHEMA_VERSION,
     TRADED_PREFIX,
     SearchError,
+    SearchResult,
     failed_fingerprint,
     run_search,
     select_candidate,
@@ -1312,8 +1313,9 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
     # 2 added `costs_frac` and `commission_min_flat`; 3 turned `noise_ceiling`
     # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
     # briefly two different shapes, because those last fields went in without a
-    # bump. 5 added `config_content_hash`.
-    assert SEARCH_SCHEMA_VERSION == 5
+    # bump. 5 added `config_content_hash`. 6 added `noise_gate`, and
+    # `trial_best_sharpe` inside `noise_ceiling`.
+    assert SEARCH_SCHEMA_VERSION == 6
 
     documented = {
         "schema_version",
@@ -1335,6 +1337,7 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
         "failed_cells",
         "noise_ceiling",
         "noise_ceiling_note",
+        "noise_gate",
         "winner",
         "rejections",
         "cells",
@@ -1554,6 +1557,175 @@ def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number
     assert ceiling["seed"] == 5
     # And the note now describes the run rather than an absent component.
     assert "trials" in payload["noise_ceiling_note"]
+    # Every trial, in the order it ran - the same two numbers the result holds.
+    assert result.noise_ceiling is not None
+    assert ceiling["trial_best_sharpe"] == pytest.approx(list(result.noise_ceiling))
+    # Two trials decide nothing, and the artifact says so rather than guessing.
+    assert payload["noise_gate"]["status"] == "undetermined"
+    assert payload["noise_gate"]["scoreable_trials"] == 2
+
+
+# --------------------------------------------------------------------------
+# The noise gate, as the search applies it.
+# --------------------------------------------------------------------------
+#
+# A hundred real trials is hours, so these tests hand the loop a ceiling instead
+# of computing one. What is under test is what the loop DOES with a ceiling -
+# the verdict it records and what it writes to the graveyard - not the ceiling,
+# which tests/test_noise.py covers.
+
+
+def _search_against(
+    ceiling: list[float],
+    fixture_bars: pd.DataFrame,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[SearchResult, list[dict[str, Any]]]:
+    """Run the small search with its surrogates' best Sharpes fixed in advance."""
+
+    def fixed(*_args: Any, **_kwargs: Any) -> pd.Series:
+        return pd.Series(ceiling, name="best_in_grid_sharpe", dtype="float64")
+
+    monkeypatch.setattr("strategylab.search.loop.noise_ceiling", fixed)
+    graveyard = tmp_path / "graveyard.jsonl"
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _wide_protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=graveyard,
+        noise_trials=len(ceiling),
+    )
+    lines = graveyard.read_text(encoding="utf-8").splitlines() if graveyard.exists() else []
+    return result, [json.loads(line) for line in lines]
+
+
+def test_a_search_without_trials_records_that_no_gate_was_applied(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    result = run_search(
+        _small_strategy(),
+        fixture_bars,
+        _wide_protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+    )
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    gate = json.loads(path.read_text(encoding="utf-8"))["noise_gate"]
+
+    assert result.winner is not None
+    assert gate["status"] == "not_computed"
+    assert gate["percentile"] == 95
+    assert gate["min_trials"] == 100
+    assert gate["scoreable_trials"] == 0
+    assert gate["beaten"] is None
+    assert gate["required"] is None
+    assert gate["candidate_sharpe"] == pytest.approx(result.winner.sharpe)
+    assert "cannot be validated" in gate["summary"]
+
+
+def test_a_winner_inside_the_noise_stays_the_winner_and_goes_to_the_graveyard(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hundred surrogates on which the grid's best cell scored a Sharpe of a
+    # hundred. No candidate beats one of them.
+    result, graveyard = _search_against([100.0] * 100, fixture_bars, tmp_path, monkeypatch)
+
+    assert result.winner is not None
+    assert result.noise_gate.status == "failed"
+    assert result.noise_gate.beaten == 0
+    assert result.noise_gate.required == 95
+    buried = [record for record in graveyard if record["reason"] == "below_noise_ceiling"]
+    assert len(buried) == 1
+    assert buried[0]["candidate"] == result.winner.cell
+    assert buried[0]["metrics"]["sharpe"] == pytest.approx(result.winner.sharpe)
+    # Not in `rejections`: with the winner and the unexamined cells, those
+    # partition the grid, and a winner listed there would be counted twice.
+    assert all(rejection.reason != "below_noise_ceiling" for rejection in result.rejections)
+
+
+def test_a_winner_above_the_noise_is_not_buried(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, graveyard = _search_against([-100.0] * 100, fixture_bars, tmp_path, monkeypatch)
+
+    assert result.noise_gate.status == "passed"
+    assert result.noise_gate.beaten == 100
+    assert all(record["reason"] != "below_noise_ceiling" for record in graveyard)
+
+
+def test_a_ceiling_too_short_to_judge_buries_nothing_whichever_way_it_points(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ninety-nine surrogates the candidate cannot beat: one short of a verdict.
+    result, graveyard = _search_against([100.0] * 99, fixture_bars, tmp_path, monkeypatch)
+
+    assert result.noise_gate.status == "undetermined"
+    assert result.noise_gate.beaten == 0
+    assert all(record["reason"] != "below_noise_ceiling" for record in graveyard)
+
+
+def test_a_ceiling_that_raises_leaves_the_graveyard_untouched(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The ceiling is hours of work and the last thing to run. A search that dies
+    # in it returns nothing, so its rejections qualify nothing and are not kept.
+    def broken(*_args: Any, **_kwargs: Any) -> pd.Series:
+        raise ValueError("no surrogate could be built")
+
+    monkeypatch.setattr("strategylab.search.loop.noise_ceiling", broken)
+    graveyard = tmp_path / "graveyard.jsonl"
+
+    with pytest.raises(ValueError, match="no surrogate could be built"):
+        run_search(
+            _small_strategy(),
+            fixture_bars,
+            _wide_protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            config_content_hash="y",
+            graveyard_path=graveyard,
+            noise_trials=3,
+        )
+
+    assert not graveyard.exists()
+
+
+def test_the_same_search_without_a_ceiling_does_write_its_rejections(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    # The control for the test above: this search has rejections to write, so an
+    # absent graveyard there is the ceiling's doing and not an empty search.
+    graveyard = tmp_path / "graveyard.jsonl"
+    run_search(
+        _small_strategy(),
+        fixture_bars,
+        _wide_protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=graveyard,
+    )
+
+    assert graveyard.exists()
+    assert graveyard.read_text(encoding="utf-8").strip()
+
+
+def test_an_unscoreable_trial_is_recorded_in_its_place_as_null(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, _ = _search_against([0.5, math.nan, 0.75], fixture_bars, tmp_path, monkeypatch)
+    path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["noise_ceiling"]["trial_best_sharpe"] == [0.5, None, 0.75]
+    assert payload["noise_ceiling"]["trials"] == 3
+    assert payload["noise_ceiling"]["scoreable_trials"] == 2
+    assert payload["noise_gate"]["scoreable_trials"] == 2
 
 
 def test_a_naive_generated_at_is_refused(fixture_bars: pd.DataFrame, tmp_path: Path) -> None:

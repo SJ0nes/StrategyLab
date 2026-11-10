@@ -104,7 +104,9 @@ from strategylab.windows import in_sample_bars, walk_forward_bars
 #:
 #: ``1`` was the first shape. ``2`` adds ``config_content_hash``, copied from the
 #: candidate, so a verdict names what its config said and not only where it was.
-VALIDATION_SCHEMA_VERSION = 2
+#: ``3`` adds ``noise_gate``, the search's verdict on the candidate and the
+#: counts it rested on.
+VALIDATION_SCHEMA_VERSION = 3
 
 
 class Outcome(Enum):
@@ -748,8 +750,12 @@ def write_validation_result(
     - ``in_sample`` — the candidate's ``sharpe``, ``plateau_score`` and
       ``degenerate`` flag from the search, so the held-back figure can be read
       against the one it is expected to fall short of.
-    - ``noise_ceiling_note`` — the search's own sentence, verbatim. A candidate
-      never benchmarked against noise says so in its verdict too.
+    - ``noise_ceiling_note`` — the search's own sentence about what its ceiling
+      supports, verbatim.
+    - ``noise_gate`` — the search's verdict on the candidate: ``status``,
+      ``candidate_sharpe``, and the counts ``scoreable_trials``, ``beaten`` and
+      ``required``. A candidate read for validation has always passed, so this
+      records the margin it passed by rather than whether it did.
     - ``window`` — ``start``, ``end``, ``bars`` covered and ``fold_months``.
     - ``warmup_bars`` — the strategy's warm-up at these parameters.
     - ``criteria`` — every pre-registered threshold applied: ``min_sharpe``,
@@ -828,6 +834,17 @@ def write_validation_result(
             "degenerate": candidate.degenerate,
         },
         "noise_ceiling_note": candidate.noise_ceiling_note,
+        "noise_gate": {
+            "status": candidate.noise_gate.status,
+            "candidate_sharpe": (
+                None
+                if candidate.noise_gate.candidate_sharpe is None
+                else _finite_or_none(candidate.noise_gate.candidate_sharpe)
+            ),
+            "scoreable_trials": candidate.noise_gate.scoreable_trials,
+            "beaten": candidate.noise_gate.beaten,
+            "required": candidate.noise_gate.required,
+        },
         "window": {
             "start": protocol.windows.walk_forward.start.isoformat(),
             "end": protocol.windows.walk_forward.end.isoformat(),

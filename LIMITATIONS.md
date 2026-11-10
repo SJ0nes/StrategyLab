@@ -117,11 +117,15 @@ worth naming: the cheap path is the unbenchmarked one, and a reader who runs
 `search` without reading its output will get a plausible Sharpe and no warning
 they sought out.
 
-**The ceiling informs; it does not gate.** `select_candidate` never receives it,
-so a candidate can be nominated, written to the artifact and drawn on a report
-while sitting inside the noise distribution. Only a human reading the comparison
-will notice. This is the same gap the validation section records for
-`walk_forward`, now present one stage earlier.
+**The ceiling gates validation, not selection.** `select_candidate` still never
+receives it, so a candidate inside the noise distribution is still nominated,
+written to the artifact as the winner and drawn on a report. What changed is
+what happens next: the search records a `noise_gate` verdict beside it, writes
+a failure to the graveyard, and `validate` refuses anything short of a pass.
+`run` and `diff` waive the gate and say so, because paper trading tests the
+simulator. The rule - 95 in every 100 scoreable surrogates, at least 100 of
+them - was fixed by the assistant under a standing instruction and has not been
+ratified by the operator; `docs/decisions/0012` says what had been seen by then.
 
 **Fewer than ~100 trials cannot support a threshold.** The ceiling is read by
 its upper percentiles, and with twenty trials the 95th percentile is essentially
@@ -221,14 +225,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1565 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1647 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker and the commit-time credential scan —
 twenty-one areas, one per test file.
-486 of the 1565 are the risk layer's,
+486 of the 1647 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -421,15 +425,16 @@ throughout; there is no lot size or minimum order size.
 compares pooled Sharpe to `min_sharpe + pass_margin` (1.20). No standard error,
 no confidence interval, no p-value, and no deflated Sharpe is computed anywhere.
 
-**The noise ceiling does not enter the pass decision.** It is reported by the
-search when asked for, so it can inform which candidate a human chooses.
-`walk_forward` never receives it, and neither does `select_candidate`. A
-candidate can therefore be nominated by the search AND pass validation while
-sitting inside the noise distribution, and nothing in the code will stop that at
-either stage. The ceiling is a number a person must read and act on. What the
-validator does do is carry the search's own caveat forward verbatim — a verdict
-on a candidate never benchmarked against noise prints and records the sentence
-saying so — which is disclosure, not a gate.
+**The noise ceiling decides whether a candidate may be validated, and nothing
+more.** `walk_forward` never receives it and the pass decision is unchanged: a
+pooled Sharpe against a fixed bar. What stands in front of that decision is
+`read_candidate`, which refuses a candidate whose search did not pass the noise
+gate, before a touch is charged. So a candidate inside the noise distribution
+can no longer reach a verdict, and one never benchmarked cannot either. The
+verdict itself still says nothing about noise: it records the gate's counts and
+does not adjust the pass bar for them. And the gate is one comparison against
+one grid on one price series - no deflated Sharpe, no correction for how many
+searches have been run.
 
 **Nothing computes a benchmark.** There is no buy-and-hold comparison anywhere.
 A long-only trend strategy on the S&P 500 over 2005–2024 must beat simply

@@ -36,7 +36,22 @@ from strategylab.backtest.costs import CostModel
 from strategylab.core.strategy import required_history
 from strategylab.core.types import Condition, IndicatorRef, StrategyDef
 from strategylab.search.grid import expand_grid
-from strategylab.search.noise import RELIABLE_TRIALS, noise_ceiling, trials_note
+from strategylab.search.noise import (
+    GATE_FAILED,
+    GATE_NO_CANDIDATE,
+    GATE_NOT_COMPUTED,
+    GATE_PASSED,
+    GATE_PERCENTILE,
+    GATE_STATUSES,
+    GATE_UNDETERMINED,
+    RELIABLE_TRIALS,
+    NoiseGate,
+    describe_gate,
+    evaluate_gate,
+    noise_ceiling,
+    required_to_pass,
+    trials_note,
+)
 from strategylab.search.surrogate import (
     MIN_BLOCK_BARS,
     MIN_BLOCKS,
@@ -487,3 +502,183 @@ def test_a_long_run_says_the_tail_can_be_read(trials: int) -> None:
     assert "supports reading the upper percentiles" in note
     # Still hedged: one price series, one grid.
     assert "estimate" in note
+
+
+# --------------------------------------------------------------------------
+# The gate. Every number below is a count, derived by hand from the ladder.
+# --------------------------------------------------------------------------
+#
+# THE LADDER is `rungs` evenly spaced values 0/rungs, 1/rungs, ... - one per
+# surrogate. A candidate sitting half a step above rung k beats exactly the k+1
+# rungs numbered 0 to k, and one sitting ON rung k beats only the k below it,
+# because a tie is not a win. So every "beaten" below can be read off the
+# candidate's value without running anything.
+
+
+def _ladder(rungs: int = RELIABLE_TRIALS) -> pd.Series:
+    """Best-in-grid Sharpe on `rungs` surrogates: 0/rungs, 1/rungs, and so on."""
+    return pd.Series([k / rungs for k in range(rungs)], name="best_in_grid_sharpe")
+
+
+def test_the_gate_asks_for_ninety_five_in_every_hundred() -> None:
+    assert GATE_PERCENTILE == 95
+    assert RELIABLE_TRIALS == 100
+
+
+@pytest.mark.parametrize(
+    ("scoreable", "required"),
+    [(100, 95), (101, 96), (120, 114), (199, 190), (200, 190), (1000, 950)],
+)
+def test_the_count_needed_is_the_smallest_that_reaches_the_share(
+    scoreable: int, required: int
+) -> None:
+    # 95% of 101 is 95.95, so 95 is short and 96 is the first count that clears
+    # it. 95% of 199 is 189.05, so 190. Whole counts only: nobody beats 0.95 of
+    # a surrogate.
+    assert required_to_pass(scoreable) == required
+    assert required * 100 >= GATE_PERCENTILE * scoreable
+    assert (required - 1) * 100 < GATE_PERCENTILE * scoreable
+
+
+@pytest.mark.parametrize(
+    ("candidate", "beaten", "status"),
+    [
+        (0.945, 95, GATE_PASSED),
+        (0.94, 94, GATE_FAILED),
+        (0.935, 94, GATE_FAILED),
+        (0.95, 95, GATE_PASSED),
+        (5.0, 100, GATE_PASSED),
+        (-1.0, 0, GATE_FAILED),
+    ],
+    ids=["just-clear", "tied-with-rung-94", "just-short", "on-rung-95", "above-all", "below-all"],
+)
+def test_a_candidate_is_judged_on_how_many_surrogates_it_beats(
+    candidate: float, beaten: int, status: str
+) -> None:
+    gate = evaluate_gate(_ladder(), candidate)
+
+    assert gate == NoiseGate(
+        status=status,
+        candidate_sharpe=candidate,
+        scoreable_trials=100,
+        beaten=beaten,
+        required=95,
+    )
+
+
+def test_the_order_the_surrogates_ran_in_does_not_matter() -> None:
+    shuffled = _ladder().sample(frac=1.0, random_state=7).reset_index(drop=True)
+    assert list(shuffled) != list(_ladder())
+
+    assert evaluate_gate(shuffled, 0.945) == evaluate_gate(_ladder(), 0.945)
+
+
+def test_a_longer_run_is_held_to_the_same_share() -> None:
+    # 200 rungs of 1/200. 0.9475 is half a step above rung 189 (0.945), so it
+    # beats rungs 0 to 189: 190, which is exactly 95% of 200.
+    assert evaluate_gate(_ladder(200), 0.9475) == NoiseGate(GATE_PASSED, 0.9475, 200, 190, 190)
+    # Half a step lower beats rungs 0 to 188: 189, one short.
+    assert evaluate_gate(_ladder(200), 0.9425) == NoiseGate(GATE_FAILED, 0.9425, 200, 189, 190)
+
+
+@pytest.mark.parametrize("trials", [1, 20, RELIABLE_TRIALS - 1])
+def test_too_few_surrogates_give_no_verdict_however_good_the_candidate(trials: int) -> None:
+    gate = evaluate_gate(_ladder(trials), 99.0)
+
+    assert gate.status == GATE_UNDETERMINED
+    assert gate.scoreable_trials == trials
+    assert gate.beaten == trials, "it beat every one, and that still decides nothing"
+    assert gate.required == required_to_pass(trials)
+
+
+def test_a_surrogate_that_scored_nothing_does_not_count_towards_the_hundred() -> None:
+    # A hundred trials run, one of them unscoreable: ninety-nine to judge on.
+    ceiling = _ladder()
+    ceiling.iloc[10] = np.nan
+
+    gate = evaluate_gate(ceiling, 99.0)
+
+    assert gate.status == GATE_UNDETERMINED
+    assert gate.scoreable_trials == 99
+    assert gate.beaten == 99
+
+
+def test_a_hundred_scoreable_out_of_more_is_enough() -> None:
+    # 101 rungs of 1/101 with one knocked out leaves a hundred to judge on.
+    ceiling = _ladder(101)
+    ceiling.iloc[100] = np.nan
+
+    gate = evaluate_gate(ceiling, 99.0)
+
+    assert gate == NoiseGate(GATE_PASSED, 99.0, 100, 100, 95)
+
+
+def test_a_search_with_no_ceiling_has_no_verdict() -> None:
+    assert evaluate_gate(None, 0.64) == NoiseGate(GATE_NOT_COMPUTED, 0.64, 0, None, None)
+
+
+@pytest.mark.parametrize("ceiling", [None, _ladder()], ids=["no-ceiling", "with-ceiling"])
+def test_a_search_with_no_candidate_has_nothing_to_judge(ceiling: pd.Series | None) -> None:
+    gate = evaluate_gate(ceiling, None)
+
+    assert gate.status == GATE_NO_CANDIDATE
+    assert gate.candidate_sharpe is None
+    assert gate.beaten is None
+    assert gate.required is None
+    assert gate.scoreable_trials == (0 if ceiling is None else 100)
+
+
+def test_a_candidate_whose_sharpe_is_not_a_number_fails_rather_than_passes() -> None:
+    gate = evaluate_gate(_ladder(), float("nan"))
+
+    assert gate.status == GATE_FAILED
+    assert gate.beaten == 0
+
+
+def test_every_status_the_gate_returns_is_in_the_closed_set() -> None:
+    every_status = {
+        GATE_NO_CANDIDATE,
+        GATE_NOT_COMPUTED,
+        GATE_UNDETERMINED,
+        GATE_FAILED,
+        GATE_PASSED,
+    }
+    assert every_status == GATE_STATUSES
+    assert len(every_status) == 5
+
+
+@pytest.mark.parametrize(
+    ("gate", "fragments"),
+    [
+        (NoiseGate(GATE_PASSED, 1.31, 100, 97, 95), ["1.310", "97 of 100", "95"]),
+        (NoiseGate(GATE_FAILED, 0.64, 100, 12, 95), ["0.640", "12 of 100", "95", "INSIDE"]),
+        (NoiseGate(GATE_UNDETERMINED, 0.64, 20, 3, 19), ["20", "100", "3 of them"]),
+        (NoiseGate(GATE_NOT_COMPUTED, 0.64, 0, None, None), ["No noise ceiling was computed"]),
+        (NoiseGate(GATE_NO_CANDIDATE, None, 100, None, None), ["No candidate"]),
+    ],
+    ids=["passed", "failed", "undetermined", "not-computed", "no-candidate"],
+)
+def test_the_sentence_carries_the_counts_the_verdict_rests_on(
+    gate: NoiseGate, fragments: list[str]
+) -> None:
+    sentence = describe_gate(gate)
+
+    for fragment in fragments:
+        assert fragment in sentence
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        NoiseGate(GATE_FAILED, 0.64, 100, 12, 95),
+        NoiseGate(GATE_UNDETERMINED, 0.64, 20, 3, 19),
+        NoiseGate(GATE_NOT_COMPUTED, 0.64, 0, None, None),
+    ],
+    ids=["failed", "undetermined", "not-computed"],
+)
+def test_anything_short_of_a_pass_says_it_cannot_be_validated(gate: NoiseGate) -> None:
+    assert "cannot be validated" in describe_gate(gate)
+
+
+def test_a_pass_does_not_say_it_cannot_be_validated() -> None:
+    assert "cannot be validated" not in describe_gate(NoiseGate(GATE_PASSED, 1.31, 100, 97, 95))

@@ -31,6 +31,7 @@ from strategylab.protocol import (
     Windows,
 )
 from strategylab.search.loop import SEARCH_SCHEMA_VERSION
+from strategylab.search.noise import NoiseGate
 from strategylab.validate.candidate import CandidateError, read_candidate
 
 # Synthetic, and deliberately not the real snapshot's hash. Nothing here needs a
@@ -69,6 +70,30 @@ def _protocol(version: int = 1) -> Protocol:
     )
 
 
+def _gate(**overrides: Any) -> dict[str, Any]:
+    """A noise-gate object for a candidate that passed, overridable one field at a time.
+
+    The winner's Sharpe of 0.64 beat 97 of 100 surrogates, where 95 were needed.
+    """
+    gate: dict[str, Any] = {
+        "status": "passed",
+        "percentile": 95,
+        "min_trials": 100,
+        "candidate_sharpe": 0.6399777383485417,
+        "scoreable_trials": 100,
+        "beaten": 97,
+        "required": 95,
+        "summary": "The candidate's Sharpe of 0.640 beat 97 of 100 surrogates.",
+    }
+    gate.update(overrides)
+    return gate
+
+
+#: The gate a search records beside a winner whose Sharpe is not a number: it
+#: beat none of the hundred surrogates, so it failed.
+NO_SHARPE_GATE = _gate(status="failed", candidate_sharpe=None, beaten=0)
+
+
 def _artifact(**overrides: Any) -> dict[str, Any]:
     """A search artifact carrying a winner, with fields overridable one at a time."""
     payload: dict[str, Any] = {
@@ -77,7 +102,8 @@ def _artifact(**overrides: Any) -> dict[str, Any]:
         "strategy": "ma_crossover",
         "config": COMMITTED_CONFIG,
         "data_content_hash": HASH,
-        "noise_ceiling_note": "Not computed: this search was run without --trials.",
+        "noise_ceiling_note": "100 trials supports reading the upper percentiles.",
+        "noise_gate": _gate(),
         "winner": {
             "params": {"fast": 10, "slow": 80, "trend": 150},
             "sharpe": 0.6399777383485417,
@@ -124,20 +150,33 @@ def test_a_matching_artifact_yields_its_winner(tmp_path: Path) -> None:
 
 
 def test_the_searchs_noise_caveat_travels_with_the_candidate(tmp_path: Path) -> None:
-    # A candidate never benchmarked against noise must carry that sentence into
-    # the verdict, not lose it at the boundary between the two commands.
-    candidate = read_candidate(_written(tmp_path, _artifact()), _protocol(), HASH)
+    # Verbatim, whatever it says. The search wrote one sentence about what its
+    # ceiling supports, and it must reach the verdict rather than be dropped or
+    # paraphrased at the boundary between the two commands.
+    note = "Not computed: this search was run without --trials."
+    unbenchmarked = _gate(status="not_computed", scoreable_trials=0, beaten=None, required=None)
+    artifact = _artifact(noise_ceiling_note=note, noise_gate=unbenchmarked)
 
-    assert candidate.noise_ceiling_note.startswith("Not computed")
+    candidate = read_candidate(
+        _written(tmp_path, artifact), _protocol(), HASH, require_noise_gate=False
+    )
+
+    assert candidate.noise_ceiling_note == note
 
 
 def test_a_null_metric_becomes_a_nan_rather_than_an_error(tmp_path: Path) -> None:
     # `write_search_result` writes a non-finite metric as JSON null. A winner is
     # only ever nominated on a finite plateau score, so a null here is a figure
     # recorded beside the decision, not one it rested on.
+    #
+    # A Sharpe that is not a number beats no surrogate, so the gate beside it
+    # reads `failed`, and only a caller that waives the gate can read it at all.
     winner = dict(_artifact()["winner"], sharpe=None)
+    artifact = _artifact(winner=winner, noise_gate=NO_SHARPE_GATE)
 
-    candidate = read_candidate(_written(tmp_path, _artifact(winner=winner)), _protocol(), HASH)
+    candidate = read_candidate(
+        _written(tmp_path, artifact), _protocol(), HASH, require_noise_gate=False
+    )
 
     assert candidate.search_sharpe != candidate.search_sharpe, "expected NaN"
 
@@ -435,7 +474,14 @@ def test_a_metric_key_missing_entirely_is_refused_though_a_null_is_not(
         read_candidate(_written(tmp_path, _artifact(winner=winner)), _protocol(), HASH)
 
     nulled = dict(_artifact()["winner"], **{metric: None})
-    candidate = read_candidate(_written(tmp_path, _artifact(winner=nulled)), _protocol(), HASH)
+    # A null Sharpe cannot have passed the gate, so the gate beside it says so.
+    gate = NO_SHARPE_GATE if metric == "sharpe" else _gate()
+    candidate = read_candidate(
+        _written(tmp_path, _artifact(winner=nulled, noise_gate=gate)),
+        _protocol(),
+        HASH,
+        require_noise_gate=False,
+    )
     value = candidate.search_sharpe if metric == "sharpe" else candidate.search_plateau_score
     assert value != value, "a null metric is NaN, not a refusal"
 
@@ -517,3 +563,157 @@ def test_a_recorded_hash_that_is_simply_wrong_is_refused(tmp_path: Path) -> None
 
     with pytest.raises(CandidateError, match="edited after the search"):
         read_candidate(artifact, _protocol(), HASH)
+
+
+# --------------------------------------------------------------------------
+# The noise gate. A winner is the cell selection chose; whether it may be
+# validated is a separate answer, and this reader is where it is enforced.
+# --------------------------------------------------------------------------
+
+#: Gate objects for every status short of a pass, with counts that agree with it.
+SHORT_OF_A_PASS = {
+    "not_computed": {"scoreable_trials": 0, "beaten": None, "required": None},
+    "undetermined": {"scoreable_trials": 20, "beaten": 19, "required": 19},
+    "failed": {"scoreable_trials": 100, "beaten": 12, "required": 95},
+}
+
+
+def test_a_candidate_that_passed_the_gate_carries_the_counts_it_passed_on(tmp_path: Path) -> None:
+    candidate = read_candidate(_written(tmp_path, _artifact()), _protocol(), HASH)
+
+    assert candidate.noise_gate == NoiseGate(
+        status="passed",
+        candidate_sharpe=0.6399777383485417,
+        scoreable_trials=100,
+        beaten=97,
+        required=95,
+    )
+
+
+@pytest.mark.parametrize("status", sorted(SHORT_OF_A_PASS))
+def test_a_candidate_short_of_a_pass_is_refused_before_anything_is_spent(
+    tmp_path: Path, status: str
+) -> None:
+    artifact = _artifact(noise_gate=_gate(status=status, **SHORT_OF_A_PASS[status]))
+
+    with pytest.raises(CandidateError, match="cannot be validated"):
+        read_candidate(_written(tmp_path, artifact), _protocol(), HASH)
+
+
+@pytest.mark.parametrize("status", sorted(SHORT_OF_A_PASS))
+def test_the_paper_trader_may_still_read_a_candidate_short_of_a_pass(
+    tmp_path: Path, status: str
+) -> None:
+    # Live trading tests the simulator, not the strategy, so it has every use
+    # for a winner the gate refused. The caller has to ask for that by name.
+    artifact = _artifact(noise_gate=_gate(status=status, **SHORT_OF_A_PASS[status]))
+
+    candidate = read_candidate(
+        _written(tmp_path, artifact), _protocol(), HASH, require_noise_gate=False
+    )
+
+    assert candidate.noise_gate.status == status
+    assert candidate.noise_gate.beaten == SHORT_OF_A_PASS[status]["beaten"]
+
+
+@pytest.mark.parametrize("require", [True, False])
+@pytest.mark.parametrize(
+    ("gate", "match"),
+    [
+        (None, "carries a null 'noise_gate'"),
+        ("passed", "not an object"),
+        (["passed"], "not an object"),
+        ({"status": "passed"}, "carries no 'percentile'"),
+    ],
+    ids=["null", "a-string", "a-list", "status-only"],
+)
+def test_a_gate_that_is_not_the_recorded_object_is_refused(
+    tmp_path: Path, gate: object, match: str, require: bool
+) -> None:
+    with pytest.raises(CandidateError, match=match):
+        read_candidate(
+            _written(tmp_path, _artifact(noise_gate=gate)),
+            _protocol(),
+            HASH,
+            require_noise_gate=require,
+        )
+
+
+@pytest.mark.parametrize("require", [True, False])
+def test_an_artifact_with_no_gate_at_all_is_refused(tmp_path: Path, require: bool) -> None:
+    artifact = _artifact()
+    del artifact["noise_gate"]
+
+    with pytest.raises(CandidateError, match="carries no 'noise_gate'"):
+        read_candidate(_written(tmp_path, artifact), _protocol(), HASH, require_noise_gate=require)
+
+
+@pytest.mark.parametrize("require", [True, False])
+@pytest.mark.parametrize("status", ["maybe", "PASSED", "", 1, True])
+def test_a_status_outside_the_closed_set_is_refused(
+    tmp_path: Path, status: object, require: bool
+) -> None:
+    with pytest.raises(CandidateError, match="status"):
+        read_candidate(
+            _written(tmp_path, _artifact(noise_gate=_gate(status=status))),
+            _protocol(),
+            HASH,
+            require_noise_gate=require,
+        )
+
+
+@pytest.mark.parametrize("require", [True, False])
+def test_a_gate_saying_there_was_no_candidate_beside_a_winner_is_refused(
+    tmp_path: Path, require: bool
+) -> None:
+    gate = _gate(status="no_candidate", candidate_sharpe=None, beaten=None, required=None)
+
+    with pytest.raises(CandidateError, match="cannot both be true"):
+        read_candidate(
+            _written(tmp_path, _artifact(noise_gate=gate)),
+            _protocol(),
+            HASH,
+            require_noise_gate=require,
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"percentile": 90}, "judged under a different rule"),
+        ({"min_trials": 20}, "judged under a different rule"),
+        ({"scoreable_trials": 99}, "do not support"),
+        ({"beaten": 94}, "do not support"),
+        ({"scoreable_trials": 200}, "do not support"),
+        ({"beaten": None}, "do not support"),
+        ({"beaten": 97.5}, "not a whole number"),
+        ({"scoreable_trials": "100"}, "not a whole number"),
+        ({"beaten": True}, "not a whole number"),
+        ({"beaten": -1}, "not a whole number"),
+        ({"candidate_sharpe": 5.0}, "is not the winner's"),
+        ({"candidate_sharpe": None}, "is not the winner's"),
+    ],
+    ids=[
+        "another-percentile",
+        "another-trial-floor",
+        "one-trial-short",
+        "one-surrogate-short",
+        "97-of-200-is-not-95-percent",
+        "no-count-at-all",
+        "a-fractional-count",
+        "a-count-as-text",
+        "a-boolean-count",
+        "a-negative-count",
+        "a-sharpe-the-winner-does-not-have",
+        "no-sharpe",
+    ],
+)
+def test_a_pass_its_own_numbers_do_not_support_is_refused(
+    tmp_path: Path, overrides: dict[str, object], match: str
+) -> None:
+    # A hand-edited status, or a verdict reached under a rule this build no
+    # longer applies. Either way the word "passed" is not what gets trusted.
+    artifact = _artifact(noise_gate=_gate(**overrides))
+
+    with pytest.raises(CandidateError, match=match):
+        read_candidate(_written(tmp_path, artifact), _protocol(), HASH)

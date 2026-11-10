@@ -7,6 +7,7 @@ arrives with its own tests rather than as part of a large unreviewable change.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from datetime import UTC, datetime, timedelta
@@ -54,7 +55,14 @@ from strategylab.search.loop import (
     run_search,
     write_search_result,
 )
-from strategylab.search.noise import trials_note
+from strategylab.search.noise import (
+    GATE_FAILED,
+    GATE_NO_CANDIDATE,
+    GATE_PASSED,
+    RELIABLE_TRIALS,
+    describe_gate,
+    trials_note,
+)
 from strategylab.validate.candidate import CandidateError, read_candidate
 from strategylab.validate.walkforward import (
     Outcome,
@@ -211,13 +219,34 @@ def status() -> None:
 
     if validations == 0:
         latest = sorted(STATE_DIR.glob("search-*.json"))[-1]
-        console.print(f"Next:  [bold]uv run strategylab validate {latest.as_posix()}[/bold]")
-        console.print("       Walks that search's candidate through the held-back window.")
-        console.print(
-            "       [yellow]This spends a walk-forward read and records it permanently.[/yellow]"
-        )
-        console.print("       [bold]uv run strategylab report[/bold] draws the searches first,")
-        console.print("       recomputing nothing and reading no window.")
+        gate = _gate_status(latest)
+        if gate == GATE_PASSED:
+            console.print(f"Next:  [bold]uv run strategylab validate {latest.as_posix()}[/bold]")
+            console.print("       Walks that search's candidate through the held-back window.")
+            console.print(
+                "       [yellow]This spends a walk-forward read and records it "
+                "permanently.[/yellow]"
+            )
+            console.print("       [bold]uv run strategylab report[/bold] draws the searches first,")
+            console.print("       recomputing nothing and reading no window.")
+        elif gate == GATE_FAILED:
+            console.print("Next:  [bold]uv run strategylab report[/bold]")
+            console.print(
+                "       The latest search's candidate did not clear the noise ceiling, so"
+            )
+            console.print("       there is nothing to validate and the held-back window stays")
+            console.print("       unread. The report draws the surface that search found.")
+        else:
+            console.print(
+                "Next:  [bold]uv run strategylab search configs/ma_crossover.yaml "
+                f"--trials {RELIABLE_TRIALS}[/bold]"
+            )
+            console.print("       The latest search has no verdict from the noise gate, so")
+            console.print(
+                "       [bold]validate[/bold] would refuse its candidate. One trial costs a"
+            )
+            console.print("       whole grid, so a hundred is most of a day; it reads only the")
+            console.print("       in-sample window.")
     else:
         console.print("Next:  [bold]uv run strategylab report[/bold]")
         console.print("       Draws each stored search as a self-contained page in reports/.")
@@ -225,8 +254,8 @@ def status() -> None:
     console.print()
     console.print(
         "[yellow]A search reports a noise ceiling only when given --trials[/yellow]; "
-        "without one, nothing it printed is evidence of an edge - and the validator "
-        "does not gate on the ceiling either way."
+        "without one, nothing it printed is evidence of an edge - and "
+        "[bold]validate[/bold] refuses a candidate whose search did not pass the noise gate."
     )
 
 
@@ -302,6 +331,30 @@ def fetch(
     )
 
 
+def _gate_status(artifact: Path) -> str | None:
+    """Read the noise-gate status a search artifact records, without judging it.
+
+    For ``status`` only, which never refuses anything: it reads one word to
+    decide which command to suggest next. The reader that enforces the gate is
+    :func:`~strategylab.validate.candidate.read_candidate`.
+
+    Args:
+        artifact: The search artifact.
+
+    Returns:
+        The recorded status, or ``None`` when the file cannot be read, is not a
+        JSON object, or carries no gate - which is every artifact written before
+        the gate existed.
+    """
+    try:
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    gate = payload.get("noise_gate") if isinstance(payload, dict) else None
+    status = gate.get("status") if isinstance(gate, dict) else None
+    return status if isinstance(status, str) else None
+
+
 def _report_ceiling(result: SearchResult) -> None:
     """Print the noise ceiling, or say plainly that there is none.
 
@@ -321,7 +374,8 @@ def _report_ceiling(result: SearchResult) -> None:
             "\n[bold yellow]No noise ceiling was computed[/bold yellow] - pass "
             "[bold]--trials N[/bold] to compute one. The best of this many cells on data "
             "with no edge in it is well above zero, so nothing above is yet evidence of "
-            "anything."
+            f"anything, and [bold]validate[/bold] will refuse this candidate until a search "
+            f"with at least {RELIABLE_TRIALS} trials has passed it."
         )
         return
 
@@ -340,23 +394,20 @@ def _report_ceiling(result: SearchResult) -> None:
         f"median {finite.quantile(0.50):.3f}, 90th {finite.quantile(0.90):.3f}, "
         f"95th {finite.quantile(0.95):.3f}, max {finite.max():.3f}"
     )
-    if result.winner is None:
-        console.print("[dim]No candidate to compare against it.[/dim]")
+    # THE VERDICT IS THE GATE'S, printed in its own words. An earlier version
+    # recomputed "beats N of M" here with a rule of its own, which is one more
+    # place for the printed answer and the recorded one to disagree.
+    gate = result.noise_gate
+    if gate.status == GATE_PASSED:
+        console.print(f"[bold green]Noise gate passed.[/bold green] {describe_gate(gate)}")
+    elif gate.status == GATE_FAILED:
+        console.print(f"[bold red]Noise gate FAILED.[/bold red] {describe_gate(gate)}")
+    elif gate.status == GATE_NO_CANDIDATE:
+        console.print(f"[dim]{describe_gate(gate)}[/dim]")
     else:
-        beat = int((finite < result.winner.sharpe).sum())
-        share = beat / len(finite) * 100.0
-        verdict = (
-            "[bold green]above[/bold green]" if share >= 95.0 else "[bold red]INSIDE[/bold red]"
-        )
         console.print(
-            f"The candidate's Sharpe of {result.winner.sharpe:.3f} beats {beat} of "
-            f"{len(finite)} surrogates ({share:.0f}th percentile) - {verdict} the noise."
+            f"[bold yellow]No verdict from the noise gate.[/bold yellow] {describe_gate(gate)}"
         )
-        if share < 95.0:
-            console.print(
-                "[yellow]A candidate inside the noise distribution is what a search of this "
-                "size finds on data with no edge in it.[/yellow]"
-            )
     console.print(f"[dim]{trials_note(len(ceiling))}[/dim]")
 
 
@@ -866,6 +917,12 @@ WARMUP_CALENDAR_DAYS_FLOOR = 60
 def _candidate_or_exit(result: Path, protocol: Protocol) -> tuple[Any, Any]:
     """Load the search artifact's winner and its strategy, or exit non-zero.
 
+    THE NOISE GATE IS WAIVED HERE, by name, and nowhere else. ``run`` and
+    ``diff`` test the simulator rather than the strategy, so a winner the gate
+    refused is as useful to them as one it passed. The waiver is printed, so a
+    paper trade on a candidate inside the noise is never mistaken for an
+    endorsement of it.
+
     Args:
         result: The search artifact.
         protocol: The loaded protocol.
@@ -883,11 +940,17 @@ def _candidate_or_exit(result: Path, protocol: Protocol) -> tuple[Any, Any]:
         raise typer.Exit(code=1)
     try:
         _, entry = cache_read(ticker, DATA_DIR)
-        candidate = read_candidate(result, protocol, entry.content_hash)
+        candidate = read_candidate(result, protocol, entry.content_hash, require_noise_gate=False)
         definition = load_strategy(candidate.config_path)
     except (DataQualityError, CandidateError, StrategyConfigError) as exc:
         err_console.print(f"[bold red]cannot load the candidate[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
+    if candidate.noise_gate.status != GATE_PASSED:
+        err_console.print(
+            f"[yellow]note[/yellow] this candidate has not passed the noise gate (status "
+            f"'{candidate.noise_gate.status}'). Paper trading and its replay test the "
+            "simulator, not the strategy, so they proceed; [bold]validate[/bold] would refuse it."
+        )
     return candidate, definition
 
 
@@ -934,14 +997,18 @@ def run(
     protocol = _load_or_exit()
 
     environment = os.environ.get("T212_ENVIRONMENT", "")
-    api_key = os.environ.get("T212_API_KEY", "")
+    # NAMED `key`, NOT `api_key`, on purpose. The pre-push audit reports any line
+    # shaped like a credential assignment and has no exemptions, because every
+    # exemption tried so far also hid a real key. This line reads the
+    # environment and holds no secret, so it is named not to look like one.
+    key = os.environ.get("T212_API_KEY", "")
     if environment != "demo":
         err_console.print(
             f"[bold red]refusing to run[/bold red] T212_ENVIRONMENT is {environment!r}; this "
             "command runs against the demo venue only. Export the values in .env first."
         )
         raise typer.Exit(code=1)
-    if not api_key.strip():
+    if not key.strip():
         err_console.print("[bold red]refusing to run[/bold red] T212_API_KEY is not set")
         raise typer.Exit(code=1)
 
@@ -993,7 +1060,7 @@ def run(
     venue_ticker = os.environ.get("T212_TICKER", "").strip()
     symbol_map = {ticker: venue_ticker} if venue_ticker else None
     try:
-        venue = T212Venue(api_key, environment, symbol_map=symbol_map)
+        venue = T212Venue(key, environment, symbol_map=symbol_map)
         reconciled = venue.reconcile()
         balance = venue.get_balance()
         positions = list(reconciled.venue_positions)

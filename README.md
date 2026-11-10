@@ -83,9 +83,9 @@ is what stands between paper and real money.
 |---|---|
 | Protocol loader and validator | Any benchmark — nothing computes buy-and-hold |
 | Price data layer — validation, provenance, parquet cache | The noise band drawn on the figure's own axis |
-| Cost model — hand-verified arithmetic | Rejection *on* the ceiling — it informs, it does not gate |
+| Cost model — hand-verified arithmetic | A hundred-trial ceiling for the committed grid — the gate exists, and no search here has yet been run through it |
 | Strategy-config loader — closed schema, closed vocabulary, and a content hash a search records and a later reader checks | Fold panels in a report — a verdict is JSON, invisible in every figure |
-| The noise ceiling — block-resampled surrogates, `--trials` | The backtester emitting the decision schema — the replay stands in for it |
+| The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | The backtester emitting the decision schema — the replay stands in for it |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | Equity curves — not stored, so a cell cannot be clicked through |
 | Backtest engine and metrics, with the determinism test | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A daily-loss limit that latches — the gate is stateless, so a recovery re-permits |
@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(untested)* | |
 
-**1565 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1647 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -179,13 +179,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1565 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1647 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1565 tests, none touching the network
+uv run pytest                   # 1647 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -269,9 +269,16 @@ left to be noticed.
 **Two honest caveats.** The surrogates are not noise — each block is a verbatim
 stretch of real history, so the comparison is against a *reordering of this
 market's own regimes*, which is a harder and narrower test than the rules
-describe. And **the ceiling informs; it does not gate**: `select_candidate`
-never sees it, so a candidate can be nominated while sitting inside the
-distribution.
+describe. And **the ceiling now gates validation, by a rule the assistant fixed
+rather than the operator**: a candidate must beat the grid's best cell on at
+least 95 in every 100 scoreable surrogates, with at least 100 of them, or
+`validate` refuses it before the held-back window is read. A search run without
+`--trials`, or with too few, has no verdict and cannot be validated either. The
+candidate is still recorded as the search's winner, because the paper-trading
+worker tests the simulator and has every use for it.
+[docs/decisions/0012](docs/decisions/0012-the-noise-ceiling-becomes-a-gate.md)
+records the rule, what had been seen when it was fixed, and that it has not been
+ratified.
 
 **Three outcomes, not two.** *Built and tested.* Validation returns pass, fail,
 or `insufficient_data`. The third is not a soft failure — it means the strategy

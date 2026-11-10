@@ -33,11 +33,16 @@ well above zero - and the artifact records ``"noise_ceiling": null`` explicitly
 rather than omitting the key, because an absent field reads as an oversight and
 a null reads as a statement.
 
-**Even with a ceiling, nothing here REJECTS on it.** The ceiling is computed and
-reported so a human can weigh it; ``select_candidate`` never sees it, so
-``below_noise_ceiling`` remains a rejection reason this loop never writes. That
-is deliberate and it is a limitation: a candidate can be nominated while sitting
-inside the noise distribution, and only a reader will notice.
+**Selection never sees the ceiling, and the search as a whole is judged on it.**
+``select_candidate`` ranks by plateau and knows nothing of the surrogates. Once
+it has chosen, :func:`~strategylab.search.noise.evaluate_gate` compares that one
+cell against the ceiling and the verdict is recorded as
+:attr:`SearchResult.noise_gate`. A failure is written to the graveyard under
+``below_noise_ceiling`` and the cell remains the winner: what the gate decides
+is whether :mod:`strategylab.validate.candidate` will let it be validated, and
+that reader refuses anything short of a pass. A search run without ``--trials``,
+or with too few to settle the tail, has no verdict and cannot be validated
+either. ``docs/decisions/0012`` records the rule and when it was fixed.
 
 **It renders no report.** ``report/surface.py`` reads the JSON this loop writes
 and hands ``report/render.py`` a context.
@@ -79,7 +84,16 @@ from strategylab.data.source import REQUIRED_COLUMNS
 from strategylab.protocol import Protocol
 from strategylab.search.graveyard import DEFAULT_GRAVEYARD_PATH, record_rejection
 from strategylab.search.grid import expand_grid
-from strategylab.search.noise import noise_ceiling, trials_note
+from strategylab.search.noise import (
+    GATE_FAILED,
+    GATE_PERCENTILE,
+    RELIABLE_TRIALS,
+    NoiseGate,
+    describe_gate,
+    evaluate_gate,
+    noise_ceiling,
+    trials_note,
+)
 from strategylab.search.plateau import (
     ADDED_COLUMNS,
     FINGERPRINT_COLUMN,
@@ -108,7 +122,8 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: ``block_bars`` and ``seed`` to that object, without which a ceiling cannot be
 #: reproduced from the artifact that reports it. ``5`` adds
 #: ``config_content_hash``, without which a config edited after the search loads
-#: silently under the winner's parameters.
+#: silently under the winner's parameters. ``6`` adds ``noise_gate`` and, inside
+#: ``noise_ceiling``, ``trial_best_sharpe``.
 #:
 #: THE BUMP TO 4 IS THE INSTRUCTIVE ONE. Those two fields were added under
 #: version 3 rather than bumping, so artifacts written hours apart both claimed
@@ -116,7 +131,7 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: exists to prevent, made in the same session as the comment saying so. Bump on
 #: every field change, including the ones that feel too small to matter.
 #: :func:`write_search_result` enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 5
+SEARCH_SCHEMA_VERSION = 6
 
 #: Where a search artifact is written, and - since ``validate/`` was built - the
 #: default directory for a validation artifact too. ``cli.status`` counts
@@ -239,7 +254,9 @@ class Rejection:
     """One candidate the loop refused, and why.
 
     Mirrors what was written to the graveyard, so the artifact is readable
-    without opening a second file.
+    without opening a second file - with one exception. A winner the noise gate
+    refused is written to the graveyard under ``below_noise_ceiling`` and has no
+    ``Rejection``; see :attr:`SearchResult.rejections` for why.
 
     Attributes:
         cell: The rejected combination, mapping name to value in bars.
@@ -297,6 +314,10 @@ class SearchResult:
             series, or ``None`` when no ceiling was computed. ``None`` is not a
             ceiling of zero and must never be rendered as one: it means the
             comparison was not made.
+        noise_gate: Whether ``winner`` cleared that ceiling, with the counts
+            behind the answer. Always present, including when no ceiling was
+            computed - that is a status, not an absence. THIS, NOT ``winner``,
+            IS WHAT SAYS WHETHER A CANDIDATE MAY BE VALIDATED.
         costs: The broker parameters every cell was charged, every rate a
             FRACTION. Recorded for the same reason as the ceiling, and with
             more force: costs are the single largest determinant of every
@@ -309,11 +330,19 @@ class SearchResult:
             ``neighbour_count``. The schema is
             :mod:`strategylab.search.plateau`'s, plus the two columns
             :func:`~strategylab.search.plateau.plateau_score` adds.
-        winner: The surviving candidate, or ``None`` when every cell was
+        winner: The cell selection chose, or ``None`` when every cell was
             rejected or every cell failed. ``None`` is a real outcome and not an
-            error.
-        rejections: Every refusal, in the order they were made. A cell whose
-            backtest failed appears here too.
+            error. A winner is NOT a candidate that may be validated: it is the
+            best surviving plateau, and ``noise_gate`` says whether that is
+            distinguishable from noise. A winner that failed the gate is still
+            the winner, because the paper-trading worker tests the simulator
+            rather than the strategy and has every use for it.
+        rejections: Every refusal SELECTION made, in the order it made them,
+            plus every cell whose backtest failed. Together with the winner and
+            the cells selection never reached, these partition the grid, which
+            is why a winner the noise gate refused is NOT listed here: it would
+            be counted twice. That one refusal is in ``noise_gate``, and in the
+            graveyard under ``below_noise_ceiling``.
     """
 
     strategy: str
@@ -333,6 +362,7 @@ class SearchResult:
     noise_ceiling: pd.Series | None
     noise_block_bars: int | None
     noise_seed: int
+    noise_gate: NoiseGate
     costs: CostModel
     results: pd.DataFrame
     winner: Candidate | None
@@ -1145,16 +1175,6 @@ def run_search(
         )
     rejections.extend(selection_rejections)
 
-    # THE GRAVEYARD IS WRITTEN LAST, in one pass, once the run is known to have
-    # produced a surface. Writing each rejection as it was made left permanent
-    # records behind for runs that then raised - a partial graveyard for a
-    # search that returned nothing, which the previous contract audit named and
-    # which no amount of input checking removes on its own. Deferring costs
-    # nothing that matters: a run that does not complete has no rejections worth
-    # keeping, because it has no result they qualify.
-    for cell, metrics, reason in pending_records:
-        record_rejection(cell, metrics, reason, graveyard_path)
-
     # THE CEILING IS COMPUTED ON THE SAME WINDOW THE SEARCH READ, and on
     # nothing else. Handing `bars` here instead of `window` would compute it
     # partly on held-back data, which is a read of that data whatever it is
@@ -1166,6 +1186,33 @@ def run_search(
         ceiling = noise_ceiling(
             definition, definition.search, window, protocol.costs, noise_trials, noise_seed
         )
+
+    # THE GATE JUDGES THE CELL SELECTION CHOSE, ONCE. A failure is written to
+    # the graveyard under `below_noise_ceiling` - the one reason in its
+    # vocabulary this loop used never to write - but NOT to `rejections`, and
+    # the cell stays the winner. Nothing walks on to the next-best cell: that
+    # would choose a cell for its own Sharpe, which is what ranking by plateau
+    # exists to avoid. See :class:`SearchResult` for why the two lists differ.
+    gate = evaluate_gate(ceiling, None if winner is None else winner.sharpe)
+    if winner is not None and gate.status == GATE_FAILED:
+        pending_records.append(
+            (
+                winner.cell,
+                {METRIC_COLUMN: winner.sharpe, "max_drawdown_pct": winner.max_drawdown_pct},
+                "below_noise_ceiling",
+            )
+        )
+
+    # THE GRAVEYARD IS WRITTEN LAST, in one pass, once the run is known to have
+    # produced a surface. Writing each rejection as it was made left permanent
+    # records behind for runs that then raised - a partial graveyard for a
+    # search that returned nothing, which the previous contract audit named and
+    # which no amount of input checking removes on its own. Deferring costs
+    # nothing that matters: a run that does not complete has no rejections worth
+    # keeping, because it has no result they qualify. That now includes a run
+    # whose ceiling raised, hours in: it records nothing either.
+    for cell, metrics, reason in pending_records:
+        record_rejection(cell, metrics, reason, graveyard_path)
 
     in_sample = protocol.windows.in_sample
     return SearchResult(
@@ -1186,6 +1233,7 @@ def run_search(
         noise_ceiling=ceiling,
         noise_block_bars=block_bars,
         noise_seed=noise_seed,
+        noise_gate=gate,
         costs=protocol.costs,
         results=scored,
         winner=winner,
@@ -1263,6 +1311,38 @@ def _ceiling_payload(
             "p95": _finite_or_none(float(finite.quantile(0.95))) if len(finite) else None,
         },
         "max": _finite_or_none(float(finite.max())) if len(finite) else None,
+        # Every trial, in the order it ran, so a reader can draw the
+        # distribution and recount the gate rather than trust three percentiles.
+        # An unscoreable trial is `null`, in its place, not dropped.
+        "trial_best_sharpe": [_finite_or_none(float(value)) for value in ceiling],
+    }
+
+
+def _gate_payload(gate: NoiseGate) -> dict[str, Any]:
+    """Render the noise gate's verdict for the artifact.
+
+    The rule travels with the verdict: ``percentile`` and ``min_trials`` are
+    constants today, and they are written into every artifact so that a verdict
+    read after either constant has changed still says what it was measured
+    against.
+
+    Args:
+        gate: The verdict.
+
+    Returns:
+        The object described in :func:`write_search_result`.
+    """
+    return {
+        "status": gate.status,
+        "percentile": GATE_PERCENTILE,
+        "min_trials": RELIABLE_TRIALS,
+        "candidate_sharpe": (
+            None if gate.candidate_sharpe is None else _finite_or_none(gate.candidate_sharpe)
+        ),
+        "scoreable_trials": gate.scoreable_trials,
+        "beaten": gate.beaten,
+        "required": gate.required,
+        "summary": describe_gate(gate),
     }
 
 
@@ -1349,15 +1429,25 @@ def write_search_result(
     - ``starting_equity`` — account currency units.
     - ``grid_size``, ``failed_cells`` — cells walked, and how many raised.
     - ``noise_ceiling`` — ``null`` when none was computed, otherwise an object
-      with ``trials``, ``block_bars``, ``seed``, ``percentiles`` (the 50th, 90th
-      and 95th of the best-in-grid Sharpe across surrogates) and ``max``. A
-      ``null`` here is NOT a ceiling of zero; ``noise_ceiling_note`` says which
-      case applies and, when a ceiling exists, what its trial count supports.
+      with ``trials``, ``scoreable_trials``, ``block_bars``, ``seed``,
+      ``percentiles`` (the 50th, 90th and 95th of the best-in-grid Sharpe across
+      surrogates), ``max``, and ``trial_best_sharpe`` - every trial's value in
+      the order it ran, ``null`` where a trial scored nothing. A ``null``
+      ceiling is NOT a ceiling of zero; ``noise_ceiling_note`` says which case
+      applies and, when a ceiling exists, what its trial count supports.
+    - ``noise_gate`` — never ``null``. An object with ``status`` (one of
+      :data:`~strategylab.search.noise.GATE_STATUSES`), the rule it was judged
+      under as ``percentile`` and ``min_trials``, the counts ``scoreable_trials``,
+      ``beaten`` and ``required``, the ``candidate_sharpe`` judged, and a
+      ``summary`` sentence. ``beaten`` and ``required`` are ``null`` when there
+      was no candidate or nothing scoreable to count against.
     - ``winner`` — ``null``, or an object carrying ``params``, ``sharpe``,
       ``max_drawdown_pct``, ``plateau_score``, ``neighbour_count`` and
-      ``degenerate``.
+      ``degenerate``. The cell selection chose; ``noise_gate`` says whether it
+      may be validated.
     - ``rejections`` — a list of ``params``, ``reason``, ``detail``, in the
-      order the refusals were made.
+      order selection made them. A winner the noise gate refused is not among
+      them; see :attr:`SearchResult.rejections`.
     - ``cells`` — one object per grid cell, each with ``params``, ``sharpe``,
       ``max_drawdown_pct``, ``trade_count``, ``trade_fingerprint``,
       ``plateau_score`` and ``neighbour_count``. A metric that is not finite is
@@ -1431,6 +1521,7 @@ def write_search_result(
             if result.noise_ceiling is None
             else trials_note(len(result.noise_ceiling))
         ),
+        "noise_gate": _gate_payload(result.noise_gate),
         "winner": None
         if result.winner is None
         else {
