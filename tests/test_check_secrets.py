@@ -224,12 +224,44 @@ def test_a_directory_change_before_the_commit_is_followed(tmp_path: Path, cd: st
     clean = make_repo(tmp_path / "clean")
     stage(dirty, "a.txt", PEM)
     assert run_hook(f"{cd} {dirty.as_posix()} && git commit -m x", clean).returncode == 2
-    assert run_hook(f"{cd} {clean.as_posix()} && git commit -m x", dirty).returncode == 0
+    assert run_hook(f"{cd} {clean.as_posix()} && git commit -m x", clean).returncode == 0
+
+
+def test_the_starting_directory_is_scanned_too_when_a_cd_is_seen(tmp_path: Path) -> None:
+    """A subshell or popd can undo a cd, so the hook does not trust it alone.
+
+    The cost is a refusal when the starting repository holds a credential and
+    the commit really does run elsewhere; the alternative is a scan of the
+    wrong tree.
+    """
+    dirty = make_repo(tmp_path / "dirty")
+    clean = make_repo(tmp_path / "clean")
+    stage(dirty, "a.txt", PEM)
+    subshell = f"(cd {clean.as_posix()} && git status) && git commit -m x"
+    assert run_hook(subshell, dirty).returncode == 2
+    assert run_hook(f"cd {clean.as_posix()} && git commit -m x", dirty).returncode == 2
+
+
+def test_a_cd_from_outside_any_repository_is_still_followed(tmp_path: Path) -> None:
+    dirty = make_repo(tmp_path / "dirty")
+    clean = make_repo(tmp_path / "clean")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    stage(dirty, "a.txt", PEM)
+    assert run_hook(f"cd {dirty.as_posix()} && git commit -m x", outside).returncode == 2
+    assert run_hook(f"cd {clean.as_posix()} && git commit -m x", outside).returncode == 0
 
 
 @pytest.mark.parametrize(
     "prefix",
-    ["GIT_DIR={git_dir} ", "GIT_WORK_TREE={work_tree} ", "git -c core.worktree={work_tree} "],
+    [
+        "GIT_DIR={git_dir} ",
+        "GIT_WORK_TREE={work_tree} ",
+        "GIT_INDEX_FILE={git_dir}/index ",
+        "export GIT_DIR={git_dir}; ",
+        "$env:GIT_DIR = '{git_dir}'; ",
+        "git -c core.worktree={work_tree} ",
+    ],
 )
 def test_a_repository_named_another_way_is_refused(tmp_path: Path, prefix: str) -> None:
     """The scan cannot follow these, so it refuses rather than scan the wrong tree."""

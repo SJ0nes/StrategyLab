@@ -19,8 +19,10 @@ is still untracked when it is scanned, and neither diff lists it.
 A command is parsed to find which repository it commits in (``git -C <dir> commit``,
 ``git --git-dir <dir> --work-tree <dir> commit``, ``git -c x=y commit``,
 ``bash -c '...'``), following a ``cd``, ``pushd`` or ``Set-Location`` earlier in it, and
-reading from the repository's top level, which is where git names paths from. A command
-that names its repository through ``GIT_DIR``, ``GIT_WORK_TREE`` or ``core.worktree`` is
+reading from the repository's top level, which is where git names paths from. A ``cd``
+is followed but not trusted alone: a subshell or ``popd`` can undo it, so the starting
+directory is scanned as well. A command that names its repository through ``GIT_DIR``,
+``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, ``GIT_COMMON_DIR`` or ``core.worktree`` is
 refused, since the scan does not follow those. When the words appear but the parser finds no
 commit - a multi-line script, an environment prefix, a wrapper - the working directory is
 scanned anyway. Scanning a command that turns out not to commit costs one git call;
@@ -79,7 +81,9 @@ SHELLS = {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}
 DIRECTORY_CHANGES = {"cd", "pushd", "set-location", "sl", "chdir"}
 # Ways of naming a repository that the scan does not follow, so a command using one is
 # refused rather than checked against the wrong tree.
-UNFOLLOWED = re.compile(r"\bGIT_(DIR|WORK_TREE)=|\bcore\.(worktree|bare)\b", re.I)
+UNFOLLOWED = re.compile(
+    r"\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)\s*=|\bcore\.(worktree|bare)\b", re.I
+)
 
 # Bytes. Past this a file is refused unread rather than half-checked.
 MAX_SCAN_BYTES = 50_000_000
@@ -271,21 +275,29 @@ def run(event: dict[str, Any]) -> int:
 
     cwd = Path(str(event.get("cwd") or Path.cwd()))
     invocations = commits(tokens, cwd) if tokens is not None else []
-    roots = [repo_for(options, base) for options, base in invocations]
+    # A parsed commit's repository must be readable. The starting directory is also scanned
+    # when no commit was parsed, or when a cd moved one: a subshell or popd can undo a cd,
+    # and the parser does not model either. It is skipped if it is not a repository.
+    targets = [(repo_for(options, base), True) for options, base in invocations]
+    if not invocations or any(base != cwd for _, base in invocations):
+        targets.append((cwd, False))
     # An unparseable command may hide an add, so it is read as if it had one.
     adds = tokens is None or re.search(r"\badd\b", command) is not None
 
     findings: list[str] = []
-    for root in roots or [cwd]:
+    seen: set[Path] = set()
+    for root, required in targets:
         # Git names changed paths from the top level, whichever directory it runs in.
         listed = git(root, "rev-parse", "--show-toplevel")
         top = Path(listed.decode().strip()) if listed else None
         paths = changed_paths(top, adds) if top else None
         if top is None or paths is None:
-            if roots:
+            if required:
                 return refuse([f"git could not say what {root.name} would commit"])
             continue
-        findings += scan(top, paths)
+        if top not in seen:
+            seen.add(top)
+            findings += scan(top, paths)
     return refuse(findings) if findings else 0
 
 
