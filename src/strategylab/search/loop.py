@@ -106,15 +106,17 @@ _NON_PARAMETER_COLUMNS = RESULT_COLUMNS | ADDED_COLUMNS
 #: ``costs_frac`` and ``commission_min_flat``. ``3`` turned ``noise_ceiling``
 #: from a permanent ``null`` into an object when one was computed. ``4`` adds
 #: ``block_bars`` and ``seed`` to that object, without which a ceiling cannot be
-#: reproduced from the artifact that reports it.
+#: reproduced from the artifact that reports it. ``5`` adds
+#: ``config_content_hash``, without which a config edited after the search loads
+#: silently under the winner's parameters.
 #:
-#: THE LAST BUMP IS THE INSTRUCTIVE ONE. Those two fields were added under
+#: THE BUMP TO 4 IS THE INSTRUCTIVE ONE. Those two fields were added under
 #: version 3 rather than bumping, so artifacts written hours apart both claimed
 #: version 3 and carried different shapes - exactly the confusion this field
 #: exists to prevent, made in the same session as the comment saying so. Bump on
 #: every field change, including the ones that feel too small to matter.
 #: :func:`write_search_result` enumerates the current fields.
-SEARCH_SCHEMA_VERSION = 4
+SEARCH_SCHEMA_VERSION = 5
 
 #: Where a search artifact is written, and - since ``validate/`` was built - the
 #: default directory for a validation artifact too. ``cli.status`` counts
@@ -262,6 +264,11 @@ class SearchResult:
     Attributes:
         strategy: ``definition.name``, the strategy that was searched.
         config_path: Repository-relative path of the config it was loaded from.
+        config_content_hash: Digest of what that config MEANT when it was
+            searched, from
+            :func:`~strategylab.core.config.config_content_hash`. A path names a
+            file; this names its contents, so a reader of the winner can refuse
+            a config edited since.
         instrument: The research ticker, from the protocol.
         data_content_hash: Content hash of the price snapshot the search ran
             against. Results are reproducible against a snapshot, never against
@@ -311,6 +318,7 @@ class SearchResult:
 
     strategy: str
     config_path: Path
+    config_content_hash: str
     instrument: str
     data_content_hash: str
     protocol_version: int
@@ -902,6 +910,7 @@ def run_search(
     protocol: Protocol,
     *,
     config_path: Path,
+    config_content_hash: str,
     data_content_hash: str,
     radius: int = DEFAULT_RADIUS,
     graveyard_path: Path = DEFAULT_GRAVEYARD_PATH,
@@ -978,6 +987,11 @@ def run_search(
             result so a figure can be traced to the file that produced it. Must
             be repository-relative; an absolute path would carry a username into
             a file this project may publish.
+        config_content_hash: Digest of what the config at ``config_path`` means,
+            from :func:`~strategylab.core.config.config_content_hash`. Recorded,
+            not checked: the caller holds the file and this function never opens
+            it. :func:`~strategylab.validate.candidate.read_candidate` is what
+            compares it against the file later.
         data_content_hash: Content hash of the price snapshot, from the cache
             entry. Recorded for the same reason: results are reproducible
             against a snapshot, and vendors revise history.
@@ -1157,6 +1171,7 @@ def run_search(
     return SearchResult(
         strategy=definition.name,
         config_path=config_path,
+        config_content_hash=config_content_hash,
         instrument=protocol.instruments.research,
         data_content_hash=data_content_hash,
         protocol_version=protocol.protocol_version,
@@ -1318,8 +1333,9 @@ def write_search_result(
       argument is converted to UTC first, so this is not necessarily the offset
       the caller passed.
     - ``protocol_version`` — schema version of the protocol, NOT its values.
-    - ``strategy``, ``config`` — the strategy's name and the relative path it
-      was loaded from.
+    - ``strategy``, ``config``, ``config_content_hash`` — the strategy's name,
+      the relative path it was loaded from, and the digest of what that file
+      meant when it was searched.
     - ``instrument``, ``data_content_hash`` — the research ticker and the hash
       of the snapshot searched. Results are reproducible against a snapshot.
     - ``window`` — ``start``, ``end``, and ``bars``, the row count inside it.
@@ -1386,6 +1402,7 @@ def write_search_result(
         "protocol_version": result.protocol_version,
         "strategy": result.strategy,
         "config": result.config_path.as_posix(),
+        "config_content_hash": result.config_content_hash,
         "instrument": result.instrument,
         "data_content_hash": result.data_content_hash,
         "window": {

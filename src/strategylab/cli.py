@@ -17,7 +17,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from strategylab.core.config import StrategyConfigError, load_strategy
+from strategylab.core.config import StrategyConfigError, config_content_hash, load_strategy
 from strategylab.core.strategy import required_history
 from strategylab.data.source import (
     DataQualityError,
@@ -442,6 +442,7 @@ def search(
 
     try:
         definition = load_strategy(config)
+        config_hash = config_content_hash(config)
     except StrategyConfigError as exc:
         err_console.print(f"[bold red]config error[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -490,6 +491,7 @@ def search(
             bars,
             protocol,
             config_path=_repository_relative(config),
+            config_content_hash=config_hash,
             data_content_hash=entry.content_hash,
             noise_trials=trials,
             noise_seed=seed,
@@ -613,7 +615,7 @@ def validate(
     one - and it is documented in ``LIMITATIONS.md`` as a cost still being paid.
 
     And it keeps the chain honest end to end: a verdict points at a search,
-    which points at a snapshot hash and a config. Nothing in between can be
+    which points at a snapshot hash and a config hash. Nothing in between can be
     edited by hand without the trail showing it.
 
     THE COST OF THIS CHOICE, stated because it is real: a human cannot easily

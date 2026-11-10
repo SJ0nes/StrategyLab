@@ -5,7 +5,7 @@ settled in ``cli.validate``'s docstring and not repeated here. What this module
 adds is the enforcement: the checks below are what make "the chain is honest end
 to end" a property of the code rather than a claim in help text.
 
-THREE CROSS-CHECKS, and each of them refuses to spend a touch on a validation
+FOUR CROSS-CHECKS, and each of them refuses to spend a touch on a validation
 that could not be interpreted afterwards.
 
 **The schema version must match.** A field this reader does not know about is a
@@ -20,7 +20,13 @@ comparison between two rulebooks.
 one snapshot and validated on another is not the same candidate, and the
 difference is invisible in every number either run reports.
 
-All three refuse rather than warn. A warning would be read after the counter had
+**The config hash must match.** The winner's parameters were searched under one
+set of conditions. A config edited since states different ones under the same
+path, and the verdict would describe a strategy no search ever nominated. The
+hash is over what the file MEANS, so a comment, a reordering or a different line
+ending on another machine's checkout is not an edit.
+
+All four refuse rather than warn. A warning would be read after the counter had
 already moved, which is the one moment in this project where "you can always run
 it again" is false.
 
@@ -37,12 +43,11 @@ Absent and NULL are both refused, and for the two metrics they are told apart.
 non-finite score" and "the search never recorded a score" must not read alike
 in a verdict where both would appear as ``null``.
 
-WHAT IS NOT CHECKED, and it is a real hole: the strategy CONFIG is named by path
-and compared by nothing. Only the price snapshot is hashed. A config edited
-between the search and the validation loads silently, and the verdict would
-describe a strategy no search ever nominated. ``LIMITATIONS.md`` records it.
-What IS checked about that path is that it is relative, because a verdict
-records it and an absolute path carries a username.
+WHAT IS NOT CHECKED: the code. A search and a validation run under different
+commits of this repository compare a winner chosen by one engine against a
+verdict produced by another, and nothing records which commit either ran under.
+What IS checked about the config's path, besides its contents, is that it is
+relative, because a verdict records it and an absolute path carries a username.
 """
 
 from __future__ import annotations
@@ -52,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from strategylab.core.config import StrategyConfigError, config_content_hash
 from strategylab.protocol import Protocol
 from strategylab.search.loop import SEARCH_SCHEMA_VERSION
 
@@ -76,6 +82,8 @@ class CandidateRef:
         strategy: ``definition.name`` from the search.
         config_path: Repository-relative path of the strategy config the search
             loaded.
+        config_content_hash: Digest of what that config means, which this
+            reader has already checked is what the search recorded.
         params: The winning parameter combination, mapping placeholder name to
             a value in BARS.
         data_content_hash: Content hash of the price snapshot, which this
@@ -99,6 +107,7 @@ class CandidateRef:
     source: Path
     strategy: str
     config_path: Path
+    config_content_hash: str
     params: dict[str, int]
     data_content_hash: str
     protocol_version: int
@@ -253,9 +262,11 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             a ``winner`` that is not an object; it was run under a different
             protocol version, or against a different price snapshot; it names no
             config, or names one by a path that is absolute under either POSIX
-            or Windows rules; it omits or nulls ``strategy``, ``degenerate`` or
-            ``noise_ceiling_note``, or carries a ``degenerate`` that is not a
-            boolean; it omits ``sharpe`` or ``plateau_score`` from the winner
+            or Windows rules; it omits or nulls ``strategy``, ``degenerate``,
+            ``noise_ceiling_note`` or ``config_content_hash``, or carries a
+            ``degenerate`` that is not a boolean; the config it names cannot be
+            read and hashed now, or hashes to something other than what the
+            search recorded; it omits ``sharpe`` or ``plateau_score`` from the winner
             entirely, as opposed to recording either as ``null``; the winner
             carries no ``params`` mapping, or a parameter that is not a whole
             number of bars of at least one; or a winner metric is present and
@@ -376,7 +387,11 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             "truthiness rather than by what the search found"
         )
     strings: dict[str, str] = {}
-    for key, where in (("strategy", "top level"), ("noise_ceiling_note", "top level")):
+    for key, where in (
+        ("strategy", "top level"),
+        ("noise_ceiling_note", "top level"),
+        ("config_content_hash", "top level"),
+    ):
         value = _required(artifact, key, where, path)
         if not isinstance(value, str):
             raise CandidateError(
@@ -386,10 +401,30 @@ def read_candidate(path: Path, protocol: Protocol, data_content_hash: str) -> Ca
             )
         strings[key] = value
 
+    # THE FILE IS HASHED NOW AND COMPARED, which is the only step in this module
+    # that opens anything but the artifact. The path has already been refused
+    # unless it is repository-relative, so this reads nothing outside the tree.
+    try:
+        current = config_content_hash(config_path)
+    except StrategyConfigError as exc:
+        raise CandidateError(
+            f"search artifact '{path.as_posix()}' names the config '{config}', which "
+            f"cannot be hashed now: {exc}"
+        ) from exc
+    recorded = strings["config_content_hash"]
+    if recorded != current:
+        raise CandidateError(
+            f"search artifact '{path.as_posix()}' was run against a config hashing to "
+            f"{recorded[:12]} and '{config}' now hashes to {current[:12]}. The config "
+            "was edited after the search, so the winner's parameters belong to conditions "
+            "that file no longer states; re-run the search"
+        )
+
     return CandidateRef(
         source=path,
         strategy=strings["strategy"],
         config_path=config_path,
+        config_content_hash=current,
         params=_params(winner.get("params")),
         data_content_hash=data_content_hash,
         protocol_version=protocol.protocol_version,

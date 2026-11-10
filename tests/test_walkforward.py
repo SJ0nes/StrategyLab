@@ -699,6 +699,7 @@ def _candidate() -> CandidateRef:
         # that one of them named a strategy no config declares.
         strategy="ma_crossover",
         config_path=Path("configs/ma_crossover.yaml"),
+        config_content_hash="c" * 64,
         params=dict(PARAMS),
         data_content_hash="0" * 64,
         protocol_version=1,
@@ -898,6 +899,20 @@ def test_the_artifact_records_the_verdict_and_the_bar_it_was_measured_against(
     assert payload["pooled"]["trades"] == POOLED_TRADES
     assert payload["source_search"] == "state/search-20260822T213227Z.json"
     assert payload["params"] == PARAMS
+
+
+def test_the_artifact_names_what_its_config_said_and_not_only_where_it_was(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(
+        write_validation_result(
+            _result(), _candidate(), _protocol(), datetime(2026, 9, 6, tzinfo=UTC), tmp_path
+        ).read_text(encoding="utf-8")
+    )
+
+    assert payload["config"] == "configs/ma_crossover.yaml"
+    assert payload["config_content_hash"] == "c" * 64
+    assert payload["config_content_hash"] != payload["data_content_hash"]
 
 
 def test_the_artifact_carries_every_cost_parameter(tmp_path: Path) -> None:

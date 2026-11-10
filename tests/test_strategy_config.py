@@ -15,6 +15,7 @@ hunt for.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from strategylab.core.config import (
     OPERATORS,
     SUPPORTED_VERSION,
     StrategyConfigError,
+    config_content_hash,
     load_strategy,
 )
 from strategylab.core.types import IndicatorRef, StrategyDef
@@ -823,3 +825,95 @@ def test_colliding_literals_in_different_lists_are_accepted(tmp_path: Path) -> N
     )
 
     assert load_strategy(write_config(tmp_path, text)).name == "literal_targets"
+
+
+# --------------------------------------------------------------------------
+# The content hash a search records, so a later reader can tell the config moved.
+# --------------------------------------------------------------------------
+
+
+def _hash_of(tmp_path: Path, content: bytes) -> str:
+    """Write raw bytes as a config and hash it. Bytes, so a line ending survives."""
+    path = tmp_path / "hashed.yaml"
+    path.write_bytes(content)
+    return config_content_hash(path)
+
+
+def test_the_hash_is_of_the_canonical_form_and_that_form_is_pinned(tmp_path: Path) -> None:
+    """The digest is SHA-256 over sorted-key, separator-tight JSON of the document.
+
+    The canonical text is written out by hand here, so a change to the form -
+    key order, separators, how a boolean or a null renders - turns this red
+    rather than silently changing every hash a search has recorded.
+    """
+    canonical = '{"a":{"j":null,"k":true},"b":[1,2.5,"x"]}'
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    assert _hash_of(tmp_path, b"b: [1, 2.5, x]\na: {k: true, j: null}\n") == expected
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        b"b: two\na: 1\n",
+        b"a: 1\r\nb: two\r\n",
+        b"# a comment\na: 1   # trailing\nb: 'two'\n",
+        b"{a: 1, b: two}\n",
+        b"\n\na:   1\n\nb:    two\n",
+    ],
+    ids=["key-order", "crlf", "comments-and-quotes", "flow-style", "blank-lines"],
+)
+def test_a_change_that_changes_no_meaning_leaves_the_hash_alone(
+    tmp_path: Path, variant: bytes
+) -> None:
+    assert _hash_of(tmp_path, variant) == _hash_of(tmp_path, b"a: 1\nb: two\n")
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        b"a: 2\nb: two\n",
+        b"a: 1\nb: three\n",
+        b"a: 1\nb: two\nc: 3\n",
+        b"a: 1\n",
+        b"a: 1.0\nb: two\n",
+        b"a: '1'\nb: two\n",
+        b"a: [1]\nb: two\n",
+    ],
+    ids=["value", "string", "added-key", "removed-key", "int-to-float", "int-to-string", "nested"],
+)
+def test_a_change_of_meaning_changes_the_hash(tmp_path: Path, variant: bytes) -> None:
+    assert _hash_of(tmp_path, variant) != _hash_of(tmp_path, b"a: 1\nb: two\n")
+
+
+def test_the_committed_config_hashes_alike_under_either_line_ending(tmp_path: Path) -> None:
+    """A Windows checkout and a Linux one must agree, or neither can validate the other's search."""
+    unix = Path("configs/ma_crossover.yaml").read_bytes().replace(b"\r\n", b"\n")
+    windows = unix.replace(b"\n", b"\r\n")
+    assert windows != unix
+
+    assert _hash_of(tmp_path, windows) == _hash_of(tmp_path, unix)
+
+
+@pytest.mark.parametrize(
+    ("content", "match"),
+    [
+        (b"a: [1, 2\n", "not valid YAML"),
+        (b"a: 1\na: 2\n", "not valid YAML"),
+        (b"when: 2005-01-01\n", "date"),
+        (b"1: a\n", "not a string"),
+        (b"a: .nan\n", "not finite"),
+        (b"a: .inf\n", "not finite"),
+    ],
+    ids=["broken", "duplicate-key", "date", "integer-key", "nan", "infinity"],
+)
+def test_a_document_with_no_single_rendering_is_refused(
+    tmp_path: Path, content: bytes, match: str
+) -> None:
+    with pytest.raises(StrategyConfigError, match=match):
+        _hash_of(tmp_path, content)
+
+
+def test_hashing_a_missing_file_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(StrategyConfigError, match="file not found"):
+        config_content_hash(tmp_path / "absent.yaml")

@@ -237,6 +237,7 @@ def test_bars_outside_the_window_cannot_change_any_cell(
         protocol,
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     corrupted = run_search(
@@ -245,6 +246,7 @@ def test_bars_outside_the_window_cannot_change_any_cell(
         protocol,
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
@@ -266,6 +268,7 @@ def test_the_window_is_taken_from_the_protocol_not_from_the_frame(
         protocol,
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
@@ -310,6 +313,7 @@ def test_a_frame_with_no_bar_in_the_window_is_refused(
             protocol,
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -330,6 +334,7 @@ def test_a_frame_not_indexed_by_timestamp_is_refused(tmp_path: Path) -> None:
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -348,6 +353,7 @@ def test_an_integer_index_is_refused_rather_than_read_as_epoch_nanoseconds(
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -365,6 +371,7 @@ def test_a_timezone_aware_index_is_refused(tmp_path: Path) -> None:
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -405,6 +412,7 @@ def _bad_input_is_refused(bars: pd.DataFrame, tmp_path: Path, match: str, **kwar
             kwargs.pop("protocol", _protocol()),
             config_path=kwargs.pop("config_path", Path("configs/small.yaml")),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=graveyard,
             **kwargs,
         )
@@ -641,6 +649,7 @@ def test_a_bad_price_in_the_held_back_window_does_not_block_the_search(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     # And it produces the same surface as the untouched frame.
@@ -650,6 +659,7 @@ def test_a_bad_price_in_the_held_back_window_does_not_block_the_search(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "clean.jsonl",
     )
     pd.testing.assert_frame_equal(result.results, clean.results)
@@ -699,6 +709,7 @@ def test_a_bad_value_in_a_column_nothing_reads_does_not_block_the_search(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     clean = run_search(
@@ -707,6 +718,7 @@ def test_a_bad_value_in_a_column_nothing_reads_does_not_block_the_search(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "clean.jsonl",
     )
     pd.testing.assert_frame_equal(result.results, clean.results)
@@ -747,6 +759,7 @@ def test_price_columns_the_engine_accepts_are_not_refused(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     assert len(result.results) == 9
@@ -785,6 +798,7 @@ def test_a_protocol_naming_a_different_primary_metric_is_refused(
             _protocol(primary_metric="sortino"),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -906,6 +920,7 @@ def test_a_grid_in_which_every_cell_fails_is_an_error_not_a_finding(
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=graveyard,
         )
     assert not graveyard.exists(), "a search that produced no surface must record nothing"
@@ -924,6 +939,7 @@ def test_the_error_carries_the_first_failure_so_the_cause_is_visible(
             _protocol(),
             config_path=Path("configs/small.yaml"),
             data_content_hash="x",
+            config_content_hash="y",
             graveyard_path=tmp_path / "graveyard.jsonl",
         )
 
@@ -937,6 +953,7 @@ def test_a_cell_whose_backtest_raised_keeps_its_row_with_a_nan_metric(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
@@ -961,6 +978,7 @@ def test_every_failed_cell_is_recorded_in_the_graveyard(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=graveyard,
     )
 
@@ -983,6 +1001,7 @@ def test_failed_cells_do_not_all_share_one_fingerprint(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     failed = result.results[result.results[METRIC_COLUMN].isna()]
@@ -1163,6 +1182,7 @@ def test_two_runs_over_the_same_inputs_are_identical(
         protocol,
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "one.jsonl",
     )
     second = run_search(
@@ -1171,6 +1191,7 @@ def test_two_runs_over_the_same_inputs_are_identical(
         protocol,
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "two.jsonl",
     )
 
@@ -1193,6 +1214,7 @@ def test_the_committed_config_searches_every_one_of_its_ninety_cells(
         _protocol(),
         config_path=Path("configs/ma_crossover.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
 
@@ -1225,6 +1247,7 @@ def _written(result_dir: Path, fixture_bars: pd.DataFrame) -> tuple[Path, dict[s
         fixture_bars,
         _protocol(),
         config_path=Path("configs/small.yaml"),
+        config_content_hash="def456",
         data_content_hash="abc123",
         graveyard_path=result_dir / "graveyard.jsonl",
     )
@@ -1249,6 +1272,7 @@ def test_the_artifact_carries_the_whole_surface_and_its_provenance(
     assert payload["schema_version"] == SEARCH_SCHEMA_VERSION
     assert payload["data_content_hash"] == "abc123"
     assert payload["config"] == "configs/small.yaml"
+    assert payload["config_content_hash"] == "def456"
     # The bar count is recomputed from the fixture. An earlier version of this
     # assertion compared payload["window"]["bars"] against itself, which is a
     # tautology dressed as a check.
@@ -1288,8 +1312,8 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
     # 2 added `costs_frac` and `commission_min_flat`; 3 turned `noise_ceiling`
     # into an object; 4 added `block_bars` and `seed` to it. Version 3 was
     # briefly two different shapes, because those last fields went in without a
-    # bump.
-    assert SEARCH_SCHEMA_VERSION == 4
+    # bump. 5 added `config_content_hash`.
+    assert SEARCH_SCHEMA_VERSION == 5
 
     documented = {
         "schema_version",
@@ -1297,6 +1321,7 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
         "protocol_version",
         "strategy",
         "config",
+        "config_content_hash",
         "instrument",
         "data_content_hash",
         "window",
@@ -1321,6 +1346,7 @@ def test_the_artifact_schema_version_matches_the_documented_field_set(tmp_path: 
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
@@ -1351,6 +1377,7 @@ def test_the_artifact_is_strict_json_even_when_a_cell_failed(tmp_path: Path) -> 
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     path = write_search_result(result, datetime(2026, 8, 22, 13, 5, 0, tzinfo=UTC), tmp_path)
@@ -1377,6 +1404,7 @@ def test_a_search_without_trials_computes_no_ceiling(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     assert result.noise_ceiling is None
@@ -1458,6 +1486,7 @@ def test_a_search_with_trials_computes_a_ceiling_on_the_window_only(
     # ceiling to be unchanged.
     kwargs = {
         "config_path": Path("configs/small.yaml"),
+        "config_content_hash": "y",
         "data_content_hash": "x",
         "noise_trials": 2,
         "noise_seed": 5,
@@ -1505,6 +1534,7 @@ def test_the_artifact_summarises_a_ceiling_rather_than_reducing_it_to_one_number
         _wide_protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
         noise_trials=2,
         noise_seed=5,
@@ -1533,6 +1563,7 @@ def test_a_naive_generated_at_is_refused(fixture_bars: pd.DataFrame, tmp_path: P
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     with pytest.raises(ValueError, match="timezone-naive"):
@@ -1569,6 +1600,7 @@ def test_a_non_utc_generated_at_is_converted_rather_than_stamped_with_a_lying_z(
         _protocol(),
         config_path=Path("configs/small.yaml"),
         data_content_hash="x",
+        config_content_hash="y",
         graveyard_path=tmp_path / "graveyard.jsonl",
     )
     stamp = datetime(2026, 8, 22, hour, 30, 5, tzinfo=timezone(timedelta(hours=offset_hours)))

@@ -42,6 +42,8 @@ instead. ``LIMITATIONS.md`` records that gap.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from pathlib import Path
@@ -733,6 +735,129 @@ def _check_parameters(definition: StrategyDef, source: str) -> None:
         )
 
 
+def _read_document(path: Path) -> Any:
+    """Read a config file and parse it as YAML, refusing every way a file can be malformed.
+
+    Shared by :func:`load_strategy` and :func:`config_content_hash`, so the two
+    cannot disagree about which files are readable.
+
+    Args:
+        path: Path to the config file, relative to the working directory.
+
+    Returns:
+        The parsed document, whatever its shape. ``None`` for an empty file.
+
+    Raises:
+        StrategyConfigError: If the file is missing, unreadable, not UTF-8, not
+            valid YAML - which includes a repeated key - nested too deeply to
+            parse, or holds a scalar PyYAML fails to construct.
+    """
+    source = path.name
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise _fail(source, "", f"file not found at '{path}'") from exc
+    except UnicodeDecodeError as exc:
+        raise _fail(source, "", f"file at '{path}' is not valid UTF-8") from exc
+    except OSError as exc:
+        raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
+    except ValueError as exc:
+        # A path carrying an embedded null byte fails in os.open as ValueError,
+        # which is not an OSError and would otherwise escape the contract above.
+        raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
+
+    try:
+        # _NoDuplicateKeyLoader is a SafeLoader subclass: no arbitrary construction.
+        return yaml.load(text, Loader=_NoDuplicateKeyLoader)
+    except yaml.YAMLError as exc:
+        raise _fail(source, "", f"not valid YAML: {exc}") from exc
+    except RecursionError as exc:
+        # PyYAML's composer recurses once per level of nesting, so a file nested
+        # past the interpreter's limit raises RecursionError - a RuntimeError,
+        # not a YAMLError, so the handler above does not see it. The deepest
+        # structure this schema has is a condition's target, three levels down,
+        # so a file that reaches the interpreter's limit is a rejection rather
+        # than a crash.
+        raise _fail(
+            source, "", "nests too deeply to parse; nothing in this schema nests beyond a target"
+        ) from exc
+    except (ValueError, OverflowError) as exc:
+        # PyYAML resolves some scalars by CONSTRUCTING them, and a construction
+        # that fails raises out of the library rather than as a YAMLError.
+        # `2021-19-45` reaches datetime and raises ValueError("month must be in
+        # 1..12"); an integer literal longer than CPython's 4300-digit
+        # conversion limit raises ValueError from int(). Both are malformed
+        # files, and both were escaping the contract above.
+        raise _fail(source, "", f"could not be parsed: {exc}") from exc
+
+
+def _canonical(value: Any, source: str) -> Any:
+    """Check that a parsed value has exactly one JSON rendering, and return it.
+
+    Args:
+        value: Any value out of the parsed document.
+        source: Display name of the config file, for the message.
+
+    Returns:
+        ``value`` unchanged, every level of it checked.
+
+    Raises:
+        StrategyConfigError: If the value, or anything nested in it, is a float
+            that is not finite, a mapping key that is not a string, or a type
+            JSON does not carry - a date, a set, bytes.
+    """
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise _fail(source, "", f"holds the number {value!r}, which is not finite")
+        return value
+    if isinstance(value, list):
+        return [_canonical(item, source) for item in value]
+    if isinstance(value, dict):
+        for key in value:
+            if not isinstance(key, str):
+                raise _fail(source, "", f"holds the key {key!r}, which is not a string")
+        return {key: _canonical(item, source) for key, item in value.items()}
+    raise _fail(
+        source, "", f"holds a {type(value).__name__} value, which has no one rendering to hash"
+    )
+
+
+def config_content_hash(path: Path) -> str:
+    """Compute a SHA-256 over what a strategy config MEANS, not over its bytes.
+
+    A search records this beside its winner, and a reader of that search
+    compares it against the file on disk before trusting the winner's
+    parameters: parameters belong to the conditions they were searched under,
+    and a config edited afterwards is a different strategy under the same name.
+
+    The digest is taken over the parsed document rendered as JSON with sorted
+    keys and no insignificant whitespace, encoded as UTF-8. So it is unmoved by
+    anything that changes no meaning - a comment, key order, quoting, blank
+    lines, and above all LINE ENDINGS, which differ between a Windows checkout
+    and a Linux one of the same commit. It moves on any change of a key or a
+    value, including ``1`` becoming ``1.0``.
+
+    This does not validate the config. :func:`load_strategy` does that; this
+    only needs the file to parse.
+
+    Args:
+        path: Path to the config file, relative to the working directory.
+
+    Returns:
+        The digest as a lowercase hex string of 64 characters.
+
+    Raises:
+        StrategyConfigError: If the file cannot be read or parsed, on the same
+            terms as :func:`load_strategy`, or if it holds a value with no
+            single JSON rendering - see :func:`_canonical`.
+    """
+    document = _canonical(_read_document(path), path.name)
+    rendered = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+
 def load_strategy(path: Path) -> StrategyDef:
     """Load and validate one strategy config.
 
@@ -769,42 +894,7 @@ def load_strategy(path: Path) -> StrategyDef:
             here would still surface as whatever that defect raises.
     """
     source = path.name
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise _fail(source, "", f"file not found at '{path}'") from exc
-    except UnicodeDecodeError as exc:
-        raise _fail(source, "", f"file at '{path}' is not valid UTF-8") from exc
-    except OSError as exc:
-        raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
-    except ValueError as exc:
-        # A path carrying an embedded null byte fails in os.open as ValueError,
-        # which is not an OSError and would otherwise escape the contract above.
-        raise _fail(source, "", f"cannot read '{path}': {exc}") from exc
-
-    try:
-        # _NoDuplicateKeyLoader is a SafeLoader subclass: no arbitrary construction.
-        parsed = yaml.load(text, Loader=_NoDuplicateKeyLoader)
-    except yaml.YAMLError as exc:
-        raise _fail(source, "", f"not valid YAML: {exc}") from exc
-    except RecursionError as exc:
-        # PyYAML's composer recurses once per level of nesting, so a file nested
-        # past the interpreter's limit raises RecursionError - a RuntimeError,
-        # not a YAMLError, so the handler above does not see it. The deepest
-        # structure this schema has is a condition's target, three levels down,
-        # so a file that reaches the interpreter's limit is a rejection rather
-        # than a crash.
-        raise _fail(
-            source, "", "nests too deeply to parse; nothing in this schema nests beyond a target"
-        ) from exc
-    except (ValueError, OverflowError) as exc:
-        # PyYAML resolves some scalars by CONSTRUCTING them, and a construction
-        # that fails raises out of the library rather than as a YAMLError.
-        # `2021-19-45` reaches datetime and raises ValueError("month must be in
-        # 1..12"); an integer literal longer than CPython's 4300-digit
-        # conversion limit raises ValueError from int(). Both are malformed
-        # files, and both were escaping the contract above.
-        raise _fail(source, "", f"could not be parsed: {exc}") from exc
+    parsed = _read_document(path)
 
     if parsed is None:
         raise _fail(source, "", f"file at '{path}' is empty")

@@ -101,7 +101,10 @@ from strategylab.windows import in_sample_bars, walk_forward_bars
 #: Schema version of a validation artifact. Bumped when the fields change, so a
 #: reader meeting an unfamiliar version can say so rather than guess.
 #: :func:`write_validation_result` enumerates the current fields.
-VALIDATION_SCHEMA_VERSION = 1
+#:
+#: ``1`` was the first shape. ``2`` adds ``config_content_hash``, copied from the
+#: candidate, so a verdict names what its config said and not only where it was.
+VALIDATION_SCHEMA_VERSION = 2
 
 
 class Outcome(Enum):
@@ -735,8 +738,10 @@ def write_validation_result(
       argument is converted to UTC first, so this is not necessarily the offset
       the caller passed.
     - ``protocol_version`` — schema version of the protocol, NOT its values.
-    - ``strategy``, ``config``, ``source_search`` — the strategy's name, the
-      config path, and the search artifact that nominated this candidate.
+    - ``strategy``, ``config``, ``config_content_hash``, ``source_search`` — the
+      strategy's name, the config path, the digest of what that config meant
+      when it was searched and still means now, and the search artifact that
+      nominated this candidate.
     - ``instrument``, ``data_content_hash`` — the research ticker and the hash
       of the snapshot both runs used.
     - ``params`` — the parameter combination validated, values in BARS.
@@ -812,6 +817,7 @@ def write_validation_result(
         "protocol_version": protocol.protocol_version,
         "strategy": candidate.strategy,
         "config": candidate.config_path.as_posix(),
+        "config_content_hash": candidate.config_content_hash,
         "source_search": candidate.source.as_posix(),
         "instrument": protocol.instruments.research,
         "data_content_hash": candidate.data_content_hash,

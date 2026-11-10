@@ -160,3 +160,8 @@ dishonest.
 from and compares it to nothing, while the price snapshot is compared by content
 hash. A config edited between the search and the validation would load silently.
 Recorded in `LIMITATIONS.md`; it is a real hole and not a decision.
+
+*Closed on 2026-11-10, and the paragraph above is left as it was written.* A
+search now records `config_content_hash`, a digest of what its config meant, and
+`read_candidate` refuses a config that no longer hashes to it before a touch is
+charged.

@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from strategylab.backtest.costs import CostModel
+from strategylab.core.config import config_content_hash
 from strategylab.protocol import (
     Instruments,
     Protocol,
@@ -38,6 +39,10 @@ from strategylab.validate.candidate import CandidateError, read_candidate
 # Suppressing that hook with a pragma would train everyone to suppress it.
 HASH = "b" * 64
 OTHER_HASH = "a" * 64
+
+#: The config the default artifact names. It is the committed one, read from the
+#: repository root, which is where every test in this project runs from.
+COMMITTED_CONFIG = "configs/ma_crossover.yaml"
 
 
 def _protocol(version: int = 1) -> Protocol:
@@ -70,7 +75,7 @@ def _artifact(**overrides: Any) -> dict[str, Any]:
         "schema_version": SEARCH_SCHEMA_VERSION,
         "protocol_version": 1,
         "strategy": "ma_crossover",
-        "config": "configs/ma_crossover.yaml",
+        "config": COMMITTED_CONFIG,
         "data_content_hash": HASH,
         "noise_ceiling_note": "Not computed: this search was run without --trials.",
         "winner": {
@@ -83,6 +88,13 @@ def _artifact(**overrides: Any) -> dict[str, Any]:
         },
     }
     payload.update(overrides)
+    if "config_content_hash" not in overrides:
+        # Computed, not pasted: a literal digest would be a high-entropy string
+        # in a tracked file, and it would go stale the first time the committed
+        # config changed for a good reason. Computed only when the caller did
+        # not supply one, because a test that stands in its own repository root
+        # has no committed config under it to hash.
+        payload["config_content_hash"] = config_content_hash(Path(COMMITTED_CONFIG))
     return payload
 
 
@@ -103,7 +115,8 @@ def test_a_matching_artifact_yields_its_winner(tmp_path: Path) -> None:
 
     assert candidate.params == {"fast": 10, "slow": 80, "trend": 150}
     assert candidate.strategy == "ma_crossover"
-    assert candidate.config_path == Path("configs/ma_crossover.yaml")
+    assert candidate.config_path == Path(COMMITTED_CONFIG)
+    assert candidate.config_content_hash == config_content_hash(Path(COMMITTED_CONFIG))
     assert candidate.data_content_hash == HASH
     assert candidate.degenerate is False
     assert candidate.search_sharpe == pytest.approx(0.6399777383485417)
@@ -265,7 +278,7 @@ def test_a_period_below_one_bar_is_refused(tmp_path: Path, period: int) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note"])
+@pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note", "config_content_hash"])
 def test_a_missing_top_level_field_is_refused_rather_than_defaulted(
     tmp_path: Path, field: str
 ) -> None:
@@ -362,6 +375,8 @@ def test_a_config_path_that_climbs_out_of_the_repository_is_refused(
         ("strategy", 7),
         ("noise_ceiling_note", 123),
         ("noise_ceiling_note", {"note": "x"}),
+        ("config_content_hash", 7),
+        ("config_content_hash", ["b" * 64]),
     ],
 )
 def test_a_non_string_text_field_is_refused_rather_than_stringified(
@@ -375,7 +390,7 @@ def test_a_non_string_text_field_is_refused_rather_than_stringified(
         read_candidate(_written(tmp_path, _artifact(**{field: value})), _protocol(), HASH)
 
 
-@pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note"])
+@pytest.mark.parametrize("field", ["strategy", "noise_ceiling_note", "config_content_hash"])
 def test_a_null_top_level_field_is_refused_rather_than_stringified(
     tmp_path: Path, field: str
 ) -> None:
@@ -423,3 +438,82 @@ def test_a_metric_key_missing_entirely_is_refused_though_a_null_is_not(
     candidate = read_candidate(_written(tmp_path, _artifact(winner=nulled)), _protocol(), HASH)
     value = candidate.search_sharpe if metric == "sharpe" else candidate.search_plateau_score
     assert value != value, "a null metric is NaN, not a refusal"
+
+
+# --------------------------------------------------------------------------
+# The config hash. A path names a file; the hash names what it said when it was
+# searched.
+# --------------------------------------------------------------------------
+
+SEARCHED_CONFIG = b"name: s\nfixed: {size: 95}\nsearch: {fast: {min: 5, max: 30, step: 5}}\n"
+
+
+def _searched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Stand in a temporary repository root holding one config and one artifact of it.
+
+    The artifact names its config by a repository-relative path, so the working
+    directory has to be the root that path resolves against.
+    """
+    monkeypatch.chdir(tmp_path)
+    config = Path("configs") / "searched.yaml"
+    config.parent.mkdir()
+    config.write_bytes(SEARCHED_CONFIG)
+    artifact = _artifact(config=config.as_posix(), config_content_hash=config_content_hash(config))
+    return _written(tmp_path, artifact), config
+
+
+def test_a_config_unchanged_since_the_search_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, config = _searched(tmp_path, monkeypatch)
+
+    candidate = read_candidate(artifact, _protocol(), HASH)
+
+    assert candidate.config_path == config
+    assert candidate.config_content_hash == config_content_hash(config)
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        SEARCHED_CONFIG.replace(b"max: 30", b"max: 40"),
+        SEARCHED_CONFIG.replace(b"size: 95", b"size: 50"),
+        SEARCHED_CONFIG + b"extra: 1\n",
+    ],
+    ids=["a-search-bound", "a-fixed-value", "an-added-key"],
+)
+def test_a_config_edited_after_the_search_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edited: bytes
+) -> None:
+    artifact, config = _searched(tmp_path, monkeypatch)
+    config.write_bytes(edited)
+
+    with pytest.raises(CandidateError, match="edited after the search"):
+        read_candidate(artifact, _protocol(), HASH)
+
+
+def test_a_config_only_reformatted_since_the_search_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Windows checkout of the same commit, with a comment added, is the same strategy."""
+    artifact, config = _searched(tmp_path, monkeypatch)
+    config.write_bytes(b"# reviewed\r\n" + SEARCHED_CONFIG.replace(b"\n", b"\r\n"))
+
+    assert read_candidate(artifact, _protocol(), HASH).config_path == config
+
+
+def test_a_config_that_has_gone_missing_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, config = _searched(tmp_path, monkeypatch)
+    config.unlink()
+
+    with pytest.raises(CandidateError, match="cannot be hashed"):
+        read_candidate(artifact, _protocol(), HASH)
+
+
+def test_a_recorded_hash_that_is_simply_wrong_is_refused(tmp_path: Path) -> None:
+    artifact = _written(tmp_path, _artifact(config_content_hash=OTHER_HASH))
+
+    with pytest.raises(CandidateError, match="edited after the search"):
+        read_candidate(artifact, _protocol(), HASH)

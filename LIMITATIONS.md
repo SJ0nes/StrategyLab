@@ -58,14 +58,16 @@ protocol and a copy of the data — which is what `walk_forward`'s `protocol_pat
 argument exists for — so the counter that copy carries is the only one that
 moved. The first real run is the operator's to make, and it is permanent.
 
-**A verdict does not check the config it validates.** `read_candidate` compares
-the search artifact's schema version, protocol version and price-snapshot
-content hash against the ones in force, and refuses on any mismatch before a
-touch is charged. It does NOT hash the strategy config: it loads
-`configs/ma_crossover.yaml` from the path the artifact names, and a config edited
-between the search and the validation would load silently. The verdict would then
-describe a strategy no search ever nominated, and nothing in either file would
-say so.
+**A verdict checks the config it validates, and not the code.** `read_candidate`
+compares the search artifact's schema version, protocol version, price-snapshot
+content hash and strategy-config content hash against the ones in force, and
+refuses on any mismatch before a touch is charged. The config hash is over what
+the file MEANS — the parsed document with its keys sorted — so a comment, a
+reordering or a different line ending on another machine is not an edit, and a
+changed bound is. What nothing records is the CODE. A search run under one
+commit of this repository and validated under another compares a winner chosen
+by one engine against a verdict produced by a different one, and neither
+artifact names the commit it ran under.
 
 **A validated candidate starts flat.** The held-back run is warmed up on
 `warmup - 1` in-sample bars but enters the window with no position, so a
@@ -219,14 +221,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1532 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1565 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker and the commit-time credential scan —
 twenty-one areas, one per test file.
-486 of the 1532 are the risk layer's,
+486 of the 1565 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
