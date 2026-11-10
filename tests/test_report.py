@@ -47,6 +47,8 @@ import pytest
 from strategylab.report.palette import ACCENT, FAILED_FILL, VIRIDIS, sample
 from strategylab.report.render import TEMPLATE_DIR, TRACEABILITY_KEYS, render
 from strategylab.report.surface import (
+    AXIS_PAD,
+    AXIS_WIDTH,
     CELL,
     MAX_PANELS,
     PANEL_PAD,
@@ -301,12 +303,30 @@ def _artifact(cells: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
         "failed_cells": sum(1 for cell in cells if cell["sharpe"] is None),
         "noise_ceiling": None,
         "noise_ceiling_note": "Not computed: this search was run without --trials.",
+        "noise_gate": _gate("not_computed", "No noise ceiling was computed."),
+        "benchmark": None,
         "winner": None,
         "rejections": [],
+        # Three dates, and one curve per cell in cell order: a cell that ran
+        # grows from 100 by its own position, and one that failed has none.
+        "equity_curves": {
+            "max_points": 400,
+            "dates": ["2010-01-04", "2010-03-01", "2010-06-30"],
+            "close": [50.0, 55.0, 60.0],
+            "cells": [
+                None if cell["sharpe"] is None else [None, 100.0, 100.0 + position]
+                for position, cell in enumerate(cells)
+            ],
+        },
         "cells": cells,
     }
     artifact.update(overrides)
     return artifact
+
+
+def _gate(status: str, summary: str) -> dict[str, Any]:
+    """A noise-gate object as the search writes it, with only what the page reads."""
+    return {"status": status, "summary": summary}
 
 
 def _cell(params: dict[str, int], sharpe: float | None, **overrides: Any) -> dict[str, Any]:
@@ -517,18 +537,22 @@ def test_the_context_carries_every_traceability_key() -> None:
 # --------------------------------------------------------------------------
 
 
+# A ceiling of ten surrogates. Their best-in-grid Sharpes are 0.5, 1.0, ... 5.0
+# with one that scored nothing, so nine are scoreable.
+TRIALS = [0.5, 1.0, 1.5, None, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0]
 CEILING = {
     "trials": 10,
-    "scoreable_trials": 10,
+    "scoreable_trials": 9,
     "block_bars": 20,
     "seed": 0,
-    "percentiles": {"p50": 1.0, "p90": 2.0, "p95": 3.0},
-    "max": 4.0,
+    "percentiles": {"p50": 2.5, "p90": 4.2, "p95": 4.6},
+    "max": 5.0,
+    "trial_best_sharpe": TRIALS,
 }
 
 
-def _with_ceiling(metric: float) -> dict[str, Any]:
-    """An artifact carrying a ceiling and a winner at a given metric."""
+def _with_ceiling(metric: float, status: str = "undetermined") -> dict[str, Any]:
+    """An artifact carrying a ceiling, a benchmark and a winner at a given metric."""
     return _artifact(
         _two_axis_cells(),
         winner={
@@ -541,45 +565,178 @@ def _with_ceiling(metric: float) -> dict[str, Any]:
         },
         noise_ceiling=CEILING,
         noise_ceiling_note="10 trials is below the 100 at which the upper tail settles.",
+        noise_gate=_gate(status, "The sentence the gate wrote, carried verbatim."),
+        benchmark={
+            "kind": "buy_and_hold",
+            "instrument": "SPY",
+            "basis": "winner",
+            "start": "2010-02-01",
+            "end": "2010-06-30",
+            "bars": 100,
+            "sharpe": -3.0,
+            "max_drawdown_pct": 12.5,
+        },
     )
 
 
+# --------------------------------------------------------------------------
+# The Sharpe axis. Every position below is derived by hand from one scale.
+# --------------------------------------------------------------------------
+#
+# THE SCALE. The fixture's cells score 0, 1, 2, 3, 4 and 5; the surrogates run
+# from 0.5 to 5.0; the benchmark is -3.0. With a candidate at 7.0 the lowest
+# value present is -3 and the highest is 7, a span of 10 Sharpe. The axis is
+# 760 wide with 20 at each end, so 720 units carry those 10 and ONE SHARPE IS 72
+# UNITS. A value v therefore sits at 20 + (v + 3) * 72.
+
+
+def test_the_axis_constants_are_the_ones_the_arithmetic_below_assumes() -> None:
+    assert AXIS_WIDTH == 760
+    assert AXIS_PAD == 20
+
+
+def test_every_value_sits_on_one_scale() -> None:
+    axis = build_context(_with_ceiling(7.0), "cmd")["sharpe_axis"]
+
+    assert axis["low"] == -3.0
+    assert axis["high"] == 7.0
+    # 20 + (v + 3) * 72, for v = 0, 1, 2, 3, 4, 5.
+    assert axis["cells"] == [236.0, 308.0, 380.0, 452.0, 524.0, 596.0]
+    assert axis["zero"] == 236.0
+    assert axis["winner"] == {"x": 740.0, "value": 7.0}
+    assert axis["benchmark"] == {"x": 20.0, "value": -3.0}
+
+
+def test_each_scoreable_surrogate_is_one_tick_and_the_unscoreable_one_is_none() -> None:
+    axis = build_context(_with_ceiling(7.0), "cmd")["sharpe_axis"]
+
+    # Nine of the ten trials produced a number. 20 + (v + 3) * 72 for each.
+    assert axis["trials"] == [272.0, 308.0, 344.0, 380.0, 416.0, 452.0, 488.0, 524.0, 596.0]
+
+
+def test_the_band_runs_from_the_median_to_the_95th_percentile() -> None:
+    axis = build_context(_with_ceiling(7.0), "cmd")["sharpe_axis"]
+
+    # p50 of 2.5 sits at 20 + 5.5 * 72 = 416; p95 of 4.6 at 20 + 7.6 * 72 = 567.2.
+    assert axis["band"] == {"p50": 416.0, "p95": 567.2, "p95_value": 4.6}
+
+
+def test_a_candidate_inside_the_band_is_drawn_inside_it() -> None:
+    axis = build_context(_with_ceiling(3.0), "cmd")["sharpe_axis"]
+
+    # The scale is now -3 to 5: eight Sharpe over 720 units, so 90 each.
+    assert axis["high"] == 5.0
+    assert axis["winner"]["x"] == 20.0 + 6.0 * 90.0
+    assert axis["band"]["p50"] < axis["winner"]["x"] < axis["band"]["p95"]
+
+
+def test_a_search_with_no_ceiling_draws_the_axis_without_a_band() -> None:
+    axis = build_context(_artifact(_two_axis_cells()), "cmd")["sharpe_axis"]
+
+    assert axis["band"] is None
+    assert axis["trials"] == []
+    assert axis["winner"] is None
+    assert axis["benchmark"] is None
+    # Cells 0 to 5 alone: five Sharpe over 720 units, 144 each, from 20.
+    assert axis["cells"] == [20.0, 164.0, 308.0, 452.0, 596.0, 740.0]
+
+
+def test_the_axis_always_reaches_zero() -> None:
+    cells = [_cell({"a": 1}, 2.0), _cell({"a": 2}, 4.0)]
+
+    axis = build_context(_artifact(cells), "cmd")["sharpe_axis"]
+
+    assert axis["low"] == 0.0
+    assert axis["zero"] == 20.0
+    # Four Sharpe over 720 units is 180 each.
+    assert axis["cells"] == [380.0, 740.0]
+
+
+def test_a_failed_cell_has_no_tick_on_the_axis() -> None:
+    cells = [_cell({"a": 1}, 2.0), _cell({"a": 2}, None), _cell({"a": 3}, 4.0)]
+
+    assert len(build_context(_artifact(cells), "cmd")["sharpe_axis"]["cells"]) == 2
+
+
+def test_a_surface_with_one_value_puts_everything_at_the_centre() -> None:
+    cells = [_cell({"a": 1}, 0.0), _cell({"a": 2}, 0.0)]
+
+    axis = build_context(_artifact(cells), "cmd")["sharpe_axis"]
+
+    assert axis["cells"] == [380.0, 380.0]
+
+
+# --------------------------------------------------------------------------
+# The verdict is the search's, and the curves are found by position.
+# --------------------------------------------------------------------------
+
+
 @pytest.mark.parametrize(
-    ("metric", "expected"), [(9.0, 95.0), (2.5, 90.0), (1.5, 50.0), (0.1, -1.0)]
+    ("status", "headline"),
+    [
+        ("passed", "Noise gate PASSED"),
+        ("failed", "Noise gate FAILED"),
+        ("undetermined", "NO VERDICT from the noise gate"),
+        ("no_candidate", "the noise gate judged nothing"),
+    ],
 )
-def test_the_candidate_is_placed_against_the_ceiling(metric: float, expected: float) -> None:
-    # The ceiling-present branch had no test at all, and it decides the single
-    # most consequential sentence the report prints.
-    assert build_context(_with_ceiling(metric), "cmd")["winner_percentile"] == expected
-
-
-def test_a_page_with_a_ceiling_does_not_render_as_the_absent_case(tmp_path: Path) -> None:
+def test_the_page_states_the_gates_verdict_in_the_searchs_own_sentence(
+    tmp_path: Path, status: str, headline: str
+) -> None:
     path = tmp_path / "search-probe.json"
-    path.write_text(json.dumps(_with_ceiling(9.0)), encoding="utf-8")
+    path.write_text(json.dumps(_with_ceiling(3.0, status)), encoding="utf-8")
     html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
 
-    assert "clears the 95th percentile" in html
+    assert headline in html
+    assert "The sentence the gate wrote, carried verbatim." in html
     assert "No noise ceiling was computed" not in html
     # And it must not call reordered history "noise" without qualifying it.
     assert "not noise" in html
 
 
-def test_a_candidate_below_the_median_is_not_rendered_as_the_zeroth_percentile(
-    tmp_path: Path,
-) -> None:
-    # `_winner_percentile` returned 0.0 for anything under p50 and the page
-    # printed "around the 0th percentile" - a precision the three recorded
-    # percentiles cannot support, and the harshest possible reading of them.
+def test_each_drawn_cell_knows_where_its_curve_is() -> None:
+    # Facets regroup the cells into panels, so a cell's place in its panel is
+    # not its place in the artifact - and the artifact's order is the only thing
+    # that says which stored curve is whose.
+    cells = [_cell({"a": a, "b": b, "c": c}, 1.0) for c in (7, 8) for b in (10, 20) for a in (1, 2)]
+    shuffled = [cells[i] for i in (5, 0, 7, 2, 4, 1, 6, 3)]
+
+    context = build_context(_artifact(shuffled), "cmd")
+
+    for panel in context["panels"]:
+        for drawn in panel["cells"]:
+            assert shuffled[drawn["index"]]["params"] == drawn["params"]
+    drawn_positions = sorted(d["index"] for panel in context["panels"] for d in panel["cells"])
+    assert drawn_positions == list(range(8))
+
+
+def test_the_page_carries_the_curves_and_the_benchmark(tmp_path: Path) -> None:
+    artifact = _with_ceiling(3.0)
     path = tmp_path / "search-probe.json"
-    path.write_text(json.dumps(_with_ceiling(0.1)), encoding="utf-8")
+    path.write_text(json.dumps(artifact), encoding="utf-8")
     html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
 
-    # Asserted on wording that would actually be wrong, not on a substring:
-    # "0th percentile" also occurs inside "50th percentile", so the obvious
-    # check passes or fails by luck rather than by design.
-    assert "BELOW THE MEDIAN" in html
-    assert "around the 0th" not in html
-    assert "percentile but not the next one up" not in html
+    start = html.index('<script id="curve-data" type="application/json">')
+    end = html.index("</script>", start)
+    embedded = json.loads(html[start:end].split(">", 1)[1])
+    assert embedded == artifact["equity_curves"]
+    assert 'id="curve"' in html
+    assert "Holding SPY from 2010-02-01 to 2010-06-30" in html
+    assert "Reported, not applied" in html
+    # One tick per cell and per scoreable surrogate, and one band.
+    assert html.count('class="celltick"') == 6
+    assert html.count('class="trialtick"') == 9
+    assert html.count('class="band"') == 1
+
+
+def test_a_page_with_no_ceiling_draws_no_band_and_says_why(tmp_path: Path) -> None:
+    path = tmp_path / "search-probe.json"
+    path.write_text(json.dumps(_artifact(_two_axis_cells())), encoding="utf-8")
+    html = render_surface(path, tmp_path / "reports").read_text(encoding="utf-8")
+
+    assert html.count('class="band"') == 0
+    assert html.count('class="trialtick"') == 0
+    assert "No surrogate distribution is drawn because none was computed." in html
 
 
 def test_a_surface_renders_to_a_self_contained_page(tmp_path: Path) -> None:

@@ -14,24 +14,24 @@ region look like a plateau, erasing the spike-versus-plateau distinction the
 figure exists to show. The score is in the hover, where it belongs: the eye gets
 the honest surface, and the number that decided the winner is one hover away.
 
-THE NOISE CEILING, WHEN THERE IS ONE. A search run with ``--trials`` records
-the distribution of best-in-grid Sharpe across surrogates, and the page then
-shows where the candidate sits within it. What it does NOT yet do is draw that
-distribution on the SAME axis as the surface, which is what the
-``report-design`` standard requires so a winner inside the noise is visible
-rather than computed. The band is roadmap session 8, alongside the fold panels.
-Until then the comparison is a sentence and a percentile rather than a shape,
-which is weaker and is said so on the page.
+THE NOISE CEILING IS DRAWN ON THE SAME AXIS AS THE RESULT. Below the heatmap
+is one horizontal Sharpe axis carrying every cell of the grid, every surrogate's
+best-in-grid figure, the band between the surrogates' median and 95th
+percentile, the candidate, and buy-and-hold. A candidate inside the band is seen
+to be inside it before anything is read, which is what the ``report-design``
+standard asks for. The verdict printed above it is the search's own
+``noise_gate``, in the search's own sentence - this module places marks and
+decides nothing.
 
-When a search was run without ``--trials`` there is no ceiling at all, and the
-page says that where the band would be - an absent field reads as an oversight,
-a stated absence reads as a fact.
+When a search was run without ``--trials`` the axis is still drawn, with the
+cells, the candidate and the benchmark on it and no band, and the page says that
+the band is absent because nothing was computed.
 
-Equity curves are not drawn either. The ``render`` contract asks for click-a-cell
-to show one, and the search artifact does not carry them: ninety curves over
-three and a half thousand bars is tens of megabytes of JSON against a
-thirty-kilobyte file. That interaction waits for a decision about what to store,
-and this module does not pretend to offer it.
+A CELL CLICKS THROUGH TO ITS EQUITY CURVE, drawn beside what holding the
+instrument did over the same bars. The curves come from the artifact, where they
+are stored thinned to a few hundred points FOR DRAWING. Nothing on the page
+recomputes a metric from them; every figure shown is the one the search
+recorded from the full curve.
 """
 
 from __future__ import annotations
@@ -57,10 +57,11 @@ PANEL_PAD = 54
 #: page stops being a figure and starts being a contact sheet nobody reads.
 MAX_PANELS = 24
 
-#: Returned by :func:`_winner_percentile` for a candidate under the ceiling's
-#: median. A sentinel rather than ``0.0``, because the artifact stores only
-#: three percentiles and cannot tell "under the median" from "under everything".
-BELOW_MEDIAN = -1.0
+#: Width of the Sharpe axis figure, in SVG user units.
+AXIS_WIDTH = 760
+
+#: Space at each end of that axis, so a mark at an extreme is not clipped.
+AXIS_PAD = 20
 
 #: The template this module renders. Resolved against the package's templates
 #: directory by :func:`~strategylab.report.render.render`.
@@ -188,8 +189,8 @@ def build_context(artifact: dict[str, Any], command: str) -> dict[str, Any]:
     panels: list[dict[str, Any]] = []
     for facet_key in _facet_combinations(facets, facet_values):
         members = [
-            cell
-            for cell in cells
+            (position, cell)
+            for position, cell in enumerate(cells)
             if all(int(cell["params"][name]) == value for name, value in facet_key.items())
         ]
         panels.append(
@@ -231,7 +232,10 @@ def build_context(artifact: dict[str, Any], command: str) -> dict[str, Any]:
         "plateau_radius": artifact["plateau_radius"],
         "noise_ceiling": artifact["noise_ceiling"],
         "noise_ceiling_note": artifact["noise_ceiling_note"],
-        "winner_percentile": _winner_percentile(artifact),
+        "noise_gate": artifact["noise_gate"],
+        "benchmark": artifact["benchmark"],
+        "sharpe_axis": _sharpe_axis(artifact),
+        "curves": artifact["equity_curves"],
         "accent": ACCENT,
         "failed_fill": FAILED_FILL,
         "panel_width": PANEL_PAD + len(across_values) * CELL + 16,
@@ -262,7 +266,7 @@ def _facet_combinations(names: list[str], values: list[list[int]]) -> list[dict[
 
 
 def _panel(
-    members: list[dict[str, Any]],
+    members: list[tuple[int, dict[str, Any]]],
     facet: dict[str, int],
     across: str,
     down: str | None,
@@ -277,7 +281,9 @@ def _panel(
     """Build one heatmap panel.
 
     Args:
-        members: The cells belonging to this facet.
+        members: The cells belonging to this facet, each with its position in
+            the artifact's own cell list. The position is what finds a cell's
+            equity curve, which the artifact stores in that same order.
         facet: The facet values this panel holds fixed, mapping name to value
             in bars.
         across: Parameter on the horizontal axis.
@@ -298,7 +304,7 @@ def _panel(
         The panel: its title, its axis ticks, and one drawable cell per member.
     """
     cells: list[dict[str, Any]] = []
-    for member in members:
+    for position, member in members:
         value = member[metric]
         column = across_values.index(int(member["params"][across]))
         row = down_values.index(int(member["params"][down])) if down else 0
@@ -309,6 +315,7 @@ def _panel(
                 "y": PANEL_PAD + row * CELL,
                 "fill": FAILED_FILL if value is None else sample(_normalise(value, low, high)),
                 "failed": value is None,
+                "index": position,
                 "value": value,
                 "params": member["params"],
                 "label": ", ".join(f"{name}={v}" for name, v in member["params"].items()),
@@ -364,42 +371,76 @@ def _legend(low: float, high: float) -> dict[str, Any]:
     }
 
 
-def _winner_percentile(artifact: dict[str, Any]) -> float | None:
-    """Where the candidate sits in the noise distribution, as a PERCENTAGE.
+def _axis_x(value: float, low: float, high: float) -> float:
+    """Place a Sharpe on the horizontal axis.
+
+    Args:
+        value: The Sharpe to place, a dimensionless ratio.
+        low: The Sharpe at the axis's left end.
+        high: The Sharpe at its right end.
+
+    Returns:
+        The horizontal position in SVG user units, rounded to two places. The
+        ends sit :data:`AXIS_PAD` in from the figure's edges. An axis with no
+        range puts everything at its centre rather than dividing by zero.
+    """
+    span = AXIS_WIDTH - 2 * AXIS_PAD
+    return round(AXIS_PAD + _normalise(value, low, high) * span, 2)
+
+
+def _sharpe_axis(artifact: dict[str, Any]) -> dict[str, Any]:
+    """Lay every Sharpe the artifact holds along one axis.
+
+    ONE SCALE FOR EVERYTHING, which is the point: the cells, the surrogates, the
+    candidate and buy-and-hold are only comparable by eye if a unit of distance
+    means the same for each. The scale runs from the lowest to the highest value
+    present, and always includes zero, because "is this above nothing at all" is
+    a question the figure should answer without a label.
 
     Args:
         artifact: The parsed search artifact.
 
     Returns:
-        The share of surrogates the candidate's metric exceeds - one of 95,
-        90 or 50 - or :data:`BELOW_MEDIAN` when it is under all three, or
-        ``None`` when there is no ceiling, no candidate, or no scoreable
-        surrogate. ``None`` means the comparison was not made and must never be
-        rendered as a zero, which would read as "beaten by everything".
-
-        Computed from the recorded PERCENTILES rather than the raw trials,
-        because the artifact stores a summary. That makes this a coarse
-        placement - the page says so - and it is the reason the on-axis band of
-        roadmap session 8 is worth building.
+        ``low`` and ``high``, the Sharpes at the two ends; ``zero``, where a
+        Sharpe of nought falls; ``cells`` and ``trials``, the positions of every
+        finite cell and every scoreable surrogate; ``band``, the positions of the
+        surrogates' median and 95th percentile, or ``None`` with no ceiling;
+        ``winner`` and ``benchmark``, each a position and a value, or ``None``.
     """
+    metric = artifact["primary_metric"]
+    cells = [cell[metric] for cell in artifact["cells"] if cell[metric] is not None]
     ceiling = artifact["noise_ceiling"]
-    winner = artifact["winner"]
-    if ceiling is None or winner is None or not ceiling.get("scoreable_trials"):
-        return None
-    metric = winner[artifact["primary_metric"]]
-    if metric is None:
-        return None
-    percentiles = ceiling["percentiles"]
-    for share, key in ((95.0, "p95"), (90.0, "p90"), (50.0, "p50")):
-        value = percentiles.get(key)
-        if value is not None and metric >= value:
-            return share
-    # Below the median. NOT zero: the artifact records only three percentiles,
-    # so nothing here can distinguish "beaten by every surrogate" from "just
-    # under the median". An earlier version returned 0.0 and the page rendered
-    # "around the 0th percentile", which is a precision the data does not have
-    # and the harshest possible reading of it.
-    return BELOW_MEDIAN
+    trials = [v for v in (ceiling["trial_best_sharpe"] if ceiling else []) if v is not None]
+    winner = artifact["winner"][metric] if artifact["winner"] else None
+    benchmark = artifact["benchmark"][metric] if artifact["benchmark"] else None
+
+    present = [*cells, *trials, 0.0]
+    present += [value for value in (winner, benchmark) if value is not None]
+    low, high = min(present), max(present)
+
+    band = None
+    if ceiling and ceiling["percentiles"]["p50"] is not None:
+        band = {
+            "p50": _axis_x(ceiling["percentiles"]["p50"], low, high),
+            "p95": _axis_x(ceiling["percentiles"]["p95"], low, high),
+            "p95_value": ceiling["percentiles"]["p95"],
+        }
+
+    def mark(value: float | None) -> dict[str, float] | None:
+        return None if value is None else {"x": _axis_x(value, low, high), "value": value}
+
+    return {
+        "low": low,
+        "high": high,
+        "zero": _axis_x(0.0, low, high),
+        "cells": [_axis_x(value, low, high) for value in cells],
+        "trials": [_axis_x(value, low, high) for value in trials],
+        "band": band,
+        "winner": mark(winner),
+        "benchmark": mark(benchmark),
+        "width": AXIS_WIDTH,
+        "pad": AXIS_PAD,
+    }
 
 
 def _outcomes(artifact: dict[str, Any]) -> list[dict[str, Any]]:

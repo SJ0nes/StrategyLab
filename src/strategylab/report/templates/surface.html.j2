@@ -64,6 +64,20 @@
   .winner { stroke: var(--accent); stroke-width: 3; fill: none; pointer-events: none; }
   .rejected { stroke: var(--ink); stroke-width: 1.25; opacity: 0.55; pointer-events: none; }
   .tick { font-family: var(--font); font-size: 10px; fill: var(--ink-soft); }
+  .band { fill: var(--accent); opacity: 0.22; }
+  .bandedge { stroke: var(--accent); stroke-width: 1.5; }
+  .axisline { stroke: var(--rule); stroke-width: 1; }
+  .celltick { stroke: var(--ink); stroke-width: 1; opacity: 0.45; }
+  .trialtick { stroke: var(--accent); stroke-width: 1; opacity: 0.7; }
+  .benchmark { stroke: var(--ink-soft); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .candidate { stroke: var(--ink); stroke-width: 2.5; fill: var(--ink); }
+  .curve { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+           padding: var(--s3); min-height: 280px; font-family: var(--font); font-size: 0.8rem; }
+  .curve .none { color: var(--ink-soft); }
+  .curve .own { stroke: var(--ink); stroke-width: 1.6; fill: none; }
+  .curve .held { stroke: var(--ink-soft); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+  .curve .base { stroke: var(--rule); stroke-width: 1; }
+  .cellrect.chosen { stroke: var(--ink); stroke-width: 3; }
   .axis { font-family: var(--font); font-size: 11px; fill: var(--ink); font-weight: 600; }
 
   .readout { position: sticky; bottom: 0; margin-top: var(--s4);
@@ -106,51 +120,46 @@
   <span><b>drawdown ceiling</b> {{ max_drawdown_ceiling_pct }}%</span>
 </div>
 
-{% if noise_ceiling is none %}
-<div class="banner">
-  <b>No noise ceiling was computed, so nothing on this page is yet evidence of an edge.</b>
-  {{ noise_ceiling_note }}
-  The design standard for these reports requires the ceiling drawn on the same axis as the
-  result, so a winner sitting inside the noise distribution is visible rather than computed.
-  That band is absent here because there is nothing to draw, not because it was left out.
-</div>
-{% else %}
-<div class="banner">
+<div class="banner verdict-{{ noise_gate.status }}">
   <b>
-    {% if winner_percentile is none %}
-      A noise ceiling exists, but there is no candidate to compare against it.
-    {% elif winner_percentile >= 95 %}
-      The candidate clears the 95th percentile of what this grid achieves on resampled
-      history.
-    {% elif winner_percentile < 0 %}
-      The candidate sits BELOW THE MEDIAN of what this grid achieves on resampled history —
-      more than half the surrogates beat it.
+    {% if noise_gate.status == "passed" %}
+      Noise gate PASSED.
+    {% elif noise_gate.status == "failed" %}
+      Noise gate FAILED. This candidate cannot be validated.
+    {% elif noise_gate.status == "undetermined" %}
+      NO VERDICT from the noise gate: too few surrogates to judge on.
+    {% elif noise_gate.status == "not_computed" %}
+      No noise ceiling was computed, so nothing on this page is yet evidence of an edge.
     {% else %}
-      The candidate sits INSIDE the distribution — it clears the
-      {{ winner_percentile | int }}th percentile but not the next one up.
+      No candidate survived selection, so the noise gate judged nothing.
     {% endif %}
   </b>
+  {{ noise_gate.summary }}
+  {% if noise_ceiling is none %}
+  {{ noise_ceiling_note }}
+  The axis below would carry the surrogates' distribution as a shaded band. It is absent
+  because nothing was computed, not because it was left out.
+  {% else %}
+  <br><br>
   Best-in-grid Sharpe across {{ noise_ceiling.trials }} surrogate series
   ({{ noise_ceiling.scoreable_trials }} scoreable):
+  {% if noise_ceiling.percentiles.p50 is not none %}
   median {{ '%.3f'|format(noise_ceiling.percentiles.p50) }},
   90th {{ '%.3f'|format(noise_ceiling.percentiles.p90) }},
   95th {{ '%.3f'|format(noise_ceiling.percentiles.p95) }},
   max {{ '%.3f'|format(noise_ceiling.max) }}.
+  {% else %}
+  none of them produced a figure.
+  {% endif %}
   {{ noise_ceiling_note }}
   <br><br>
   <b>These surrogates are not noise.</b> Blocks are as long as the grid's longest lookback,
   so each one is a verbatim stretch of real history at a rescaled price level. What this
   compares against is a REORDERING OF THIS MARKET'S OWN REGIMES, which is a harder and
   narrower test than noise — and not the one the project rules describe. See
-  docs/decisions/0008.
-  <br><br>
-  This is also a sentence and a percentile, not a shape. The design standard asks for the
-  distribution drawn on the SAME axis as the surface, so a winner inside it is seen rather
-  than read; that band is roadmap session 8. The placement above is coarse — it comes from the
-  three recorded percentiles rather than the raw trials, so it can only say which of them the
-  candidate cleared.
+  docs/decisions/0008. The rule the verdict follows is in docs/decisions/0012.
+  {% endif %}
 </div>
-{% endif %}
 
 <h2>The surface</h2>
 <div class="panels">
@@ -174,7 +183,7 @@
       {% for c in panel.cells %}
       <rect class="cellrect" x="{{ c.x }}" y="{{ c.y }}" width="{{ cell }}" height="{{ cell }}"
             fill="{{ c.fill }}" data-cell="{{ loop.index0 }}" data-panel="{{ pindex }}"
-            tabindex="0"><title>{{ c.label }}</title></rect>
+            tabindex="0" role="button"><title>{{ c.label }}</title></rect>
       {% if c.failed %}
       {# A failed cell is hatched as well as darkened, so it survives greyscale
          and colour blindness. It must never read as "nothing here". #}
@@ -211,6 +220,57 @@
   <text class="tick" x="150" y="32" text-anchor="middle">{{ metric }}</text>
 </svg>
 
+<h2>Every {{ metric }} on one axis</h2>
+<p class="sub">
+  Each tick on the upper row is one cell of this grid. Each tick on the lower row is the BEST
+  cell the same grid found on one surrogate series, and the shaded band runs from the median
+  of those to their 95th percentile. A candidate inside or left of the band is what a search
+  of this size finds without an edge.
+</p>
+{% set ax = sharpe_axis %}
+<svg width="{{ ax.width }}" height="118" viewBox="0 0 {{ ax.width }} 118" role="img"
+     aria-label="All {{ metric }} values on one axis, from {{ '%.3f'|format(ax.low) }} to {{ '%.3f'|format(ax.high) }}">
+  {% if ax.band %}
+  <rect class="band" x="{{ ax.band.p50 }}" y="10" width="{{ ax.band.p95 - ax.band.p50 }}" height="74"/>
+  <line class="bandedge" x1="{{ ax.band.p95 }}" x2="{{ ax.band.p95 }}" y1="6" y2="88"/>
+  <text class="tick" x="{{ ax.band.p95 }}" y="100" text-anchor="middle">95th {{ '%.3f'|format(ax.band.p95_value) }}</text>
+  {% endif %}
+  <line class="axisline" x1="{{ ax.pad }}" x2="{{ ax.width - ax.pad }}" y1="47" y2="47"/>
+  <line class="axisline" x1="{{ ax.zero }}" x2="{{ ax.zero }}" y1="10" y2="84"/>
+  {% for x in ax.cells %}
+  <line class="celltick" x1="{{ x }}" x2="{{ x }}" y1="16" y2="42"/>
+  {% endfor %}
+  {% for x in ax.trials %}
+  <line class="trialtick" x1="{{ x }}" x2="{{ x }}" y1="52" y2="78"/>
+  {% endfor %}
+  {% if ax.benchmark %}
+  <line class="benchmark" x1="{{ ax.benchmark.x }}" x2="{{ ax.benchmark.x }}" y1="6" y2="88"/>
+  <text class="tick" x="{{ ax.benchmark.x }}" y="114" text-anchor="middle">buy and hold {{ '%.3f'|format(ax.benchmark.value) }}</text>
+  {% endif %}
+  {% if ax.winner %}
+  <path class="candidate" d="M{{ ax.winner.x }} 10 l6 -8 h-12 z"/>
+  <line class="candidate" x1="{{ ax.winner.x }}" x2="{{ ax.winner.x }}" y1="10" y2="84"/>
+  {% endif %}
+  <text class="tick" x="{{ ax.pad }}" y="100">{{ '%.3f'|format(ax.low) }}</text>
+  <text class="tick" x="{{ ax.width - ax.pad }}" y="100" text-anchor="end">{{ '%.3f'|format(ax.high) }}</text>
+  {# Labelled only where it will not sit on top of an end label. #}
+  {% if ax.zero > ax.pad + 44 and ax.zero < ax.width - ax.pad - 44 %}
+  <text class="tick" x="{{ ax.zero }}" y="100" text-anchor="middle">0</text>
+  {% endif %}
+  <text class="tick" x="{{ ax.pad }}" y="12">cells</text>
+  <text class="tick" x="{{ ax.pad }}" y="90">surrogates</text>
+</svg>
+<p class="sub">
+  {% if ax.winner %}The candidate is the heavy marker, at {{ '%.3f'|format(ax.winner.value) }}.{% endif %}
+  {% if not ax.band %}No surrogate distribution is drawn because none was computed.{% endif %}
+</p>
+
+<h2>Equity curve</h2>
+<div id="curve" class="curve" aria-live="polite">
+  <span class="none">Click a cell, or focus one and press Enter, to draw its curve against
+  holding {{ instrument }} over the same bars.</span>
+</div>
+
 <div class="readout" id="readout" aria-live="polite">
   <span class="none">Hover or focus a cell.</span>
 </div>
@@ -226,6 +286,15 @@
 </p>
 {% else %}
 <p class="mono">No candidate survived. Every scoreable cell was rejected.</p>
+{% endif %}
+{% if benchmark %}
+<p class="mono">
+  Holding {{ benchmark.instrument }} from {{ benchmark.start }} to {{ benchmark.end }}
+  ({{ benchmark.bars }} bars, {% if benchmark.basis == "winner" %}the candidate's own{% else %}the whole window{% endif %}):
+  {{ metric }} {{ '%.3f'|format(benchmark[metric]) }},
+  drawdown {{ '%.2f'|format(benchmark.max_drawdown_pct) }}%.
+  No costs, always fully invested. Reported, not applied: nothing was rejected for losing to it.
+</p>
 {% endif %}
 
 <table>
@@ -251,6 +320,7 @@
 
 </main>
 <script id="surface-data" type="application/json">{{ panels|tojson }}</script>
+<script id="curve-data" type="application/json">{{ curves|tojson }}</script>
 <script>
 (function () {
   "use strict";
@@ -290,6 +360,69 @@
 
   document.addEventListener("mouseover", bind);
   document.addEventListener("focusin", bind);
+
+  // --- the equity curve --------------------------------------------------------
+  // Drawn from points the search stored THINNED, for drawing. Nothing here
+  // computes a Sharpe or a drawdown: those are the search's, shown in the readout.
+  var curves = JSON.parse(document.getElementById("curve-data").textContent);
+  var curveBox = document.getElementById("curve");
+  var W = 760, H = 240, PADX = 8, PADY = 14;
+
+  function path(values, low, high) {
+    var out = "", span = high - low || 1, n = values.length;
+    for (var i = 0; i < n; i++) {
+      var x = PADX + (n === 1 ? 0.5 : i / (n - 1)) * (W - 2 * PADX);
+      var y = PADY + (1 - (values[i] - low) / span) * (H - 2 * PADY);
+      out += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+    }
+    return out;
+  }
+
+  function draw(cell) {
+    var stored = curves.cells[cell.index];
+    if (!stored) {
+      curveBox.innerHTML = "<b>" + cell.label + "</b> did not run, so it has no curve.";
+      return;
+    }
+    var first = 0;
+    while (first < stored.length && stored[first] === null) { first++; }
+    var own = [], held = [];
+    for (var i = first; i < stored.length; i++) {
+      own.push(stored[i] / stored[first]);
+      held.push(curves.close[i] / curves.close[first]);
+    }
+    var low = Math.min.apply(null, own.concat(held, [1]));
+    var high = Math.max.apply(null, own.concat(held, [1]));
+    var baseY = PADY + (1 - (1 - low) / (high - low || 1)) * (H - 2 * PADY);
+    curveBox.innerHTML =
+      "<b>" + cell.label + "</b> &nbsp; " + curves.dates[first] + " to " +
+      curves.dates[curves.dates.length - 1] + ", growth of 1" +
+      '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" role="img"' +
+      ' aria-label="Equity curve for ' + cell.label + '">' +
+      '<line class="base" x1="' + PADX + '" x2="' + (W - PADX) + '" y1="' + baseY.toFixed(1) +
+      '" y2="' + baseY.toFixed(1) + '"/>' +
+      '<path class="held" d="' + path(held, low, high) + '"/>' +
+      '<path class="own" d="' + path(own, low, high) + '"/></svg>' +
+      "solid: this cell, ends at " + own[own.length - 1].toFixed(3) +
+      " &nbsp; dashed: holding, ends at " + held[held.length - 1].toFixed(3) +
+      " &nbsp; range " + low.toFixed(3) + " to " + high.toFixed(3) +
+      "<br>" + own.length + " stored points, thinned for drawing. " +
+      "The figures in the readout are from the full curve.";
+  }
+
+  function choose(event) {
+    var target = event.target;
+    if (!target || !target.dataset || target.dataset.cell === undefined) { return; }
+    if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") { return; }
+    var marked = document.querySelector(".cellrect.chosen");
+    if (marked) { marked.classList.remove("chosen"); }
+    target.classList.add("chosen");
+    draw(panels[+target.dataset.panel].cells[+target.dataset.cell]);
+    if (event.type === "keydown") { event.preventDefault(); }
+  }
+
+  document.addEventListener("click", choose);
+  document.addEventListener("keydown", choose);
 }());
 </script>
 </body>

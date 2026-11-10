@@ -98,16 +98,16 @@ covers.
 | `live/worker.py` | `decide`, `order_for`, `record`, `portfolio_state`, the session file — one bar per invocation, long-only and one position, an allowance of zero never read as an order. `replay` re-decides every live bar through `evaluate` alone; `compare` diffs seven fields per bar - `params` included, so a diff run against the wrong artifact says so - and deliberately not the three risk fields. | 29 |
 | `search/surrogate.py` | `block_length_for` and `block_resample` — moving-block resampling over bar INDICES, so a bar's own shape travels with its return. Block length is the grid's longest lookback, per `docs/decisions/0008`. Log returns, so a surrogate price can never reach zero. | 70 |
 | `search/noise.py` | `noise_ceiling` — the whole grid against `n_trials` surrogates, recording the best Sharpe on each. Failed cells skipped rather than scored zero; a trial with nothing scoreable is `NaN` rather than dropped. `trials_note` says what a trial count buys. `evaluate_gate` — whether a candidate beat 95 in every 100 scoreable surrogates, counted rather than interpolated, with no verdict below 100 of them; `docs/decisions/0012`. | in the 70 |
-| `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 48 |
-| `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. | in the 48 |
-| `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 48 |
+| `report/render.py` | `render` — one self-contained page from a bundled Jinja2 template. Refuses a context missing any traceability key, and refuses a rendered page that references anything outside itself. | 58 |
+| `report/surface.py` | `build_context` and `render_surface` — the search surface as a faceted heatmap, coloured by each cell's OWN metric so a spike still reads as a spike. Failed cells hatched, winner accented, rejections ringed. Below it, every Sharpe on one axis with the surrogates' median-to-95th band, the candidate and buy-and-hold; a click on a cell draws its stored equity curve against holding. The click-through is JavaScript and no test runs it. | in the 58 |
+| `report/palette.py` | The one colour ramp: viridis, sampled at ten stops, hand-coded so the page needs no plotting dependency. | in the 58 |
 | `validate/walkforward.py` | `walk_forward` — the second consumer of `windows.py`, and the first caller the access counter has ever had. One continuous backtest over the held-back window, warmed up from the tail of the in-sample window, sliced into folds by date. Pooled figures carry the pass decision; per-fold ones are advisory. A non-finite pooled Sharpe is `insufficient_data`, never a pass. `write_validation_result` persists the verdict, because re-deriving one costs another touch. Records buy-and-hold over the held-back bars beside the verdict, from the frame it was already charged for. | 57 |
 | `validate/candidate.py` | `read_candidate` — the winner out of a search artifact, refusing a mismatched schema version, protocol version, snapshot hash or config hash BEFORE any touch is charged. Defaults nothing: a missing field is refused rather than filled in, because a default would be recorded in the verdict as though the search had stated it. Refuses a candidate whose search did not pass the noise gate, recounting the numbers rather than trusting the word; `run` and `diff` waive that by name. | 93 |
 | `logging/decisions.py` | `DecisionRecord`, `write_decision`, `write_decisions` and `read_decisions` — the schema the backtester and the live worker are both meant to emit, as append-only JSON Lines. Round-trips exactly, which is the property `diff` rests on; refuses a malformed line rather than skipping it, because a hole in a log reads as a divergence. Emitted by the live worker and by the replay; the backtester still writes its own frame. | 143 |
 | `risk/limits.py` | `load_limits` — the risk layer's own reader of its own file, `configs/risk_limits.yaml`: closed schema, nothing defaulted, a repeated key refused, and percentages left as percentages because the thresholds are compared against other percentages. `check` — the veto gate, in the documented order: kill switch, position cap, daily loss by BOTH routes (realised, and equity marked down from the session open, because each can hide the other), then exposure headroom. A size limit reduces, and the exposure limit reduces to the headroom left and rejects when there is none; the kill switch and the daily loss limit always reject. An intent asking for nothing is allowed at nothing, so no loss or exposure limit can block an intent that asks for no new exposure — which is what a well-formed exit is, while a malformed one carrying a size is gated like any other request. The kill switch is the one thing that refuses even a zero-size intent, and that is deliberate, per `docs/decisions/0010`. One branch returns no verdict at all: a `start_of_day_equity` that is not positive and finite RAISES, before even the kill switch is read, because it is the denominator of the daily loss limit and an account whose session open is zero is a programming error rather than a risk decision. Its one caller is `live/worker.py`, which has never run against the venue. | 486 |
 | `cli.py` | All seven commands. `run` writes the decision record BEFORE sending the order, so a venue failure never costs the log the decision; `diff` uses no network. | none |
 
-**1682 tests pass** — 34 + 40 + 81 + 105 + 58 + 42 + 33 + 74 + 51 + 33 + 106 + 48 + 70 + 16 + 57 + 93 + 143 + 486 + 39 + 29, plus 44 for
+**1692 tests pass** — 34 + 40 + 81 + 105 + 58 + 42 + 33 + 74 + 51 + 33 + 106 + 58 + 70 + 16 + 57 + 93 + 143 + 486 + 39 + 29, plus 44 for
 `.claude/hooks/check_secrets.py`, the commit-time credential scan, which is repository tooling
 rather than a module in the table. One of the 44 runs only on Windows and is skipped elsewhere. Run `uv run pytest` to see the
 count yourself.
@@ -141,15 +141,9 @@ these exist:
   `--trials`, because each trial costs a full grid. Without it the artifact
   records `"noise_ceiling": null` and every output says nothing it printed is
   evidence of an edge.
-- **Any page that draws an equity curve.** The report's contract asks for
-  click-a-cell to show one. The search artifact now carries every cell's curve,
-  thinned to at most 400 points on one shared set of dates with the instrument's
-  close beside them, which is a few hundred kilobytes rather than megabytes.
-  Nothing renders them yet, so the interaction still does not exist.
-- **Any noise band on a figure.** The report standard requires the ceiling drawn
-  on the same axis as the result so a winner inside the noise is *seen* rather
-  than read. A ceiling now exists, but the page states it as a sentence and a
-  percentile; the band itself is roadmap session 8.
+- **A comparison of two result sets.** The report standard asks that this
+  week's search can be laid beside last week's. One artifact draws one page and
+  nothing diffs two.
 - **Any use of the ceiling in SELECTION.** `select_candidate` never receives
   it, so a candidate inside the noise distribution is still nominated. The gate
   comes after: it stops that candidate being validated, not being chosen.
