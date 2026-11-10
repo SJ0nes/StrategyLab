@@ -228,14 +228,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1817 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1824 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring and the
 commit-time credential scan — twenty-two areas, one per test file.
-486 of the 1817 are the risk layer's,
+486 of the 1824 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -259,9 +259,11 @@ test collector rather than from the previous draft, and the lesson
 fails more often than its arithmetic does — is now evidenced here as well as
 there.
 
-Two FINISHED areas are untested: `YFinanceSource`'s fetch path, which by policy
-no test may call, and the vendor's side of the Trading 212 contract, for the
-same reason. **The CLI is tested in part.** `tests/test_cli.py` runs all seven
+Two things are untested because no test may reach them: what Yahoo Finance
+actually returns, and the vendor's side of the Trading 212 contract. This side
+of the fetch is covered - `tests/test_data.py` replaces the vendor library with
+a stand-in and checks what `YFinanceSource.fetch` asks for and what it makes of
+the answer - but a stand-in answers the way its author expects. **The CLI is tested in part.** `tests/test_cli.py` runs all seven
 commands in a throwaway workspace and covers what each writes, what `status`
 names as the next step, and the refusals a person can reach: a missing config,
 an unparseable one, an uncached instrument, an artifact that will not render,
@@ -282,7 +284,7 @@ The list of untested type definitions is now empty: `execution/venue.py`'s
 `Order`, `Position`, `Balance`, `ReconcileReport` and `OrderType` are exercised
 by `tests/test_t212.py` and `tests/test_worker.py`, as are `T212Error` and the
 adapter's constants. What remains untested is what no test may reach: the
-commands past their refusals, the vendor fetch path, and the vendor's side of
+commands past their refusals, the vendor's real answers, and the vendor's side of
 the Trading 212 contract. That list shrank as the components arrived:
 `FoldResult`, `ValidationResult` and `Outcome` left it when
 `validate/walkforward.py` was built, `DecisionRecord`'s sixteen fields left it
@@ -525,8 +527,8 @@ content hash, not against a fresh download. The hash detects that a revision
 happened — it does not prevent one from having already changed a result.
 
 **One vendor, never exercised by a test.** Yahoo Finance via `yfinance` is the
-only source, and by design no test calls it. The fetch path is tested against
-recorded fixtures only.
+only source, and by design no test calls it. The fetch path is tested against a
+stand-in for the library and the cache path against a recorded fixture.
 
 **Daily bars only.** No intraday, tick, or minute data. Execution timing within a
 day is therefore unmodelled.
@@ -682,11 +684,14 @@ validation — did not exist. It exists. What survives from them is the reason t
 distinction mattered: a counter at zero means something quite different when a
 reader exists, and this document should not let that shift pass silently.
 
-**The fetch path itself has no test.** `YFinanceSource.fetch` and the
-vendor-frame normalisation behind it are the one part of the data layer that
-touches the network, and by policy no test may call them. What is tested against
-the recorded fixture is the cache path. The vendor adapter is exercised only when
-a human runs `strategylab fetch`.
+**The fetch path is tested against a stand-in, not against the vendor.**
+`YFinanceSource.fetch` and the vendor-frame normalisation behind it are the one
+part of the data layer that touches the network, and by policy no test may call
+the vendor. `tests/test_data.py` puts an object in the library's place and
+checks the request - adjusted daily bars, the end date made inclusive - and the
+reshaping of frames in the two layouts the vendor uses. That covers this code.
+It does not cover the vendor changing its layout, which is found only when a
+human runs `strategylab fetch` and it fails.
 
 **Only `run` fetches the execution instrument, and only recent bars.** `fetch`
 downloads `instruments.research` and only that; `run` fetches the last few

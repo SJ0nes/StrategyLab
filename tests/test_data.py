@@ -9,8 +9,11 @@ in for the vendor.
 from __future__ import annotations
 
 import math
+import sys
+import types
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -407,3 +410,128 @@ def test_infinite_volume_raises() -> None:
     df.loc[df.index[1], "volume"] = float("inf")
     with pytest.raises(DataQualityError, match="non-finite volume"):
         validate_bars(df)
+
+
+# --------------------------------------------------------------------------
+# The fetch path, against a stand-in for the vendor library.
+# --------------------------------------------------------------------------
+#
+# NO TEST MAY CALL THE VENDOR, so `yfinance` is replaced in `sys.modules` by an
+# object with one function. `YFinanceSource.fetch` imports the library inside
+# its own body, so it picks the stand-in up; the real one is never imported.
+#
+# WHAT THIS PROVES is this side of the call: what the code asks the vendor for,
+# and what it does with a frame shaped the way the vendor shapes them. It proves
+# nothing about the vendor. Whether Yahoo still answers in these shapes is
+# established by running `strategylab fetch`, and by nothing here.
+
+
+class _Vendor(types.ModuleType):
+    """A stand-in for the `yfinance` module that records what it was asked."""
+
+    def __init__(self, answer: pd.DataFrame | None) -> None:
+        super().__init__("yfinance")
+        self.answer = answer
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def download(self, ticker: str, **kwargs: Any) -> pd.DataFrame | None:
+        self.calls.append((ticker, kwargs))
+        return self.answer
+
+
+def _vendor_frame(tickered: bool = False) -> pd.DataFrame:
+    """Three bars the way the vendor returns them: capitalised, zoned, newest first."""
+    index = pd.DatetimeIndex(
+        ["2020-01-06", "2020-01-03", "2020-01-02"], tz="America/New_York", name="Date"
+    )
+    frame = pd.DataFrame(
+        {
+            "Open": [103.0, 102.0, 100.0],
+            "High": [104.0, 103.5, 101.0],
+            "Low": [102.5, 101.0, 99.5],
+            "Close": [103.5, 102.5, 100.5],
+            "Adj Close": [1.0, 1.0, 1.0],
+            "Volume": [3000, 2000, 1000],
+        },
+        index=index,
+    )
+    if tickered:
+        frame.columns = pd.MultiIndex.from_product([frame.columns, ["SPY"]])
+    return frame
+
+
+def _fetch_with(vendor: _Vendor, monkeypatch: pytest.MonkeyPatch) -> pd.DataFrame:
+    """Run a fetch for the first week of 2020 with the stand-in in place."""
+    monkeypatch.setitem(sys.modules, "yfinance", vendor)
+    return YFinanceSource().fetch("SPY", date(2020, 1, 2), date(2020, 1, 6))
+
+
+def test_fetch_asks_for_adjusted_daily_bars_through_the_last_day_inclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _Vendor(_vendor_frame())
+
+    _fetch_with(vendor, monkeypatch)
+
+    ((ticker, asked),) = vendor.calls
+    assert ticker == "SPY"
+    assert asked["start"] == "2020-01-02"
+    # The vendor treats its end as EXCLUSIVE, so the request names the day after
+    # the last day wanted. Asking for the 6th would return bars to the 3rd.
+    assert asked["end"].startswith("2020-01-07")
+    assert asked["interval"] == "1d"
+    # Adjusted, because an unadjusted series has a cliff at every split and a
+    # moving average across one is measuring the split.
+    assert asked["auto_adjust"] is True
+
+
+@pytest.mark.parametrize("tickered", [False, True], ids=["flat-columns", "field-and-ticker"])
+def test_fetch_returns_the_vendors_bars_in_this_projects_shape(
+    monkeypatch: pytest.MonkeyPatch, tickered: bool
+) -> None:
+    bars = _fetch_with(_Vendor(_vendor_frame(tickered)), monkeypatch)
+
+    assert list(bars.columns) == list(REQUIRED_COLUMNS)
+    assert bars.index.name == "date"
+    assert bars.index.tz is None
+    # Oldest first, though the vendor handed them over newest first.
+    assert [stamp.date() for stamp in bars.index] == [
+        date(2020, 1, 2),
+        date(2020, 1, 3),
+        date(2020, 1, 6),
+    ]
+    # Each bar kept its own row through the reordering.
+    assert bars.loc["2020-01-02", "open"] == 100.0
+    assert bars.loc["2020-01-02", "volume"] == 1000
+    assert bars.loc["2020-01-06", "close"] == 103.5
+    validate_bars(bars)
+
+
+@pytest.mark.parametrize("answer", [None, pd.DataFrame()], ids=["nothing", "an-empty-frame"])
+def test_a_vendor_that_returns_no_rows_is_an_error_not_an_empty_cache(
+    monkeypatch: pytest.MonkeyPatch, answer: pd.DataFrame | None
+) -> None:
+    with pytest.raises(DataQualityError, match="no rows"):
+        _fetch_with(_Vendor(answer), monkeypatch)
+
+
+def test_a_vendor_frame_missing_a_column_is_refused_naming_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(DataQualityError, match="volume"):
+        _fetch_with(_Vendor(_vendor_frame().drop(columns=["Volume"])), monkeypatch)
+
+
+def test_fetching_does_not_validate_so_a_bad_bar_reaches_the_check_that_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `fetch` reshapes and `validate_bars` judges, so the same rules apply to a
+    # fresh download and to a cached one. A bar whose high is under its low
+    # comes back from `fetch` untouched and is refused one step later.
+    broken = _vendor_frame()
+    broken.loc[broken.index[0], "High"] = 1.0
+
+    bars = _fetch_with(_Vendor(broken), monkeypatch)
+
+    with pytest.raises(DataQualityError):
+        validate_bars(bars)

@@ -499,10 +499,11 @@ class YFinanceSource:
     The only component that fetches PRICES over the network, reached from two
     commands - `fetch` for the research instrument and `run` for the execution
     instrument's recent bars; the venue adapter is the other network user in
-    the project. No test may call it, because a CI badge that goes red on a
-    vendor rate limit is worse than no badge - and no test does: the fetch path
-    and the normalisation behind it have no test at all, and cannot get one
-    without a recorded HTTP fixture or a fake source, neither of which exists.
+    the project. No test may call the vendor, because a CI badge that goes red
+    on a vendor rate limit is worse than no badge - and none does:
+    ``tests/test_data.py`` puts a stand-in in the library's place, which works
+    only because the import below is inside the method. That covers what this
+    class asks for and what it does with the answer, not what the vendor sends.
     """
 
     name: str = "yfinance"

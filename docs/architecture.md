@@ -82,7 +82,7 @@ covers.
 |---|---|---|
 | `windows.py` | `in_sample_bars` and `walk_forward_bars` — the one place any component asks which bars it may see. The held-back accessor increments the protocol's touch counter before returning a bar and takes the file it will increment, so tests point it at a copy. No dry run, deliberately. | 16 |
 | `protocol.py` | Full loader and validator. Window ordering and non-overlap. The single percent→fraction conversion. The access counter, byte-preserving on LF and CRLF alike. | 34 |
-| `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 40 |
+| `data/source.py` | `validate_bars`, `content_hash`, `cache_write`/`cache_read`/`is_cached`, the `CacheEntry` provenance sidecar, and `YFinanceSource.fetch`. | 47 |
 | `backtest/costs.py` | `apply_costs` — half-spread plus slippage on the price, commission and FX as cash on the executed notional. | 81 |
 | `backtest/engine.py` | `run_backtest` — `evaluate` stepped bar by bar with costs applied. Signal from a close, fill at the NEXT bar's open. Carries the lookahead test that can actually fail, plus the determinism test. | 33 |
 | `backtest/metrics.py` | `sharpe` — annualised, sample standard deviation, zero risk-free rate. `max_drawdown` — largest peak-to-trough decline against the RUNNING peak, as a positive percentage. `buy_and_hold` — the Sharpe and drawdown of simply holding over a run of closes, with no costs and fully invested, so the bar it sets is slightly too high. | 42 |
@@ -108,14 +108,16 @@ covers.
 | `risk/limits.py` | `load_limits` — the risk layer's own reader of its own file, `configs/risk_limits.yaml`: closed schema, nothing defaulted, a repeated key refused, and percentages left as percentages because the thresholds are compared against other percentages. `check` — the veto gate, in the documented order: kill switch, position cap, daily loss by BOTH routes (realised, and equity marked down from the session open, because each can hide the other), then exposure headroom. A size limit reduces, and the exposure limit reduces to the headroom left and rejects when there is none; the kill switch and the daily loss limit always reject. An intent asking for nothing is allowed at nothing, so no loss or exposure limit can block an intent that asks for no new exposure — which is what a well-formed exit is, while a malformed one carrying a size is gated like any other request. The kill switch is the one thing that refuses even a zero-size intent, and that is deliberate, per `docs/decisions/0010`. One branch returns no verdict at all: a `start_of_day_equity` that is not positive and finite RAISES, before even the kill switch is read, because it is the denominator of the daily loss limit and an account whose session open is zero is a programming error rather than a risk decision. Its one caller is `live/worker.py`, which has never run against the venue. | 486 |
 | `cli.py` | All seven commands. `run` writes the decision record BEFORE sending the order, so a venue failure never costs the log the decision; `diff` uses no network. Tested in a throwaway workspace as far as what each command writes and refuses; never past the network or a held-back read. | 31 |
 
-**1817 tests pass** — 34 + 40 + 81 + 105 + 58 + 42 + 33 + 74 + 51 + 33 + 106 + 72 + 70 + 16 + 57 + 93 + 143 + 486 + 39 + 29 + 31, plus 124 for
+**1824 tests pass** — 34 + 47 + 81 + 105 + 58 + 42 + 33 + 74 + 51 + 33 + 106 + 72 + 70 + 16 + 57 + 93 + 143 + 486 + 39 + 29 + 31, plus 124 for
 `.claude/hooks/check_secrets.py`, the commit-time credential scan, which is repository tooling
 rather than a module in the table. 42 of the 124 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one. Run `uv run pytest` to see the
 count yourself.
 
 One caveat inside `data/`: `YFinanceSource.fetch` and the vendor-frame
-normalisation behind it are **written but untested**, because no test may make a
-network call. What the fixture tests exercise is the cache path.
+normalisation behind it are tested **against a stand-in for the vendor library**,
+because no test may make a network call. That covers the request and the
+reshaping, not what the vendor really returns. The cache path is tested against
+the recorded fixture.
 
 ## What is stubbed
 

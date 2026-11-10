@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 
-**1817 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1824 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -130,9 +130,9 @@ so rather than claiming credit for it.
 The seven CLI commands are tested in a throwaway workspace, up to what each
 writes and what each refuses, and no further: `fetch` only where it finds a cache
 already there, `run` and `diff` only as far as their refusals, and `validate`
-only where it declines to read the held-back window. The vendor fetch path has
-no test, because by policy no test may call it — nor does the vendor's side of
-the Trading 212 contract, for the same reason. No `raise NotImplementedError` remains under
+only where it declines to read the held-back window. The vendor fetch path is tested against a stand-in for the vendor library, which shows what this code asks for and what it does with the answer, and nothing about whether the vendor still answers that way,
+because by policy no test may call the vendor — and the vendor's side of the
+Trading 212 contract is untested for the same reason. No `raise NotImplementedError` remains under
 `src/` (`grep -r "raise NotImplementedError" src/ --include='*.py' | wc -l`
 prints 0).
 
@@ -182,13 +182,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1817 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1824 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1817 tests, none touching the network
+uv run pytest                   # 1824 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

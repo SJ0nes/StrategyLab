@@ -82,8 +82,9 @@ several mids. Round-trip cost is 0.23% of notional at *every* mid.
   badge that goes red on a vendor rate limit is worse than no badge.
   Be precise about what this buys: the CACHE path is tested against the recorded
   fixture in `tests/fixtures/`. The FETCH path - `YFinanceSource.fetch` and the
-  vendor-frame normalisation behind it - has no test at all, and cannot get one
-  without either a recorded HTTP fixture or a fake source.
+  vendor-frame normalisation behind it - is tested against a stand-in for the
+  vendor library, never the library itself. That shows what this code asks for
+  and what it does with the answer, and nothing about what the vendor returns.
 - **Determinism.** Same config, same data, same result. Required of the engine:
   `tests/test_engine.py` asserts an identical equity curve, decision log, fill
   list and metric set across two runs, and an engine change keeps it green in
