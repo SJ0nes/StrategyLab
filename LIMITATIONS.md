@@ -228,14 +228,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1786 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1817 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
-the Trading 212 adapter, the live worker and the commit-time credential scan —
-twenty-one areas, one per test file.
-486 of the 1786 are the risk layer's,
+the Trading 212 adapter, the live worker, the command-line wiring and the
+commit-time credential scan — twenty-two areas, one per test file.
+486 of the 1817 are the risk layer's,
 and that is a statement about parameterisation rather than about importance. 316
 of those 486 are assertions repeated at four account equities, because at an
 equity of 100 a cash exposure and its percentage of equity are the same number.
@@ -259,29 +259,31 @@ test collector rather than from the previous draft, and the lesson
 fails more often than its arithmetic does — is now evidenced here as well as
 there.
 
-Three FINISHED areas are untested: **the CLI**, all seven of `status`, `fetch`,
-`search`, `report`, `validate`, `run` and `diff`; `YFinanceSource`'s fetch path,
-which by policy no test may call; and the vendor's side of the Trading 212
-contract, for the same reason. The CLI is the one that keeps growing — `search`, `report` and
-`validate` together are several hundred lines of argument handling, error paths
-and output formatting, and every failure branch in them is unexercised: a
-missing config, an unparseable one, an uncached instrument, an unreadable
-snapshot, an artifact that will not render, a candidate from the wrong snapshot.
-The functions beneath are covered; the commands wrapping them are not.
+Two FINISHED areas are untested: `YFinanceSource`'s fetch path, which by policy
+no test may call, and the vendor's side of the Trading 212 contract, for the
+same reason. **The CLI is tested in part.** `tests/test_cli.py` runs all seven
+commands in a throwaway workspace and covers what each writes, what `status`
+names as the next step, and the refusals a person can reach: a missing config,
+an unparseable one, an uncached instrument, an artifact that will not render,
+a candidate the noise gate has not passed, a config edited since its search.
+It found one defect on its first run - `search --trials` on a window too short
+to resample ended in a stack trace rather than a message.
 
-**`validate` is the one where that gap costs something.** Its failure branches
-are the only ones in this project that can be re-entered only at the price of a
-permanent touch, and they are the branches nothing exercises. The refusals that
-happen BEFORE the read are covered — `tests/test_candidate.py` drives every one
-of them through `read_candidate` — but the wiring that calls it, and the error
-handling around the two calls that can fail after the touch is charged, is not.
+**What those tests stop short of is exactly what cannot be run for free.**
+`fetch` is tested only where it finds a cache already there. `run` and `diff`
+are tested only up to their refusals, because past those `run` talks to the
+venue. And `validate` is tested only where it REFUSES: a run that proceeds
+needs held-back bars the fixture does not have, so the error handling around
+the two calls that can fail AFTER the touch is charged is still unexercised.
+That is the branch in this project that can be re-entered only at the price of
+a permanent read, and it is the one nothing covers.
 
 The list of untested type definitions is now empty: `execution/venue.py`'s
 `Order`, `Position`, `Balance`, `ReconcileReport` and `OrderType` are exercised
 by `tests/test_t212.py` and `tests/test_worker.py`, as are `T212Error` and the
-adapter's constants. What remains untested is what no test may reach: the seven
-CLI commands, the vendor fetch path, and the vendor's side of the Trading 212
-contract. That list shrank as the components arrived:
+adapter's constants. What remains untested is what no test may reach: the
+commands past their refusals, the vendor fetch path, and the vendor's side of
+the Trading 212 contract. That list shrank as the components arrived:
 `FoldResult`, `ValidationResult` and `Outcome` left it when
 `validate/walkforward.py` was built, `DecisionRecord`'s sixteen fields left it
 with `tests/test_decisions.py`, and `RiskLimits`, `PortfolioState`, `RiskVerdict`
@@ -918,12 +920,13 @@ decision record until it has been read beside the venue's own account page.
   instrument - run after the close, or delete `data/<execution>.parquet` by
   hand; and the sidecar's `fetched_at` is the time of the latest merge, not of
   every bar in it.
-- **`run` and `diff` are untested**, like the five commands before them. Their
-  decisions are in `live/worker.py`, which is tested; what is not is the wiring -
-  environment variables, the fetch-and-merge of the execution instrument's bars,
-  the order of writes, and every error branch. The two refusals were exercised by
-  hand: a non-demo environment and an absent live log both exit non-zero with a
-  message, and that is the extent of it.
+- **`run` and `diff` are tested only as far as their refusals.** Their
+  decisions are in `live/worker.py`, which is tested. `tests/test_cli.py` covers
+  the refusals: any environment string but `demo`, a missing key, an absent
+  live log, each exiting non-zero without writing a log or printing the key.
+  What is not covered is everything after them - the fetch-and-merge of the
+  execution instrument's bars, the order of writes, and every error branch a
+  venue can cause.
 - **The mutation figures in this repository's commit messages cannot be re-run
   from the repository.** The harness that produced them lives outside it.
   `docs/decisions/0006` already lists this as a past finding, and it has now

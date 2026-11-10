@@ -548,7 +548,12 @@ def search(
             noise_trials=trials,
             noise_seed=seed,
         )
-    except SearchError as exc:
+    except (SearchError, ValueError) as exc:
+        # ValueError as well as SearchError. `run_search` documents that it lets
+        # one through for a malformed range, and the noise ceiling raises one
+        # when the window is too short to resample at the grid's block length -
+        # which a person meets the first time they try --trials on a short
+        # history. Both are things the operator typed, not crashes.
         err_console.print(f"[bold red]search could not run[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
     path = write_search_result(result, started)
