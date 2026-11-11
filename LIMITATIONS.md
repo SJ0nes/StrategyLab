@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Twenty-four modules have working bodies: `protocol.py`, `windows.py`,
+Twenty-seven modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -14,7 +14,8 @@ Twenty-four modules have working bodies: `protocol.py`, `windows.py`,
 `report/surface.py`, `report/palette.py`, `report/verdict.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, `live/worker.py`, and all seven commands in `cli.py`. No
+`execution/t212.py`, `live/worker.py`, `api/overview.py`, `api/app.py`,
+`api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
 the venue interface and its data classes, exercised through the adapter's and the
@@ -237,14 +238,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1921 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2014 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
-the Trading 212 adapter, the live worker, the command-line wiring and the
-commit-time credential scan — twenty-two areas, one per test file.
-520 of the 1921 are the risk layer's,
+the Trading 212 adapter, the live worker, the command-line wiring, the app's
+server and what it reports, and the commit-time credential scan — twenty-four
+areas, one per test file.
+520 of the 2014 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -971,6 +973,36 @@ decision record until it has been read beside the venue's own account page.
   mutant survives. It covers the work done since it was written, not the whole
   codebase, and it is run by hand - CI does not run it. A mutant list is also
   only as good as the mutants someone thought of.
+
+**There is a server now, and all it can do is read.** `strategylab serve` exists
+for a desktop app that is otherwise a shell (`docs/decisions/0014`). It has two
+routes: one says it is alive, one reports the protocol version, the access
+counter, the cached prices, the kill switch, whether a venue key is set, and
+each strategy config with its newest search. It starts nothing, writes nothing
+and places nothing. What is worth knowing about it:
+
+- **Its guard was reviewed, not attacked.** Every request must name this machine
+  in its Host header, carry no foreign Origin, and present a token made for that
+  launch. A review of the code tried the bypasses it could think of and the
+  tests pin the ones it tried. That is a review by the same assistant that
+  wrote the code, not a penetration test, and the guard matters more
+  once a route can spend the held-back read.
+- **The token is as private as the machine's own user account.** It lives in the
+  server's environment and in the Electron main process. Another program running
+  as the same user can read a process's environment on most systems. The server
+  defends against web pages and other users, not against software already
+  running as the operator.
+- **"Missing" is only as good as the reasons written for it.** A figure that
+  cannot be read is returned with a reason. The reasons are passed through from
+  the loaders with the project's directory removed; nothing checks that a new
+  loader's message is fit to show a person.
+- **It reads the whole price cache to report on it.** The cache holds the
+  held-back years beside the in-sample ones, and checking its hash means loading
+  the file. No held-back bar is used for anything, and the access counter is not
+  moved, which is the same thing `status` has always done.
+- **A search for another strategy with the same name is not told apart.** The
+  newest artifact naming the strategy is the one reported. It says whether the
+  config has changed since, and that is the only link between the two.
 
 **The risk layer is built, and its one caller has never run.** All three parts
 `CLAUDE.md` demands exist: its own module, its own config file

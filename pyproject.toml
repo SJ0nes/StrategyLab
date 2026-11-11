@@ -15,6 +15,8 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.7",
     "jinja2>=3.1",
+    "fastapi>=0.162.4",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -72,3 +74,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The web framework's test client warns that it would prefer a newer HTTP
+# library than the one this project already depends on. Adding a dependency to
+# quiet a warning is the wrong trade; the warning is named here so that it is
+# this one that is silenced and no other.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]

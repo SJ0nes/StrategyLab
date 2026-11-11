@@ -1271,5 +1271,44 @@ def diff(
     console.print("The risk fields are not compared: the replay does not run the gate.")
 
 
+@app.command()
+def serve(
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port",
+            min=0,
+            max=65535,
+            help="Port to listen on, on 127.0.0.1 only. 0 lets the operating system choose.",
+        ),
+    ] = 0,
+) -> None:
+    """Serve the desktop app from this directory, to this machine only.
+
+    Started by the app's window, not by hand. Binds 127.0.0.1 and no other
+    address, prints one line - {"port": N} - once it is listening, and stops
+    when its standard input closes, which is how the window tells it to go.
+
+    Every request must carry the token in STRATEGYLAB_APP_TOKEN. The command
+    refuses to start without one: a server that answers anyone on the machine
+    is not one this project runs.
+
+    The server holds no strategy, risk or validation logic of its own. It calls
+    the functions these commands call. See docs/decisions/0014.
+    """
+    # Imported here so that every other command starts without loading a web
+    # framework it does not use.
+    from strategylab.api.server import serve as serve_app  # noqa: PLC0415
+
+    try:
+        serve_app(Path.cwd(), os.environ, port)
+    except ValueError as exc:
+        err_console.print(f"[bold red]refusing to serve[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        err_console.print(f"[bold red]cannot serve[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
 if __name__ == "__main__":
     app()
