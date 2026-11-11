@@ -34,6 +34,9 @@ const REPOSITORY = path.resolve(__dirname, "..", "..");
  */
 const WORKSPACE_VARIABLE = "STRATEGYLAB_WORKSPACE";
 
+/** The window and taskbar icon: `desktop/build/icon.ico`, beside `dist-electron/`. */
+const ICON = path.resolve(__dirname, "..", "build", "icon.ico");
+
 /** The environment variable the server reads its token from. */
 const TOKEN_VARIABLE = "STRATEGYLAB_APP_TOKEN";
 
@@ -117,6 +120,7 @@ async function openWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 600,
     title: "StrategyLab",
+    icon: ICON,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   window.removeMenu();
@@ -149,6 +153,9 @@ async function openWindow(): Promise<void> {
 
 // One window at a time. Two would be two servers, and each would let a job
 // start without seeing the other's.
+// The same id as the desktop shortcut, so Windows shows the window under its icon.
+app.setAppUserModelId("StrategyLab");
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }

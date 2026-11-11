@@ -99,6 +99,19 @@ are all places where the mock shows something the project does not have:
 | Top bar | "Stop all buying… selling still allowed" | "Stop all trading" | The risk layer cannot block buying alone, and the app may not add that to it (`docs/decisions/0019`) |
 | Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | One strategy is deployed at a time (`docs/decisions/0019`) |
 
+## Opening it from the desktop
+
+After `npm install` and one `npm start` (which builds the window), make a
+StrategyLab shortcut on the desktop and in the Start menu:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop/scripts/make-shortcut.ps1
+```
+
+It opens the built window with the app's icon (`build/icon.svg`, rendered to
+`build/icon.ico`). It does not rebuild: after pulling changes, run
+`npm run build` once.
+
 ## Trying it on a copy
 
 Pressing a button in the window starts a real search in this repository. To
