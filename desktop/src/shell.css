@@ -1,0 +1,6 @@
+/* Where the real window differs from the prototype's page, and why.
+   The prototype has a "sample data" banner as its first row; the app shows real
+   data and has no banner, so the shell is two rows, not three. React draws
+   inside #root, which has to pass the window's height down. */
+#root { height: 100%; }
+.app { grid-template-rows: auto minmax(0, 1fr); }

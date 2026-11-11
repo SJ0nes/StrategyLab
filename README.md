@@ -90,7 +90,7 @@ is what stands between paper and real money.
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A latch that survives its own file — the daily-loss limit now holds for the session, and deleting `state/session.json` clears it |
 | Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
-| The graveyard — append-only JSON Lines, closed reason vocabulary | A desktop app — `docs/prototype/` holds an approved clickable mock with invented data, and nothing behind it is built: no deployed strategies, no live performance figures, no scheduler |
+| The graveyard — append-only JSON Lines, closed reason vocabulary | A desktop app beyond its shell — `desktop/` opens a window that reports the project's real state and can change nothing; `docs/prototype/` holds the approved mock it has to grow into. No deployed strategies, no live performance figures, no scheduler, no control that starts or spends anything |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, every Sharpe and the surrogate band on one axis, click a cell for its equity curve against buy-and-hold; self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter, and a page drawing the folds side by side | |

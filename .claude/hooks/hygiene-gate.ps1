@@ -15,7 +15,10 @@ $AllowedRoot = @(
     '.venv', '.ruff_cache', '.mypy_cache', '.pytest_cache',
     'README.md', 'CLAUDE.md', 'LIMITATIONS.md', 'LICENSE', 'CHANGELOG.md',
     'pyproject.toml', 'uv.lock', 'protocol.yaml', 'Makefile',
-    'src', 'tests', 'data', 'state', 'reports', 'docs', 'configs'
+    'src', 'tests', 'data', 'state', 'reports', 'docs', 'configs',
+    # The desktop window: a Node project with its own manifest and lockfile, kept apart
+    # from the Python package it is a client of. docs/decisions/0014.
+    'desktop'
 )
 
 $findings = @()

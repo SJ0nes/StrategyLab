@@ -15,3 +15,6 @@ __pycache__/
 .mypy_cache/
 htmlcov/
 .claude/settings.local.json
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/

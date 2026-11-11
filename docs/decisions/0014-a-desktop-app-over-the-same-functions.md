@@ -81,7 +81,9 @@ directory.** `fastapi` and `uvicorn` serve HTTP; they replace nothing, because
 the project serves nothing today. `httpx`, already a dependency, is what the
 server's tests use. Everything Node - Electron, React, the bundler, the test
 runner, a charting library - lives under `desktop/` with its own lockfile, and
-nothing under `src/` imports from it.
+nothing under `src/` imports from it. `desktop` is added to the hygiene gate's
+list of things allowed at the repository root for that reason: it is a second
+project, not a stray file.
 
 **5. Actions that cannot be taken back ask for a typed phrase.** Reading the
 held-back window, deploying, pausing, stopping all buying, and placing a

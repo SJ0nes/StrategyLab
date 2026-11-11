@@ -1004,6 +1004,19 @@ and places nothing. What is worth knowing about it:
   newest artifact naming the strategy is the one reported. It says whether the
   config has changed since, and that is the only link between the two.
 
+**The desktop window is a shell, and the part that matters most is the part no
+test runs.** `desktop/` holds an Electron window that starts the server and
+shows one screen of real state; five of its six sections say they are not
+built. Its page is tested in a simulated browser and its helper for finding
+`uv` is tested directly. The Electron main process is not: starting the server,
+attaching the token to requests, and refusing to navigate anywhere else were
+checked by launching the app twice on Windows and inspecting it. That check
+found the window showing real data, the page's script unable to see the token
+or Node, and no server process left after the window closed - and it is two
+launches on one machine, repeated by nobody else. CI does not build or test anything
+under `desktop/`. The window has not been compared with the approved mock, and
+cannot yet be: almost none of what the mock shows exists.
+
 **The risk layer is built, and its one caller has never run.** All three parts
 `CLAUDE.md` demands exist: its own module, its own config file
 (`configs/risk_limits.yaml`), and its own tests (`tests/test_risk.py`, 520 of
