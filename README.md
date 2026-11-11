@@ -100,6 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All eight commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff`, `serve` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 | A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seven routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, the graveyard and the jobs it has started; one that records the operator's confirmation of a strategy's rules, and two that start or stop a job - a search, or a search with a hundred-trial noise ceiling, as a process that outlives the window *(it can start nothing else: not `validate`, not `run`; and nothing for a strategy whose rules are not confirmed)* | |
+| Strategies from videos — `.claude/skills/import-strategy/` turns a `/watch` of a video into `configs/<name>.yaml` and `configs/<name>.source.json`, using the existing vocabulary only and listing what it left out; the app shows it as a draft with its rules in words and a path to deployment *(the skill has never been run on a real video)* | |
 
 **2304 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
