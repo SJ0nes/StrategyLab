@@ -41,8 +41,8 @@ this repository has read the held-back window. There is no CLI flag for that —
 `validate` takes no options — it is done by running the command somewhere else;
 the `protocol_path` argument that makes it possible belongs to the library
 function `validate.walk_forward`, which is what the tests use. The first real
-run is the operator's to make. **No figure from a search appears in this
-README.**
+run is the operator's to make. **One search result is reported, under Results:
+its candidate failed the noise gate.**
 
 **The veto gate between a strategy and a venue now exists, and the live worker
 is its one caller.** `risk/limits.py` reads its own config file — `configs/risk_limits.yaml`,
@@ -83,7 +83,7 @@ is what stands between paper and real money.
 |---|---|
 | Protocol loader and validator | A benchmark in any DECISION — buy-and-hold is reported beside a search and a verdict, and rejects nothing |
 | Price data layer — validation, provenance, parquet cache | A comparison of two searches side by side on one page |
-| Cost model — hand-verified arithmetic | A hundred-trial ceiling for the committed grid — the gate exists, and no search here has yet been run through it |
+| Cost model — hand-verified arithmetic | A candidate that clears the noise gate — the committed grid has been run through a hundred-trial ceiling once, and its candidate beat 25 surrogates of the 95 it needed |
 | Strategy-config loader — closed schema, closed vocabulary, and a content hash a search records and a later reader checks | A real verdict to draw — the fold page exists and has only ever rendered a fixture |
 | The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | `diff` reading the backtester's own log — the engine now emits the schema and is tested to agree with the replay, which `diff` still uses |
 | Strategy evaluation (`core.evaluate`), with the lookahead test | A test that opens the report in a browser — the click-through script was checked by hand, in a screenshot |
@@ -309,29 +309,61 @@ both, and what the honest routes out are.
 
 ## Results
 
-**A search has been run. No figure from it is quoted here, and that is a
-decision rather than an omission.**
+**One search has been run through a hundred-trial noise ceiling. Its candidate
+failed the gate, so there is no validated strategy here and the held-back window
+is still unread.**
 
 ```bash
-uv run strategylab fetch                                  # caches SPY 2005-2024
-uv run strategylab search configs/ma_crossover.yaml       # ~4 minutes, 90 cells
+uv run strategylab fetch                                          # caches SPY 2005-2024
+uv run strategylab search configs/ma_crossover.yaml --trials 100  # 101 grids
+uv run strategylab report                                         # draws it
 ```
 
-That writes every cell to `state/search-<stamp>.json` with the protocol version,
-the in-sample window, the content hash of the snapshot it ran against, the
-winner, and every rejection. `uv run strategylab report` turns each of those
-into a self-contained HTML page: the surface as a heatmap faceted by the third
-parameter, coloured by each cell's own Sharpe so a spike still reads as a spike,
-with failed cells hatched and the winner accented. Both `state/` and `reports/`
-are gitignored, so the files are local to whoever ran them.
+Run from a clean clone at commit `e510a28`, started 2026-11-10 18:40 UTC and
+finished 2026-11-11 02:11 UTC on a desktop that was doing other work at the same
+time. Protocol version 1. Data snapshot `2b9347c374c0`, config hash
+`912a24e200f7` (both are SHA-256 hashes, shortened here; the artifact carries
+them whole). In-sample window 2005-01-01 to 2018-12-31, 3,523 bars. Ninety
+cells, none failed.
 
-Nothing from it appears in this section because a search result without a noise
-ceiling is not a weak finding — it is not a finding. The best of ninety
-parameter combinations posting a positive Sharpe is what noise does. Publishing
-that number and captioning it with a caveat is how a reader ends up remembering
-the number, so the number stays out until there is a ceiling beside it. When
-there is, it will appear here with the command that produced it, the protocol
-version in force, and the content hash of the data it used.
+| | |
+|---|---|
+| Candidate, by plateau score | fast 10, slow 80, trend 150 |
+| Its Sharpe, after costs | 0.640 |
+| Its largest drawdown | 19.40% |
+| Its trades over the window | 17 |
+| Plateau score (neighbourhood median) | 0.586 over 27 cells |
+| Cells rejected as edge winners | 4 |
+| Noise ceiling, 100 surrogates: median / 90th / 95th / maximum | 0.769 / 1.039 / 1.114 / 1.230 |
+| Surrogates the candidate beat | **25 of 100. It needed 95.** |
+| Noise gate | **Failed** |
+| Buy-and-hold over the candidate's own bars, no costs | Sharpe 0.483, drawdown 55.19% |
+
+**What that says.** A surrogate is the real series resampled in 200-bar blocks:
+each block is a verbatim stretch of history, and the sequence across blocks is
+not the one that happened. The best cell the same grid finds on a surrogate
+scores above 0.640 on 75 of the 100. A Sharpe of 0.640 from the best of ninety
+combinations is therefore inside what this search finds on resampled history.
+The candidate is recorded in the graveyard as `below_noise_ceiling`, and
+`validate` refuses it.
+
+**What it does not say.** It does not say the strategy loses money: over this
+window its Sharpe was positive and its largest drawdown was smaller than the
+instrument's. It says the search cannot tell that result from what resampling
+alone produces. The ceiling is
+itself an estimate, from one price series, one grid, one seed (0) and one block
+length; `docs/decisions/0008` records why the surrogates are resampled history
+rather than noise, and what that costs.
+
+**What happens next is nothing, deliberately.** The grid and the pass bar were
+written before this result existed. Widening the grid, changing the block
+length, or re-running with another seed until the candidate clears the gate
+would be the selection the gate exists to prevent. `access_log.walk_forward_touches`
+still reads 0.
+
+`state/` and `reports/` are gitignored, so the artifact and its page are local
+to whoever runs the commands. The figures above were copied from the command's
+output and checked against the artifact.
 
 ## Limitations
 

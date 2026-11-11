@@ -43,11 +43,18 @@ that `evaluate` looks each placeholder up in, which is what lets one parsed
 definition serve all ninety cells. A reader expecting a definition with numbers
 in it will not find one.
 
-**A search now runs, and no result from one is reported.**
+**One search result is reported, and it is a failure.**
 `strategylab search configs/ma_crossover.yaml` walks all ninety cells over
 2005-2018, scores the surface by neighbourhood median, rejects edge winners and
 drawdown breaches into the graveyard, and writes every cell to
-`state/search-<stamp>.json`. No number from it is quoted here or in the README.
+`state/search-<stamp>.json`. Run once with `--trials 100`, its candidate - fast
+10, slow 80, trend 150, Sharpe 0.640 - beat 25 of 100 surrogates and needed 95.
+The README's Results section carries the figures, the command, the commit and
+the hashes. Three limits on reading it: it is ONE run, with one seed and one
+block length, so the ceiling's own sampling error is unmeasured; the run was
+made at commit `e510a28`, and nothing in the artifact records that - the commit
+is known only because the operator's assistant wrote it down; and the 7.5 hours
+it took were on a machine doing other work, so that is not a timing.
 
 **Validation now runs, and the repository's own held-back window is still
 unread.** `strategylab validate state/search-<stamp>.json` walks a search's
