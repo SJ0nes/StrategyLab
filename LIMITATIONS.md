@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty-nine modules have working bodies: `protocol.py`, `windows.py`,
+Forty modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -984,15 +984,17 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and it can trade on the practice account.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has nineteen
-routes. One says it is alive. One reports the protocol version, the access
-counter, the cached prices, the kill switch, whether a venue key is set, and
-each strategy config with its newest search, its rules in words, where it
-came from and whether its rules are confirmed. Three report a strategy's
-history: its searches, one search in full, and its reads of the held-back
-window. One reports the graveyard, and one the jobs it has started. Four change
-something: one remembers that the window's tour has been seen, one records that the operator has read a strategy's rules, one
-starts a job and one asks a running job to stop. No job starts for a strategy
+for a desktop app (`docs/decisions/0014`). It has seventeen
+API routes. Nine read: one says it is alive; one reports the protocol version,
+the access counter, the cached prices, the kill switch, whether a venue key is
+set, and each strategy config with its newest search, its rules in words, where
+it came from and whether its rules are confirmed; three report a strategy's
+history - its searches, one search in full, its reads of the held-back window;
+one the graveyard; one the jobs; one the deployment and its live figures; one
+whether the final exam is unlocked. Eight change something: start a job, take
+the final exam, record that the operator has read a strategy's rules, deploy,
+pause, resume or undeploy (one route), turn stop all on or off, remember that
+the tour has been seen, and ask a running job to stop. No job starts for a strategy
 whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the
 hundred the noise gate needs (`docs/decisions/0017`), the deployed
@@ -1000,9 +1002,8 @@ strategy's daily check, `strategylab run` on its search (`docs/decisions/0019`),
 or the final exam, `strategylab validate` on a search whose luck test passed,
 started through a route of its own with SPEND ONE LOOK typed
 (`docs/decisions/0020`).
-One report and four routes deploy a strategy, pause, resume and undeploy it,
-and turn the app's stop-all switch on and off; while the server runs, a thread
-starts the daily check once a weekday after 17:30 UTC. The server cannot run
+While the server runs, a thread starts the daily check once a weekday after
+17:30 UTC. The server cannot run
 `fetch`. What is worth knowing about it:
 
 - **Its guard was reviewed, not attacked.** Every request must name this machine
@@ -1035,6 +1036,9 @@ starts the daily check once a weekday after 17:30 UTC. The server cannot run
   stop-all switch already on, so no check could start. Its tests start no
   process. The first real daily check is the first time this path runs, and
   everything under "The live half has never run" applies to it.
+- **Bank holidays are weekdays to the scheduler.** It has no exchange
+  calendar, so on a London holiday the daily check still runs and decides
+  on the last bar it has; the one-position rule keeps it from ordering twice.
 - **The app trades only while it is open.** The scheduler is a thread in the
   server. A weekday with the app closed is shown as missed and never made up.
 - **The app finds the practice account in its own environment.** It does not
@@ -1150,16 +1154,16 @@ starts the daily check once a weekday after 17:30 UTC. The server cannot run
   newest artifact naming the strategy is the one reported. It says whether the
   config has changed since, and that is the only link between the two.
 
-**The desktop window starts searches and nothing else, and the part that
-matters most is the part no test runs.** `desktop/` holds an Electron window
-that starts the server and shows four screens of real state - Dashboard,
-Improve, Tests and Backtest; two of its six sections say they are not built.
-Three buttons start a search or a luck test, in the project the window is
-serving: a real one, minutes or about an hour of this machine, behind a dialog
-and a Start button but no typed confirmation. Deploying, the final exam and the
-live check are disabled. Its Backtest screen shows the replay a search recorded
-and can start another search, not a single backtest (`docs/decisions/0016`,
-`0017`). Its page is tested in a simulated browser and its helper for finding
+**The desktop window can change the project and the practice account, and the
+part that matters most is the part no test runs.** `desktop/` holds an Electron
+window that starts the server and draws every section of the mock on real data.
+Its buttons start searches and luck tests (behind a dialog and a Start button),
+confirm a strategy's rules, deploy a strategy (its name typed), pause, resume
+and undeploy it, stop all trading, run the daily check, and take the final exam
+(SPEND ONE LOOK typed). The check of live decisions against the backtest is not
+in the window; `strategylab diff` does it. Its Backtest screen shows the replay
+a search recorded and can start another search, not a single backtest
+(`docs/decisions/0016`, `0017`, `0019`, `0020`). Its page is tested in a simulated browser and its helper for finding
 `uv` is tested directly. The Electron main process is not: starting the server,
 attaching the token to requests, and refusing to navigate anywhere else were
 checked by launching the app twice on Windows and inspecting it. That check
@@ -1168,12 +1172,10 @@ or Node, and no server process left after the window closed - and it is two
 launches on one machine, repeated by nobody else. The window now allows one
 instance of itself and can be pointed at a copy of the project; both were used
 in the check of a job described above, and neither has a test. CI does not build or test anything
-under `desktop/`. The built screens were looked at in the real window at two
-sizes, by the assistant that built them, and differ from the approved mock where
-the mock shows something that does not exist: settings are named as the config
-names them, the luck test is shown only for the version a search put forward,
-and nothing is marked as deployed. The operator has not yet compared them with
-the mock. The simulated-browser tests check words and not layout; one layout
+under `desktop/`. Every screen was compared with the approved mock in the real
+window at two sizes, by the assistant that built them, with a strategy deployed
+on a copy of the project; `desktop/README.md` lists where they differ and why.
+The operator has not yet compared them himself. The simulated-browser tests check words and not layout; one layout
 fault got past them and was found by eye.
 
 **The risk layer is built, and its one caller has never run.** All three parts

@@ -8,7 +8,7 @@ finished app has to match.
 
 ## What is here today
 
-A window that reads. It opens, starts the server, and shows:
+A window onto the whole project. It opens, starts the server, and shows:
 
 - the top bar: a strategy dropdown, whether price data is stored and up to which
   bar, and whether a venue key is set;
@@ -16,7 +16,8 @@ A window that reads. It opens, starts the server, and shows:
 - **Dashboard** - for a draft, as every strategy is: its rules in words, what
   the video it came from said that the config leaves out, and the path to
   deployment - confirm the rules, backtest, luck test, deploy - with a button
-  at the step it has reached. Deploy is disabled;
+  at the step it has reached, ending in Deploy; for the deployed strategy, its
+  live figures (below);
 - **Improve** - the newest search as a grid, one square per version tried, with
   each version's growth line and figures; the versions ruled out across the
   project; and every search on record, including any that could not be read;
@@ -26,7 +27,7 @@ A window that reads. It opens, starts the server, and shows:
   forward. One period only, the one the search covered; `docs/decisions/0016`
   says why.
 
-Trades and Compare say they are not built.
+Trades and Compare are described below.
 
 **Rules are right** on the Dashboard records that the rules on screen were
 read, for the file as it was shown; no search starts until it has been
@@ -83,7 +84,6 @@ are all places where the mock shows something the project does not have:
 
 | Screen | The mock | The window | Why |
 | --- | --- | --- | --- |
-| Top bar | Running light, "Stop all buying", Tour | Draft, prices, venue key | Nothing is deployed; those controls are later work |
 | Improve | "Short" and "long" averages, "Trend filter" | `fast`, `slow`, `trend` | The names are the config's, so another strategy needs no new wording |
 | Improve | A LIVE square and "Against deployed version" | Neither | Nothing is deployed |
 | Improve | "Run the luck test on this version" for any square | No such button; the luck test shows for the starred square only | The luck test runs on the version a search puts forward, not on a chosen one |
@@ -131,7 +131,7 @@ copy is to be trusted as much as whoever made it.
 
 ## Running it
 
-Needs Node 22 or later, and the Python side set up as the top-level README
+Needs Node 22 or later (`package.json` says so under `engines`), and the Python side set up as the top-level README
 describes (`uv` on `PATH`).
 
 ```bash

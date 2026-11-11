@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "description": "Desktop window for StrategyLab. A client of the local server; holds no trading logic.",
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.electron.json",

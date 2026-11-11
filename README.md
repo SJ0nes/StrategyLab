@@ -82,7 +82,7 @@ is what stands between paper and real money.
 | Built | Not built |
 |---|---|
 | Protocol loader and validator | A benchmark in any DECISION — buy-and-hold is reported beside a search and a verdict, and rejects nothing |
-| Price data layer — validation, provenance, parquet cache | A comparison of two searches side by side on one page |
+| Price data layer — validation, provenance, parquet cache | A comparison of two searches of one strategy side by side on one page *(the app's Compare sets two strategies' newest searches side by side)* |
 | Cost model — hand-verified arithmetic | A candidate that clears the noise gate — the committed grid has been run through a hundred-trial ceiling once, and its candidate beat 25 surrogates of the 95 it needed |
 | Strategy-config loader — closed schema, closed vocabulary, and a content hash a search records and a later reader checks | A real verdict to draw — the fold page exists and has only ever rendered a fixture |
 | The noise ceiling — block-resampled surrogates, `--trials`, and a gate: `validate` refuses a candidate that has not cleared it | `diff` reading the backtester's own log — the engine now emits the schema and is tested to agree with the replay, which `diff` still uses |
@@ -99,7 +99,7 @@ is what stands between paper and real money.
 | The Trading 212 adapter — demo or live by explicit choice, no retry, key masked *(tested against a mock transport only)* | |
 | The live worker's decisions and the replay `diff` compares them against | |
 | All eight commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff`, `serve` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
-| A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seven routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, the graveyard and the jobs it has started; one that records the operator's confirmation of a strategy's rules, two that start or stop a job - a search, a search with a hundred-trial noise ceiling, or the deployed strategy's daily check, as a process that outlives the window - and four that deploy, pause, resume, undeploy and stop all trading from the app; a scheduler starts the daily check once a weekday after the close while the app is open *(it runs `run` for the one deployed strategy, on the practice account only, and `validate` - the final exam, one permanent look - only after a passed luck test and the phrase SPEND ONE LOOK typed; never `fetch`)* | |
+| A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seventeen API routes - nine that read (health, the overview, a strategy's searches, one search in full, its final exams, the graveyard, the jobs, the deployment, and whether the final exam is unlocked) and eight that change something (start a job, take the final exam, confirm a strategy's rules, deploy, pause/resume/undeploy, stop all, remember the tour, stop a job); a job - a search, a search with a hundred-trial noise ceiling, the deployed strategy's daily check, or the final exam - runs as a process that outlives the window, and a scheduler starts the daily check once a weekday after the close while the app is open *(it runs `run` for the one deployed strategy, on the practice account only, and `validate` - the final exam, one permanent look - only after a passed luck test and the phrase SPEND ONE LOOK typed; never `fetch`)* | |
 | Strategies from videos — `.claude/skills/import-strategy/` turns a `/watch` of a video into `configs/<name>.yaml` and `configs/<name>.source.json`, using the existing vocabulary only and listing what it left out; the app shows it as a draft with its rules in words and a path to deployment *(the skill has never been run on a real video)* | |
 
 **2463 tests pass** — verify with `uv run pytest`. They cover the protocol
@@ -133,7 +133,7 @@ or a mark-down measured against what is left of an account rather than against
 what it opened at, and an exposure measured the other way round. Two of the three
 closed real holes; the third states a rule another test already covered, and says
 so rather than claiming credit for it.
-The seven CLI commands are tested in a throwaway workspace, up to what each
+Seven of the eight commands are tested in a throwaway workspace (`serve` is tested in `tests/test_api_app.py`), up to what each
 writes and what each refuses, and no further: `fetch` only where it finds a cache
 already there, `run` and `diff` only as far as their refusals, and `validate`
 only where it declines to read the held-back window. The vendor fetch path is tested against a stand-in for the vendor library, which shows what this code asks for and what it does with the answer, and nothing about whether the vendor still answers that way,
@@ -205,7 +205,8 @@ anything, so it is safe to run at any time.
 
 Six further commands do the work. `fetch` and `run` are **the two commands that
 touch the network**, so unlike the others they can fail for reasons outside
-this repository. `search` needs `fetch` to have run; `report` and `validate`
+this repository. `serve`, the seventh, touches it only by starting `run` for a
+deployed strategy's daily check. `search` needs `fetch` to have run; `report` and `validate`
 need `search`; `run` needs a search artifact and a demo key in the environment;
 `diff` needs `run` to have written `state/decisions-live.jsonl`:
 
