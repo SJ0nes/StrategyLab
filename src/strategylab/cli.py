@@ -18,6 +18,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from strategylab.api.jobs import STOPPED_EXIT_CODE, trial_line
 from strategylab.core.config import StrategyConfigError, config_content_hash, load_strategy
 from strategylab.core.strategy import required_history
 from strategylab.data.source import (
@@ -457,13 +458,19 @@ def _say_trial_done(finished: int, total: int) -> None:
     """Print one line as each ceiling trial finishes.
 
     A ceiling runs for hours and used to print nothing until it was over, so
-    there was no telling a run that was working from one that had stopped.
+    there was no telling a run that was working from one that had stopped. The
+    app reads these lines back to show progress, so the wording is
+    :func:`~strategylab.api.jobs.trial_line`'s and not this function's.
 
     Args:
         finished: How many trials have finished.
         total: How many there are.
     """
-    console.print(f"  [dim]surrogate {finished} of {total} done[/dim]")
+    console.print(f"  [dim]{trial_line(finished, total)}[/dim]")
+
+
+class _StopAsked(Exception):
+    """Raised between ceiling trials when the search's stop file has appeared."""
 
 
 @app.command()
@@ -497,6 +504,16 @@ def search(
             ),
         ),
     ] = None,
+    stop_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--stop-file",
+            help=(
+                "Stop without writing a result if this file exists when a ceiling trial "
+                "finishes. How the app asks a long search to stop."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run the parameter grid over the in-sample window and record the whole surface.
 
@@ -511,6 +528,12 @@ def search(
     the command says on every run that nothing it printed is evidence of an
     edge. It renders no HTML either - `strategylab report` does that, from the
     file this writes, so a template change costs no recomputation.
+
+    With `--stop-file`, the file is looked for each time a ceiling trial
+    finishes. If it is there the search ends with exit code 3, having written
+    no result and nothing to the graveyard: a ceiling from fewer trials than
+    were asked for is a different measurement. Trials already running on other
+    processes finish first. A search without `--trials` never looks.
     """
     protocol = _load_or_exit()
 
@@ -564,6 +587,11 @@ def search(
         console.print(f"  [dim]{trials_note(trials)}[/dim]")
         console.print(f"  spread over {min(processes, trials)} process(es).")
 
+    def trial_done(finished: int, total: int) -> None:
+        _say_trial_done(finished, total)
+        if stop_file is not None and stop_file.exists():
+            raise _StopAsked
+
     started = datetime.now(UTC)
     try:
         result = run_search(
@@ -576,8 +604,13 @@ def search(
             noise_trials=trials,
             noise_seed=seed,
             noise_workers=processes,
-            on_noise_trial=_say_trial_done,
+            on_noise_trial=trial_done,
         )
+    except _StopAsked as exc:
+        console.print(
+            f"[yellow]Stopped as asked[/yellow] - {stop_file} exists. No result was written."
+        )
+        raise typer.Exit(code=STOPPED_EXIT_CODE) from exc
     except (SearchError, ValueError) as exc:
         # ValueError as well as SearchError. `run_search` documents that it lets
         # one through for a malformed range, and the noise ceiling raises one

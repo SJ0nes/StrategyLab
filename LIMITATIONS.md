@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty modules have working bodies: `protocol.py`, `windows.py`,
+Thirty-two modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -14,7 +14,8 @@ Thirty modules have working bodies: `protocol.py`, `windows.py`,
 `report/surface.py`, `report/palette.py`, `report/verdict.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`,
+`execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
+`api/job_runner.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
@@ -238,15 +239,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2117 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2233 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-five
+server and what it reports, and the commit-time credential scan — twenty-six
 areas, one per test file.
-520 of the 2117 are the risk layer's,
+520 of the 2233 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -967,21 +968,25 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in twelve
+  `tests/mutation/` now holds a harness and a list of named mutants in thirteen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
   codebase, and it is run by hand - CI does not run it. A mutant list is also
   only as good as the mutants someone thought of.
 
-**There is a server now, and all it can do is read.** `strategylab serve` exists
-for a desktop app that so far only reads (`docs/decisions/0014`). It has six
+**There is a server now, and it can start one kind of work.** `strategylab serve` exists
+for a desktop app (`docs/decisions/0014`). It has six
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
 each strategy config with its newest search. Three report a strategy's
 history: its searches, one search in full, and its reads of the held-back
-window. One reports the graveyard. It starts nothing, writes nothing and places
-nothing. What is worth knowing about it:
+window. One reports the graveyard, and one the jobs it has started. Two change
+something: one starts a job and one asks a running job to stop. A job is
+`strategylab search` on a config in `configs/`, with no trials or with the
+hundred the noise gate needs, and nothing else (`docs/decisions/0017`). The
+server cannot run `validate`, `run` or `fetch`, places no order, and reads no
+held-back bar. What is worth knowing about it:
 
 - **Its guard was reviewed, not attacked.** Every request must name this machine
   in its Host header, carry no foreign Origin, and present a token made for that
@@ -1002,6 +1007,41 @@ nothing. What is worth knowing about it:
   held-back years beside the in-sample ones, and checking its hash means loading
   the file. No held-back bar is used for anything, and the access counter is not
   moved, which is the same thing `status` has always done.
+- **A job was watched surviving the window once, on one machine.** On a copy
+  of the project, a search was started from the real window, the window was
+  closed, and the search ran on, finished, and was on screen when the window
+  was reopened. A luck test was started and asked to stop after three of a
+  hundred trials; it ended as stopped, with no result written, 11 minutes 40
+  seconds after it was asked, on a machine doing other work. No test repeats
+  either: every job test starts no search, and the two that start a process
+  start one that prints a line. Windows only; the POSIX branch of the detached
+  start has never run.
+- **"One job at a time" is a rule the server keeps, not a lock.** It is
+  checked under a lock inside one server. The window allows one instance of
+  itself, but a search started by hand at the command line is never seen, and
+  two servers started by hand could each start a job. Two searches at once
+  would both append to the graveyard, which is not safe for two writers.
+- **Whether a job is running is read from a heartbeat file.** The process that
+  carries the search touches a file every five seconds; sixty seconds of
+  silence and the job is reported lost. If that process is killed and the
+  search it started is not, the search runs on unseen, the app says no result
+  was written, and one may still arrive. A `done` file is believed over a
+  heartbeat, so anyone who can write to `state/jobs/` can free the slot early.
+- **A stopped luck test stops slowly.** The stop is looked for when a trial
+  finishes, and the trials already running on other processes finish first.
+  A plain search cannot be stopped at all.
+- **A job's files are written where its id says, and links are followed.**
+  The stop request refuses to write through a link. The log, the heartbeat
+  and the `done` file do not check, so a link planted in `state/jobs/` under a
+  job's name would send fixed text - search output, an exit code - to wherever
+  it points.
+- **The job code was reviewed, not attacked.** A second assistant read the
+  pending change and probed it on throwaway projects. It found that a job
+  started on a copy of the project would import a Python file planted in that
+  copy, that one long line in a log made every job route fail, and several
+  ways past the one-at-a-time rule; each is fixed and pinned by a test, except
+  the ones listed above as limits. It found no way for a request to start
+  anything but a search, and none past the token.
 - **It reads files it did not write, and was hardened by review, not by
   attack.** Everything under `state/` and `configs/` is treated as possibly
   damaged: a file that is not text, is nested absurdly deep, or holds a number

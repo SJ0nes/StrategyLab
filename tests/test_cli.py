@@ -35,6 +35,7 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
+from strategylab.api.jobs import STOPPED_EXIT_CODE
 from strategylab.cli import app
 from strategylab.core.config import config_content_hash
 from strategylab.data.source import cache_write
@@ -522,3 +523,38 @@ def test_the_workspace_never_touches_this_repository(workspace: Path) -> None:
     """The guard on the guard: these tests must not be able to spend a real read."""
     assert Path.cwd().resolve() == workspace.resolve()
     assert REPOSITORY.resolve() not in (Path.cwd().resolve(), *Path.cwd().resolve().parents)
+
+
+def test_a_search_asked_to_stop_ends_at_the_next_trial_and_writes_nothing(cached: Path) -> None:
+    Path("stop-here").write_text("stop\n", encoding="utf-8")
+
+    code, output = invoke(
+        "search", CONFIG, "--trials", "3", "--workers", "1", "--stop-file", "stop-here"
+    )
+
+    assert code == STOPPED_EXIT_CODE == 3
+    assert "Stopped as asked" in output
+    assert "surrogate 1 of 3 done" in output
+    assert "surrogate 2 of 3 done" not in output
+    assert sorted(Path("state").glob("search-*.json")) == []
+    assert not Path("state/graveyard.jsonl").exists()
+
+
+def test_a_stop_file_that_never_appears_changes_nothing(cached: Path) -> None:
+    code, output = invoke(
+        "search", CONFIG, "--trials", "2", "--workers", "1", "--stop-file", "never-written"
+    )
+
+    assert code == 0
+    assert "Stopped as asked" not in output
+    assert len(sorted(Path("state").glob("search-*.json"))) == 1
+
+
+def test_a_search_without_trials_never_looks_for_its_stop_file(cached: Path) -> None:
+    Path("stop-here").write_text("stop\n", encoding="utf-8")
+
+    code, output = invoke("search", CONFIG, "--stop-file", "stop-here")
+
+    assert code == 0
+    assert "Stopped as asked" not in output
+    assert len(sorted(Path("state").glob("search-*.json"))) == 1

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -44,6 +45,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from strategylab.api.history import list_exams, list_searches, read_graveyard, search_detail
+from strategylab.api.jobs import JOB_KINDS, JobRefused, list_jobs, request_stop, start_job
 from strategylab.api.overview import read_overview
 from strategylab.api.reading import plain_reason
 from strategylab.api.registry import find_strategy
@@ -224,6 +226,30 @@ def create_app(
     @application.get("/api/graveyard")
     def graveyard() -> Any:
         return read_graveyard(root)
+
+    @application.get("/api/jobs")
+    def jobs() -> Any:
+        return list_jobs(root, datetime.now(UTC))
+
+    @application.post("/api/strategies/{strategy_id}/jobs/{kind}")
+    def start(strategy_id: str, kind: str) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        if kind not in JOB_KINDS:
+            return JSONResponse({"detail": "no such kind of job"}, status_code=404)
+        try:
+            job = start_job(root, strategy, kind, datetime.now(UTC))
+        except JobRefused as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return JSONResponse(job, status_code=201)
+
+    @application.post("/api/jobs/{job_id}/stop")
+    def stop(job_id: str) -> Any:
+        try:
+            return request_stop(root, job_id, datetime.now(UTC))
+        except JobRefused as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
 
     if window_files is not None and window_files.is_dir():
         application.mount("/", StaticFiles(directory=window_files, html=True), name="window")
