@@ -157,7 +157,7 @@ export function Dashboard({ strategy, onStart, onChanged }: Props) {
       </div>
 
       <div className="grid2">
-        <div className="card">
+        <div className="card" data-tour="rules">
           <h2>{fromVideo ? "What the video says, as rules" : "Its rules"}</h2>
           <div className="rule">
             <span className="label">Buy when all of these are true</span>
@@ -220,7 +220,7 @@ export function Dashboard({ strategy, onStart, onChanged }: Props) {
           </p>
         </div>
 
-        <div className="card">
+        <div className="card" data-tour="path">
           <h2>Path to deployment</h2>
           <div className="rows">
             {steps.map((step, index) => (

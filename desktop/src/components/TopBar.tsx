@@ -7,6 +7,7 @@ interface Props {
   /** The job that is running, if any. */
   job: Job | null;
   onOpenJob: (kind: JobKind) => void;
+  onTour: () => void;
 }
 
 /** What the running-job button says. */
@@ -24,14 +25,14 @@ export function accountLabel(venue: Overview["venue"]): string {
   return venue.environment === "demo" ? "Practice account" : "Venue not set to practice";
 }
 
-export function TopBar({ overview, strategy, onChoose, job, onOpenJob }: Props) {
+export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour }: Props) {
   const { prices } = overview;
   return (
     <div className="bar">
       <div className="brand">
         STRATEGY<span>LAB</span>
       </div>
-      <div className="pick">
+      <div className="pick" data-tour="pick">
         <label htmlFor="strat">Strategy</label>
         <select
           id="strat"
@@ -61,7 +62,7 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob }: Props) 
             <span className="up">●</span> {jobLabel(job)}
           </button>
         )}
-        <span className="pill" title={prices.available ? `Last bar ${prices.last_bar}` : prices.reason}>
+        <span className="pill" data-tour="prices" title={prices.available ? `Last bar ${prices.last_bar}` : prices.reason}>
           {prices.available ? (
             <>
               <span className="up">●</span> Prices stored to {prices.last_bar}
@@ -73,6 +74,9 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob }: Props) 
           )}
         </span>
         <span className="pill">{accountLabel(overview.venue)}</span>
+        <button type="button" className="btn small" data-tour="help" onClick={onTour}>
+          ▶ Tour
+        </button>
       </div>
     </div>
   );

@@ -47,6 +47,7 @@ const OVERVIEW: Overview = {
     },
   ],
   unreadable_configs: [],
+  tour_seen: true,
 };
 
 function answerWith(body: unknown, status = 200): ReturnType<typeof vi.fn> {

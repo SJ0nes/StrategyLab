@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, type JobKind, type Jobs, type Overview, getJobs, getOverview } from "./api";
+import { ApiError, type JobKind, type Jobs, type Overview, getJobs, getOverview, markTourSeen } from "./api";
 import { JobDialog } from "./components/JobDialog";
+import { Tour, Welcome, confetti } from "./components/Tour";
 import { Nav, SECTIONS, type SectionId } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
 import { Backtest } from "./pages/Backtest";
@@ -36,6 +37,10 @@ export function App() {
   // Counts the changes made from this window that are not jobs: a confirmation.
   const [changed, setChanged] = useState(0);
   const wasRunning = useRef(false);
+  // "welcome" offers the tour, "touring" runs it, null shows neither.
+  const [tour, setTour] = useState<"welcome" | "touring" | null>(null);
+  const offered = useRef(false);
+  const confettiRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     getOverview()
@@ -65,6 +70,28 @@ export function App() {
     const timer = window.setInterval(askJobs, JOB_POLL_MS);
     return () => window.clearInterval(timer);
   }, [askJobs]);
+
+  useEffect(() => {
+    if (load.state === "ready" && !load.overview.tour_seen && !offered.current) {
+      offered.current = true;
+      setTour("welcome");
+    }
+  }, [load]);
+
+  const go = useCallback((target: SectionId) => {
+    window.location.hash = target;
+    setSection(target);
+  }, []);
+
+  const endTour = useCallback((finished: boolean) => {
+    setTour(null);
+    go("dashboard");
+    if (finished) {
+      confetti(confettiRef.current);
+    }
+    // Remembered by the server: the page's own storage is lost with each launch's port.
+    markTourSeen().catch(() => undefined);
+  }, [go]);
 
   useEffect(() => {
     const onHashChange = () => setSection(sectionFromHash(window.location.hash));
@@ -99,6 +126,7 @@ export function App() {
         onChoose={setChosen}
         job={jobs?.current ?? null}
         onOpenJob={setDialog}
+        onTour={() => setTour("touring")}
       />
       <Nav current={section} />
       <main id="scroll">
@@ -135,6 +163,9 @@ export function App() {
           )}
         </div>
       </main>
+      {tour === "welcome" && <Welcome onStart={() => setTour("touring")} onSkip={() => endTour(false)} />}
+      {tour === "touring" && <Tour onGo={go} onEnd={endTour} />}
+      <canvas id="confetti" ref={confettiRef} hidden />
       {dialog !== null && strategy !== undefined && (
         <JobDialog
           strategyId={strategy.id}

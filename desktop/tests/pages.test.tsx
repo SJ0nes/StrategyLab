@@ -116,6 +116,7 @@ const OVERVIEW: Overview = {
   venue: { environment: null, key_present: false },
   strategies: [STRATEGY],
   unreadable_configs: [],
+  tour_seen: true,
 };
 
 /** Answer each request from a table of path to body; an unlisted path is a 404. */

@@ -200,6 +200,7 @@ describe("the app, while a job runs", () => {
       },
     ],
     unreadable_configs: [],
+    tour_seen: true,
   };
 
   afterEach(() => {

@@ -16,7 +16,7 @@ export function Nav({ current }: { current: SectionId }) {
   return (
     <nav aria-label="Sections">
       {GROUPS.map((group) => (
-        <div key={group}>
+        <div key={group} data-tour={group === "Live" ? "live" : "lab"}>
           <div className="grp">{group}</div>
           {SECTIONS.filter((section) => section.group === group).map((section) => (
             <a

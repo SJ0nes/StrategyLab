@@ -100,6 +100,8 @@ export interface Overview {
   venue: { environment: string | null; key_present: boolean };
   strategies: Strategy[];
   unreadable_configs: UnreadableConfig[];
+  /** Whether the tour has been seen or skipped, as the server remembers it. */
+  tour_seen: boolean;
 }
 
 /** A request the server answered with an error, or could not be made at all. */
@@ -288,3 +290,6 @@ export const stopJob = (jobId: string): Promise<Job> => post<Job>(`/api/jobs/${e
  */
 export const confirmStrategy = (id: string, configHash: string): Promise<{ confirmed: boolean }> =>
   post<{ confirmed: boolean }>(`${strategyPath(id)}/confirm`, { config_hash: configHash });
+
+/** Tell the server the tour has been seen or skipped, so it is not offered at the next launch. */
+export const markTourSeen = (): Promise<{ tour_seen: boolean }> => post<{ tour_seen: boolean }>("/api/tour/seen");

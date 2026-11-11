@@ -48,8 +48,12 @@ process: closing the window does not stop it, and the next launch shows where
 it has got to. A luck test can be asked to stop; it ends after the trials in
 hand, writing no result. `docs/decisions/0017` records the design.
 
-Deploying, the final exam and the live check are drawn and disabled. The tour
-is still to come.
+Deploying, the final exam and the live check are drawn and disabled.
+
+The first launch offers the **tour**: a welcome, then seven stops, each lit
+with a spotlight and explained in a sentence, worded for what the app does
+today. *Tour* in the top bar plays it again. The server remembers that it has
+been seen, because the page's own storage is lost with each launch's port.
 
 The window never shows the buy-and-hold comparison. The search records it and
 the server leaves it out (`docs/decisions/0014`).
