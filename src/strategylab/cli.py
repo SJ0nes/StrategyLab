@@ -62,6 +62,7 @@ from strategylab.search.noise import (
     GATE_NO_CANDIDATE,
     GATE_PASSED,
     RELIABLE_TRIALS,
+    default_workers,
     describe_gate,
     trials_note,
 )
@@ -452,6 +453,19 @@ def _repository_relative(path: Path) -> Path:
         return Path(path.name)
 
 
+def _say_trial_done(finished: int, total: int) -> None:
+    """Print one line as each ceiling trial finishes.
+
+    A ceiling runs for hours and used to print nothing until it was over, so
+    there was no telling a run that was working from one that had stopped.
+
+    Args:
+        finished: How many trials have finished.
+        total: How many there are.
+    """
+    console.print(f"  [dim]surrogate {finished} of {total} done[/dim]")
+
+
 @app.command()
 def search(
     config: Annotated[
@@ -472,6 +486,17 @@ def search(
         int,
         typer.Option("--seed", help="Seed for the surrogate resampler, so a ceiling repeats."),
     ] = 0,
+    workers: Annotated[
+        int | None,
+        typer.Option(
+            "--workers",
+            min=1,
+            help=(
+                "Processes to spread the ceiling's trials over. Changes how long it takes "
+                "and not the result. Default: every core but two."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run the parameter grid over the in-sample window and record the whole surface.
 
@@ -522,6 +547,7 @@ def search(
         err_console.print(f"[bold red]search block is not usable[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
+    processes = default_workers() if workers is None else workers
     console.print(
         f"Searching [bold]{definition.name}[/bold] - {cells} cells over "
         f"{protocol.windows.in_sample.start} to {protocol.windows.in_sample.end} ..."
@@ -536,6 +562,7 @@ def search(
             f"{trials + 1} times a plain search."
         )
         console.print(f"  [dim]{trials_note(trials)}[/dim]")
+        console.print(f"  spread over {min(processes, trials)} process(es).")
 
     started = datetime.now(UTC)
     try:
@@ -548,6 +575,8 @@ def search(
             data_content_hash=entry.content_hash,
             noise_trials=trials,
             noise_seed=seed,
+            noise_workers=processes,
+            on_noise_trial=_say_trial_done,
         )
     except (SearchError, ValueError) as exc:
         # ValueError as well as SearchError. `run_search` documents that it lets

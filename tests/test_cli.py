@@ -29,6 +29,7 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -38,6 +39,7 @@ from strategylab.cli import app
 from strategylab.core.config import config_content_hash
 from strategylab.data.source import cache_write
 from strategylab.search.loop import SEARCH_SCHEMA_VERSION
+from strategylab.search.noise import default_workers
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURE_BARS = REPOSITORY / "tests" / "fixtures" / "SPY.parquet"
@@ -274,6 +276,53 @@ def test_search_with_trials_reports_the_gate_and_records_every_trial(cached: Pat
     payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["noise_gate"]["status"] == "undetermined"
     assert len(payload["noise_ceiling"]["trial_best_sharpe"]) == 2
+
+
+@pytest.mark.parametrize(("asked", "used"), [("1", 1), ("2", 2), ("9", 2)])
+def test_search_says_how_many_processes_it_used_and_reports_each_trial(
+    cached: Path, asked: str, used: int
+) -> None:
+    code, output = invoke("search", CONFIG, "--trials", "2", "--workers", asked)
+
+    assert code == 0
+    # Never more processes than trials: nine were asked for and two have work.
+    assert f"spread over {used} process(es)" in output
+    assert "surrogate 1 of 2 done" in output
+    assert "surrogate 2 of 2 done" in output
+
+
+@pytest.mark.parametrize(("flags", "expected"), [(["--workers", "3"], 3), ([], None)])
+def test_search_hands_the_process_count_to_the_search(
+    cached: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], expected: int | None
+) -> None:
+    handed: dict[str, Any] = {}
+
+    def stop_after_recording(*args: Any, **kwargs: Any) -> None:
+        handed.update(kwargs)
+        raise ValueError("stopped by the test once the arguments were seen")
+
+    monkeypatch.setattr("strategylab.cli.run_search", stop_after_recording)
+
+    runner.invoke(app, ["search", CONFIG, "--trials", "2", *flags])
+
+    # With no flag the command asks the machine, and leaves two cores alone.
+    assert handed["noise_workers"] == (default_workers() if expected is None else expected)
+    assert handed["noise_trials"] == 2
+
+
+def test_search_without_a_ceiling_says_nothing_about_processes(cached: Path) -> None:
+    code, output = invoke("search", CONFIG, "--workers", "2")
+
+    assert code == 0
+    assert "process(es)" not in output
+    assert "surrogate" not in output
+
+
+def test_search_refuses_to_run_on_no_processes(cached: Path) -> None:
+    result = runner.invoke(app, ["search", CONFIG, "--trials", "2", "--workers", "0"])
+
+    assert result.exit_code == 2
+    assert not list(Path("state").glob("search-*.json")) if Path("state").exists() else True
 
 
 def test_a_ceiling_the_window_cannot_support_is_a_message_not_a_traceback(cached: Path) -> None:

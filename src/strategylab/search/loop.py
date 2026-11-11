@@ -68,7 +68,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -978,6 +978,8 @@ def run_search(
     starting_equity: float = STARTING_EQUITY,
     noise_trials: int = 0,
     noise_seed: int = 0,
+    noise_workers: int = 1,
+    on_noise_trial: Callable[[int, int], None] | None = None,
 ) -> SearchResult:
     """Backtest every cell of a strategy's grid over the in-sample window and score it.
 
@@ -1066,10 +1068,15 @@ def run_search(
         noise_trials: Surrogate series to run for the noise ceiling. ZERO MEANS
             NO CEILING, which is the default because one trial costs a full
             grid: the committed search takes about four minutes, so a hundred
-            trials is most of a day. A result without a ceiling is not evidence
+            trials is hours of work for one process. A result without a ceiling is not evidence
             of an edge and says so throughout.
         noise_seed: Seed for the surrogate resampler, so a ceiling is
             reproducible.
+        noise_workers: Processes to spread the ceiling's trials over. Changes
+            how long the ceiling takes and not what it is; see
+            :func:`~strategylab.search.noise.noise_ceiling`.
+        on_noise_trial: Called each time a ceiling trial finishes, with how
+            many have finished and how many there are.
 
     Returns:
         The complete result, including the rows of the cells that failed and
@@ -1217,7 +1224,14 @@ def run_search(
     if noise_trials > 0:
         block_bars = block_length_for(definition.search)
         ceiling = noise_ceiling(
-            definition, definition.search, window, protocol.costs, noise_trials, noise_seed
+            definition,
+            definition.search,
+            window,
+            protocol.costs,
+            noise_trials,
+            noise_seed,
+            workers=noise_workers,
+            on_trial=on_noise_trial,
         )
 
     # THE GATE JUDGES THE CELL SELECTION CHOSE, ONCE. A failure is written to

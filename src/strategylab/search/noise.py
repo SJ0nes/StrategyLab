@@ -25,11 +25,20 @@ without understating it, and the trial count is what buys precision in the upper
 tail. The number is the caller's to choose and
 :func:`~strategylab.search.noise.trials_note` states plainly what a given
 choice buys.
+
+THE WORK CAN BE SPREAD, NOT REDUCED. Once the surrogates exist, one trial's grid
+has nothing to do with another's, so :func:`noise_ceiling` can hand them to
+several processes. Every surrogate is drawn first, in trial order, from the one
+generator, in the process that was called - so the number of workers changes how
+long the ceiling takes and nothing about what it is.
 """
 
 from __future__ import annotations
 
 import math
+import os
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +49,10 @@ from strategylab.backtest.engine import run_backtest
 from strategylab.core.types import StrategyDef
 from strategylab.search.grid import expand_grid
 from strategylab.search.surrogate import block_length_for, block_resample
+
+#: Processor cores :func:`default_workers` leaves alone, so a ceiling running
+#: for hours does not take the machine away from whoever is sitting at it.
+SPARE_CORES = 2
 
 #: Trials below which the upper percentiles of the ceiling are too noisy to
 #: compare a winner against.
@@ -250,6 +263,50 @@ def trials_note(n_trials: int) -> str:
     )
 
 
+def default_workers() -> int:
+    """Return how many processes a ceiling uses when the caller does not say.
+
+    Returns:
+        The machine's processor count less :data:`SPARE_CORES`, and never fewer
+        than one. One where the count cannot be read.
+    """
+    return max(1, (os.cpu_count() or 1) - SPARE_CORES)
+
+
+def best_in_grid(
+    definition: StrategyDef,
+    grid: list[dict[str, int]],
+    surrogate: pd.DataFrame,
+    costs: CostModel,
+) -> float:
+    """Run every cell of a grid on one surrogate and return the best Sharpe.
+
+    One trial of :func:`noise_ceiling`. A module-level function because a worker
+    process has to be able to import it.
+
+    Args:
+        definition: The parsed strategy.
+        grid: Every cell to run, as resolved parameters in BARS.
+        surrogate: One surrogate series, in the shape of real bars.
+        costs: Broker parameters, as fractions.
+
+    Returns:
+        The largest annualised Sharpe among the cells that produced one, or
+        ``NaN`` when none did. A cell the engine refuses is skipped, not scored.
+    """
+    scores: list[float] = []
+    for cell in grid:
+        try:
+            result = run_backtest(definition, cell, surrogate, costs)
+        except ValueError:
+            # Cell-level failure on this surrogate. Skipped rather than
+            # scored: a zero here is not a result, it is the absence of one,
+            # and it would pull the maximum around by an arbitrary constant.
+            continue
+        scores.append(result.sharpe)
+    return max(scores) if scores else math.nan
+
+
 def noise_ceiling(
     definition: StrategyDef,
     search_spec: dict[str, dict[str, float]],
@@ -257,6 +314,9 @@ def noise_ceiling(
     costs: CostModel,
     n_trials: int,
     seed: int = 0,
+    *,
+    workers: int = 1,
+    on_trial: Callable[[int, int], None] | None = None,
 ) -> pd.Series:
     """Run the entire grid against surrogate series with no edge, and record the best.
 
@@ -286,6 +346,12 @@ def noise_ceiling(
     depends on every trial before it - the ceiling is reproducible as a whole
     and individual trials are not independently addressable.
 
+    THE WORKER COUNT DOES NOT CHANGE THE RESULT. Every surrogate is drawn here,
+    in trial order, before any grid runs; only the grids are handed out, and
+    each result is filed under its own trial number however late it arrives. So
+    all ``n_trials`` surrogates are held in memory at once, which for daily bars
+    is small beside the frames a single backtest builds.
+
     Reported in every search result.
 
     Args:
@@ -302,6 +368,13 @@ def noise_ceiling(
             :data:`RELIABLE_TRIALS` for what the number buys.
         seed: Seed for the resampler, so the ceiling is reproducible. A ceiling
             that moves between runs cannot be compared against anything.
+        workers: Processes to spread the trials over. One runs everything in
+            the calling process and starts none. Never more are started than
+            there are trials.
+        on_trial: Called in the calling process each time a trial finishes,
+            with how many have finished and ``n_trials``. With several workers
+            the trials finish in no fixed order; the count still rises by one
+            each call.
 
     Returns:
         The distribution of best-in-grid Sharpe across the trials, one value per
@@ -309,8 +382,8 @@ def noise_ceiling(
         so a frame built from several of these says what its columns are.
 
     Raises:
-        ValueError: If ``n_trials`` is not positive, or ``bars`` holds too few
-            rows to block-resample - which includes a block longer than the
+        ValueError: If ``n_trials`` or ``workers`` is not positive, or ``bars``
+            holds too few rows to block-resample - which includes a block longer than the
             available returns, since the block length is derived from the grid
             rather than from the data and a short window cannot serve a long
             lookback. Propagated unchanged from
@@ -321,24 +394,29 @@ def noise_ceiling(
     """
     if n_trials <= 0:
         raise ValueError(f"n_trials is {n_trials}; a ceiling needs at least one surrogate")
+    if workers <= 0:
+        raise ValueError(f"workers is {workers}; a ceiling needs at least one process to run in")
 
     grid = expand_grid(search_spec)
     block_bars = block_length_for(search_spec)
     generator = np.random.default_rng(seed)
+    surrogates = [block_resample(bars, block_bars, generator) for _ in range(n_trials)]
 
-    best: list[float] = []
-    for _ in range(n_trials):
-        surrogate = block_resample(bars, block_bars, generator)
-        scores: list[float] = []
-        for cell in grid:
-            try:
-                result = run_backtest(definition, cell, surrogate, costs)
-            except ValueError:
-                # Cell-level failure on this surrogate. Skipped rather than
-                # scored: a zero here is not a result, it is the absence of one,
-                # and it would pull the maximum around by an arbitrary constant.
-                continue
-            scores.append(result.sharpe)
-        best.append(max(scores) if scores else math.nan)
+    best = [math.nan] * n_trials
+    if workers == 1:
+        for trial, surrogate in enumerate(surrogates):
+            best[trial] = best_in_grid(definition, grid, surrogate, costs)
+            if on_trial is not None:
+                on_trial(trial + 1, n_trials)
+    else:
+        with ProcessPoolExecutor(max_workers=min(workers, n_trials)) as pool:
+            pending = {
+                pool.submit(best_in_grid, definition, grid, surrogate, costs): trial
+                for trial, surrogate in enumerate(surrogates)
+            }
+            for finished, future in enumerate(as_completed(pending), start=1):
+                best[pending[future]] = future.result()
+                if on_trial is not None:
+                    on_trial(finished, n_trials)
 
     return pd.Series(best, index=pd.RangeIndex(n_trials), name="best_in_grid_sharpe")

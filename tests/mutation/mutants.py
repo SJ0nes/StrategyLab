@@ -558,6 +558,113 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             ),
         ],
     ),
+    "parallel_ceiling": (
+        ("tests/test_noise.py", "tests/test_search_loop.py", "tests/test_cli.py"),
+        [
+            (
+                "every surrogate drawn from a fresh generator",
+                "src/strategylab/search/noise.py",
+                "    surrogates = [block_resample(bars, block_bars, generator) for _ in range(n_trials)]",
+                "    surrogates = [block_resample(bars, block_bars, np.random.default_rng(seed)) for _ in range(n_trials)]",
+            ),
+            (
+                "results filed in the order they arrive",
+                "src/strategylab/search/noise.py",
+                "                best[pending[future]] = future.result()",
+                "                best[finished - 1] = future.result()",
+            ),
+            (
+                "more processes started than trials",
+                "src/strategylab/search/noise.py",
+                "ProcessPoolExecutor(max_workers=min(workers, n_trials))",
+                "ProcessPoolExecutor(max_workers=workers)",
+            ),
+            (
+                "one worker still starts a pool",
+                "src/strategylab/search/noise.py",
+                "    if workers == 1:\n        for trial, surrogate in enumerate(surrogates):",
+                "    if workers == 0:\n        for trial, surrogate in enumerate(surrogates):",
+            ),
+            (
+                "several workers never start a pool",
+                "src/strategylab/search/noise.py",
+                "    if workers == 1:\n        for trial, surrogate in enumerate(surrogates):",
+                "    if workers >= 1:\n        for trial, surrogate in enumerate(surrogates):",
+            ),
+            (
+                "no report from a pooled trial",
+                "src/strategylab/search/noise.py",
+                "                if on_trial is not None:\n                    on_trial(finished, n_trials)",
+                "                if on_trial is None:\n                    on_trial(finished, n_trials)",
+            ),
+            (
+                "no report from an in-process trial",
+                "src/strategylab/search/noise.py",
+                "            if on_trial is not None:\n                on_trial(trial + 1, n_trials)",
+                "            if on_trial is None:\n                on_trial(trial + 1, n_trials)",
+            ),
+            (
+                "zero workers accepted",
+                "src/strategylab/search/noise.py",
+                '    if workers <= 0:\n        raise ValueError(f"workers is',
+                '    if workers < 0:\n        raise ValueError(f"workers is',
+            ),
+            (
+                "the default leaves one core free, not two",
+                "src/strategylab/search/noise.py",
+                "    return max(1, (os.cpu_count() or 1) - SPARE_CORES)",
+                "    return max(1, (os.cpu_count() or 1) - 1)",
+            ),
+            (
+                "the default can ask for no processes",
+                "src/strategylab/search/noise.py",
+                "    return max(1, (os.cpu_count() or 1) - SPARE_CORES)",
+                "    return (os.cpu_count() or 1) - SPARE_CORES",
+            ),
+            (
+                "a failed cell scored as zero",
+                "src/strategylab/search/noise.py",
+                "    return max(scores) if scores else math.nan",
+                "    return max(scores) if scores else 0.0",
+            ),
+            (
+                "the search does not pass the worker count on",
+                "src/strategylab/search/loop.py",
+                "            workers=noise_workers,\n",
+                "",
+            ),
+            (
+                "the search does not pass the report on",
+                "src/strategylab/search/loop.py",
+                "            on_trial=on_noise_trial,\n",
+                "",
+            ),
+            (
+                "the command ignores --workers",
+                "src/strategylab/cli.py",
+                "    processes = default_workers() if workers is None else workers",
+                "    processes = default_workers()",
+            ),
+            (
+                "the command does not pass the worker count on",
+                "src/strategylab/cli.py",
+                "            noise_workers=processes,\n",
+                "",
+            ),
+            (
+                "the command prints no progress",
+                "src/strategylab/cli.py",
+                "            on_noise_trial=_say_trial_done,\n",
+                "",
+            ),
+            (
+                "the command claims more processes than it uses",
+                "src/strategylab/cli.py",
+                "spread over {min(processes, trials)} process(es)",
+                "spread over {processes} process(es)",
+            ),
+        ],
+    ),
     "decision_log": (
         ("tests/test_engine.py", "tests/test_worker.py"),
         [

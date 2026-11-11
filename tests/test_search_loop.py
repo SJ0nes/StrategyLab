@@ -71,6 +71,7 @@ from strategylab.backtest.metrics import buy_and_hold
 from strategylab.core.config import load_strategy
 from strategylab.core.types import Condition, IndicatorRef, Side, StrategyDef
 from strategylab.protocol import Instruments, Protocol, Validation, Window, Windows
+from strategylab.search import loop as loop_module
 from strategylab.search.graveyard import REJECTION_REASONS
 from strategylab.search.loop import (
     FAILED_PREFIX,
@@ -1950,6 +1951,62 @@ def test_a_ceiling_that_raises_leaves_the_graveyard_untouched(
         )
 
     assert not graveyard.exists()
+
+
+def test_a_search_records_the_same_ceiling_however_many_processes_ran_it(
+    fixture_bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    def ceiling_with(workers: int, seen: list[tuple[int, int]]) -> list[float]:
+        result = run_search(
+            _small_strategy(),
+            fixture_bars,
+            _wide_protocol(),
+            config_path=Path("configs/small.yaml"),
+            data_content_hash="x",
+            config_content_hash="y",
+            graveyard_path=tmp_path / f"graveyard-{workers}.jsonl",
+            noise_trials=3,
+            noise_seed=5,
+            noise_workers=workers,
+            on_noise_trial=lambda finished, total: seen.append((finished, total)),
+        )
+        assert result.noise_ceiling is not None
+        return list(result.noise_ceiling)
+
+    alone: list[tuple[int, int]] = []
+    shared: list[tuple[int, int]] = []
+
+    assert ceiling_with(1, alone) == ceiling_with(2, shared)
+    assert alone == shared == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_a_search_hands_its_process_count_to_the_ceiling(
+    fixture_bars: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The count cannot be seen in the result - that is the point of it - so the
+    # only way to know the search passed it on is to watch the call.
+    handed: dict[str, Any] = {}
+    real = loop_module.noise_ceiling
+
+    def watching(*args: Any, **kwargs: Any) -> pd.Series:
+        handed.update(kwargs)
+        return real(*args, **{**kwargs, "workers": 1})
+
+    monkeypatch.setattr(loop_module, "noise_ceiling", watching)
+
+    run_search(
+        _small_strategy(),
+        fixture_bars,
+        _wide_protocol(),
+        config_path=Path("configs/small.yaml"),
+        data_content_hash="x",
+        config_content_hash="y",
+        graveyard_path=tmp_path / "graveyard.jsonl",
+        noise_trials=2,
+        noise_workers=5,
+    )
+
+    assert handed["workers"] == 5
 
 
 def test_the_same_search_without_a_ceiling_does_write_its_rejections(

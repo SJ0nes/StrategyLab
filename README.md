@@ -100,7 +100,7 @@ is what stands between paper and real money.
 | The live worker's decisions and the replay `diff` compares them against | |
 | All seven commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 
-**1891 tests pass** — verify with `uv run pytest`. They cover the protocol
+**1921 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -109,7 +109,7 @@ reader, the decision log, the risk layer, the Trading 212 adapter, the live
 worker, the command-line wiring and the commit-time credential scan in
 `.claude/hooks/` — twenty-two areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
 `uv run python tests/mutation/run.py` breaks the code in named ways, one at a
-time, and fails if the tests stay green; it covers nine areas of recent work,
+time, and fails if the tests stay green; it covers ten areas of recent work,
 not the whole codebase, and CI does not run it.
 520 of them are the risk layer's, which is a statement about parameterisation
 rather than about size. Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. Of the 486 before
@@ -186,13 +186,13 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**1891 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**1921 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 1891 tests, none touching the network
+uv run pytest                   # 1921 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
@@ -266,7 +266,9 @@ failure as shuffling arriving more quietly
 ([docs/decisions/0008](docs/decisions/0008-surrogate-block-length.md)).
 
 It is **off by default** because one trial costs a full grid: the committed
-search takes about four minutes, so a hundred trials is on the order of seven hours. A search
+search takes about four minutes, so a hundred trials is hours of work. `--workers`
+spreads the trials over several processes without changing the result; see
+Results for the one pair of timings there is. A search
 run without it says on every line of output that nothing it printed is evidence
 of an edge. That default diverges from a rule `CLAUDE.md` calls non-negotiable,
 and the divergence is argued out in
@@ -360,6 +362,14 @@ written before this result existed. Widening the grid, changing the block
 length, or re-running with another seed until the candidate clears the gate
 would be the selection the gate exists to prevent. `access_log.walk_forward_touches`
 still reads 0.
+
+**It was run twice, and the second run is the same hundred numbers.** The first
+used one process and took 7 hours 31 minutes. After the ceiling learned to spread
+its trials over processes, the same command was run again on fourteen and took
+49 minutes; every one of the hundred trial values, the candidate, the gate and
+all ninety cells came out identical to the first run's. Both timings were taken
+on a desktop that was doing other work, so they say "hours became under an hour
+here" and are not a benchmark.
 
 `state/` and `reports/` are gitignored, so the artifact and its page are local
 to whoever runs the commands. The figures above were copied from the command's

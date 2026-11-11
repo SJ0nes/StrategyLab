@@ -25,8 +25,10 @@ its ceiling. No such comparison exists in this repository.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import Future
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -46,6 +48,8 @@ from strategylab.search.noise import (
     GATE_UNDETERMINED,
     RELIABLE_TRIALS,
     NoiseGate,
+    best_in_grid,
+    default_workers,
     describe_gate,
     evaluate_gate,
     noise_ceiling,
@@ -395,6 +399,158 @@ def test_the_ceiling_is_above_zero(bars: pd.DataFrame) -> None:
     # zero, the comparison it feeds would be meaningless.
     ceiling = noise_ceiling(_strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=5, seed=3)
     assert ceiling.max() > 0.0
+
+
+# --------------------------------------------------------------------------
+# The ceiling across processes: slower or faster, never different.
+# --------------------------------------------------------------------------
+
+
+def _ceiling_the_plain_way(frame: pd.DataFrame, n_trials: int, seed: int) -> list[float]:
+    """The ceiling as one loop: draw a surrogate, run the grid on it, repeat.
+
+    Written out here rather than imported so that it cannot change when the
+    module does. It is the order of work the first version of the ceiling used
+    and the published result was produced by.
+    """
+    grid = expand_grid(TINY_SPEC)
+    generator = np.random.default_rng(seed)
+    best = []
+    for _ in range(n_trials):
+        surrogate = block_resample(frame, block_length_for(TINY_SPEC), generator)
+        best.append(best_in_grid(_strategy(), grid, surrogate, TEST_COSTS))
+    return best
+
+
+@pytest.mark.parametrize("workers", [1, 2, 3])
+def test_the_ceiling_is_the_same_however_many_processes_run_it(
+    bars: pd.DataFrame, workers: int
+) -> None:
+    ceiling = noise_ceiling(
+        _strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=4, seed=7, workers=workers
+    )
+
+    assert list(ceiling) == _ceiling_the_plain_way(bars, n_trials=4, seed=7)
+
+
+def test_the_trials_of_a_ceiling_differ_so_their_order_can_be_told(bars: pd.DataFrame) -> None:
+    # The control for the test above. Were every trial the same number, a
+    # ceiling that filed results in the order they arrived would pass it.
+    assert len(set(_ceiling_the_plain_way(bars, n_trials=4, seed=7))) == 4
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_each_finished_trial_is_reported_once_and_counted_up(
+    bars: pd.DataFrame, workers: int
+) -> None:
+    seen: list[tuple[int, int]] = []
+
+    noise_ceiling(
+        _strategy(),
+        TINY_SPEC,
+        bars,
+        TEST_COSTS,
+        n_trials=3,
+        workers=workers,
+        on_trial=lambda finished, total: seen.append((finished, total)),
+    )
+
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
+class _PoolInThisProcess:
+    """Stands in for the process pool: runs each job at once, where it was handed over.
+
+    Records how many workers were asked for. With it in place a test can also
+    decide the order results come back in, which real processes do not allow.
+    """
+
+    asked_for: ClassVar[list[int]] = []
+
+    def __init__(self, max_workers: int) -> None:
+        type(self).asked_for.append(max_workers)
+
+    def __enter__(self) -> _PoolInThisProcess:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def submit(self, job: Callable[..., float], *args: Any) -> Future[float]:
+        future: Future[float] = Future()
+        future.set_result(job(*args))
+        return future
+
+
+@pytest.fixture
+def pool(monkeypatch: pytest.MonkeyPatch) -> type[_PoolInThisProcess]:
+    _PoolInThisProcess.asked_for = []
+    monkeypatch.setattr("strategylab.search.noise.ProcessPoolExecutor", _PoolInThisProcess)
+    return _PoolInThisProcess
+
+
+def test_results_that_come_back_last_first_are_still_filed_by_trial(
+    bars: pd.DataFrame, pool: type[_PoolInThisProcess], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "strategylab.search.noise.as_completed", lambda pending: reversed(list(pending))
+    )
+    seen: list[tuple[int, int]] = []
+
+    ceiling = noise_ceiling(
+        _strategy(),
+        TINY_SPEC,
+        bars,
+        TEST_COSTS,
+        n_trials=4,
+        seed=7,
+        workers=2,
+        on_trial=lambda finished, total: seen.append((finished, total)),
+    )
+
+    assert list(ceiling) == _ceiling_the_plain_way(bars, n_trials=4, seed=7)
+    assert seen == [(1, 4), (2, 4), (3, 4), (4, 4)]
+
+
+@pytest.mark.parametrize(("workers", "started"), [(2, 2), (3, 3), (4, 3), (16, 3)])
+def test_no_more_processes_are_started_than_there_are_trials(
+    bars: pd.DataFrame, pool: type[_PoolInThisProcess], workers: int, started: int
+) -> None:
+    noise_ceiling(_strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=3, workers=workers)
+
+    assert pool.asked_for == [started]
+
+
+def test_one_worker_starts_no_pool_at_all(
+    bars: pd.DataFrame, pool: type[_PoolInThisProcess]
+) -> None:
+    noise_ceiling(_strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=3, workers=1)
+
+    assert pool.asked_for == []
+
+
+@pytest.mark.parametrize("workers", [0, -1])
+def test_a_ceiling_needs_at_least_one_process(bars: pd.DataFrame, workers: int) -> None:
+    with pytest.raises(ValueError, match="at least one process"):
+        noise_ceiling(_strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=1, workers=workers)
+
+
+@pytest.mark.parametrize(
+    ("cores", "expected"), [(16, 14), (8, 6), (3, 1), (2, 1), (1, 1), (None, 1)]
+)
+def test_the_default_leaves_two_cores_free_and_never_asks_for_none(
+    monkeypatch: pytest.MonkeyPatch, cores: int | None, expected: int
+) -> None:
+    monkeypatch.setattr("strategylab.search.noise.os.cpu_count", lambda: cores)
+
+    assert default_workers() == expected
+
+
+def test_a_trial_where_every_cell_fails_is_not_a_number() -> None:
+    # Ten bars cannot warm up any cell of the grid, so the engine refuses each.
+    short = _regime_bars(periods=10)
+
+    assert np.isnan(best_in_grid(_strategy(), expand_grid(TINY_SPEC), short, TEST_COSTS))
 
 
 def test_a_warm_up_can_never_be_the_thing_that_empties_a_trial() -> None:

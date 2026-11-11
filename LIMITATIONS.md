@@ -237,14 +237,14 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-1891 tests pass (`uv run pytest`). They cover the protocol loader, the window
+1921 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring and the
 commit-time credential scan — twenty-two areas, one per test file.
-520 of the 1891 are the risk layer's,
+520 of the 1921 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -846,10 +846,24 @@ will find small differences.
 by the trial count.** Measured: `time uv run strategylab search
 configs/ma_crossover.yaml` took 4m02s for ninety cells over 3,523 bars on the
 machine it was run on. `--trials N` costs `N + 1` grids, so a hundred trials is
-on the order of seven hours. The choice was to keep the ceiling exact and make
+on the order of seven hours of work. The choice was to keep the ceiling exact and make
 the cost explicit — the command prints the estimate before starting — rather
 than shrink the surrogate grid, which would understate the ceiling, since the
 ceiling is a property of how many combinations were tried.
+
+**The ceiling's trials can run side by side, and that has been timed exactly
+once.** `--workers N` hands the trials to N processes; the default is every core
+but two. The surrogates are all drawn first, in order, from the one seed, so the
+result does not depend on N - a test asserts the ceiling is identical on one,
+two and three processes against a plain loop written out in the test, and the
+committed hundred-trial run was repeated on fourteen with every trial value
+unchanged. What is thin is the timing: 7h31m on one process and 49m on
+fourteen, one run each, on a desktop doing other work both times. That is a
+ratio of about nine on a sixteen-thread machine and nothing more general. Three
+costs come with it. All the surrogates are held in memory at once instead of
+one at a time. The real grid - the one pass that is not a trial - still runs on
+one process. And no test starts more than three real processes, so the
+fourteen-process case is covered by that one run and not by the suite.
 
 The engine's cost was measured rather than assumed, and an earlier version of
 this entry got the reason wrong. It said the engine "re-derives the moving
@@ -951,7 +965,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in nine
+  `tests/mutation/` now holds a harness and a list of named mutants in ten
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
