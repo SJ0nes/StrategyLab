@@ -39,5 +39,9 @@ here, checked side by side, including what each control opens.
 The prototype uses plain names for the project's terms: "luck test" for the
 noise ceiling, "final exam" for walk-forward validation on the held-back
 window, "looks at unseen years" for `access_log.walk_forward_touches`, "loss
-lock" for the daily-loss latch, "stop-all switch" for the kill switch, "ruled
-out" for the graveyard.
+lock" for the daily-loss latch, "ruled out" for the graveyard.
+
+One name does not map cleanly. The mock's "stop all buying" control says selling
+stays allowed. The project's kill switch refuses every order, exits included.
+`docs/decisions/0015` lists which of the two the control should be as an open
+question.
