@@ -77,7 +77,8 @@ the server leaves it out (`docs/decisions/0014`).
 ## Where the built screens differ from the mock
 
 Compared side by side with `docs/prototype/index.html` at 2560x1440 and
-1366x768. The layout, type, colours and chart are the mock's. The differences
+1366x768, every screen, last on 2026-11-11 with a strategy deployed on a copy of
+the project. The layout, type, colours and chart are the mock's. The differences
 are all places where the mock shows something the project does not have:
 
 | Screen | The mock | The window | Why |
@@ -92,6 +93,10 @@ are all places where the mock shows something the project does not have:
 | Backtest | "Run backtest" runs one backtest | It runs a search, the same as "Search again" | A search is the grid of backtests; the project has no single-backtest command (`docs/decisions/0017`) |
 | Improve | A sped-up progress bar | A bar that moves only for a luck test, one step per finished trial | A plain search reports nothing until it ends |
 | Tests | Rows for single backtests and live-against-backtest checks | Rows for searches and final exams only | Those are the tests the project keeps on record |
+| Dashboard, deployed | Win rate; price and result per trade | Orders sent, and no result per trade | Fill prices are not recorded |
+| Dashboard, deployed | Loss today and money in the market as gauges against the limits | The loss lock and the stop-all state | The account log holds equity, not the day's loss or exposure as the risk layer worked them |
+| Dashboard, deployed | 1M / 3M / All on the account chart; a Recent tests card | One range; Recent decisions instead | A few weeks of checks need no range; tests are on Tests |
+| Top bar | "Stop all buying… selling still allowed" | "Stop all trading" | The risk layer cannot block buying alone, and the app may not add that to it (`docs/decisions/0019`) |
 | Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | One strategy is deployed at a time (`docs/decisions/0019`) |
 
 ## Trying it on a copy
