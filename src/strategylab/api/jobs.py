@@ -56,6 +56,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from strategylab.api.drafts import confirmation
 from strategylab.api.reading import (
     Unreadable,
     count_or_none,
@@ -174,8 +175,10 @@ def command_for(record: dict[str, Any], root: Path) -> list[str]:
 
     Raises:
         JobRefused: If the record's kind is not in :data:`JOB_KINDS`, its id is
-            not a job id, or its strategy is not one the registry holds. The
-            config path is taken from the registry, never from the record.
+            not a job id, its strategy is not one the registry holds, or the
+            strategy's file no longer has the content hash recorded when the
+            job was started - the one whose rules were confirmed. The config
+            path is taken from the registry, never from the record.
     """
     kind = text_or_none(record.get("kind"))
     job_id = text_or_none(record.get("id"))
@@ -187,6 +190,8 @@ def command_for(record: dict[str, Any], root: Path) -> list[str]:
     strategy = None if strategy_id is None else find_strategy(root, strategy_id)
     if strategy is None:
         raise JobRefused("the job's strategy is not in configs/")
+    if record.get("config_hash") != strategy.config_hash:
+        raise JobRefused("the strategy file has changed since the job was started")
     return [
         sys.executable,
         "-P",
@@ -454,12 +459,18 @@ def start_job(
         The job, as :func:`read_job` reports it.
 
     Raises:
-        JobRefused: If ``kind`` is not in :data:`JOB_KINDS`, or a job is
-            already running - the message names it - or the runner cannot be
-            started.
+        JobRefused: If ``kind`` is not in :data:`JOB_KINDS`, the strategy's
+            rules are not confirmed for its file as it is now
+            (``docs/decisions/0018``), a job is already running - the message
+            names it - or the runner cannot be started.
     """
     if kind not in JOB_KINDS:
         raise JobRefused("that is not a kind of job this app runs")
+    if not confirmation(root, strategy)["confirmed"]:
+        raise JobRefused(
+            "the strategy's rules have not been confirmed for the file as it is now; "
+            "read them on its Dashboard first"
+        )
     stamp = now.astimezone(UTC)
     job_id = f"{stamp:%Y%m%dT%H%M%SZ}-{kind}"
     directory = root / JOBS_DIR
@@ -478,6 +489,7 @@ def start_job(
             "strategy": strategy.name,
             "strategy_id": strategy.id,
             "config": strategy.config,
+            "config_hash": strategy.config_hash,
             "trials": JOB_KINDS[kind],
             "started_at": stamp.isoformat(),
         }

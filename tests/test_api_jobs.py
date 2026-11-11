@@ -27,6 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from strategylab.api.app import MIN_TOKEN_CHARS, create_app
+from strategylab.api.drafts import confirm
 from strategylab.api.job_runner import COULD_NOT_RUN, _beat, run_job
 from strategylab.api.jobs import (
     JOB_KINDS,
@@ -48,6 +49,7 @@ from strategylab.api.jobs import (
     trial_line,
 )
 from strategylab.api.registry import StrategyFile, find_strategy
+from strategylab.core.config import config_content_hash
 from strategylab.search.noise import RELIABLE_TRIALS
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -63,6 +65,9 @@ STAMP = f"{NOW:%Y%m%dT%H%M%SZ}"
 SEARCH_ID = f"{STAMP}-search"
 LUCK_ID = f"{STAMP}-luck_test"
 
+#: Content hash of the committed strategy, which every test project copies.
+MA_HASH = config_content_hash(REPOSITORY / "configs" / "ma_crossover.yaml")
+
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
@@ -76,8 +81,10 @@ def project(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def strategy(project: Path) -> StrategyFile:
+    """The committed strategy, its rules confirmed, as a job may only start for one."""
     found = find_strategy(project, "ma_crossover")
     assert found is not None
+    confirm(project, found, found.config_hash, NOW)
     return found
 
 
@@ -148,7 +155,7 @@ def test_the_command_is_built_from_the_kind_and_the_registry(
     project: Path, kind: str, trials: str
 ) -> None:
     job_id = f"{STAMP}-{kind}"
-    record = {"id": job_id, "kind": kind, "strategy_id": "ma_crossover"}
+    record = {"id": job_id, "kind": kind, "strategy_id": "ma_crossover", "config_hash": MA_HASH}
 
     assert command_for(record, project) == [
         sys.executable,
@@ -167,7 +174,12 @@ def test_the_command_is_built_from_the_kind_and_the_registry(
 def test_nothing_a_record_says_about_the_config_or_the_trials_reaches_the_command(
     project: Path,
 ) -> None:
-    honest = {"id": SEARCH_ID, "kind": "search", "strategy_id": "ma_crossover"}
+    honest = {
+        "id": SEARCH_ID,
+        "kind": "search",
+        "strategy_id": "ma_crossover",
+        "config_hash": MA_HASH,
+    }
     doctored = {**honest, "config": "../elsewhere.yaml", "trials": 1, "command": ["validate"]}
 
     assert command_for(doctored, project) == command_for(honest, project)
@@ -574,7 +586,12 @@ def test_the_runner_runs_the_registrys_command_and_records_how_it_ended(
 
     returned = run_job(project, LUCK_ID, run, interval=0.01)
 
-    record = {"id": LUCK_ID, "kind": "luck_test", "strategy_id": "ma_crossover"}
+    record = {
+        "id": LUCK_ID,
+        "kind": "luck_test",
+        "strategy_id": "ma_crossover",
+        "config_hash": MA_HASH,
+    }
     assert ran == [(command_for(record, project), project)]
     assert returned == code
     done = json.loads((project / JOBS_DIR / f"{LUCK_ID}.done").read_text(encoding="utf-8"))
@@ -678,7 +695,7 @@ def spawned(monkeypatch: pytest.MonkeyPatch) -> Spawned:
 
 
 @pytest.fixture
-def client(project: Path, spawned: Spawned) -> TestClient:
+def client(project: Path, strategy: StrategyFile, spawned: Spawned) -> TestClient:
     return TestClient(create_app(project, TOKEN, {}), base_url="http://127.0.0.1")
 
 
@@ -717,7 +734,7 @@ def test_no_route_starts_anything_but_a_listed_kind(
 
     assert answer.status_code == 404
     assert spawned.calls == []
-    assert not (project / "state").exists()
+    assert not (project / JOBS_DIR).exists()
 
 
 def test_a_strategy_that_is_not_listed_starts_nothing(client: TestClient, spawned: Spawned) -> None:
@@ -746,7 +763,7 @@ def test_nothing_is_started_or_stopped_without_the_token_from_this_machine(
 
     assert answer.status_code in (401, 403)
     assert spawned.calls == []
-    assert not (project / "state").exists()
+    assert not (project / JOBS_DIR).exists()
 
 
 def test_a_job_cannot_be_started_with_a_get(client: TestClient, spawned: Spawned) -> None:
@@ -779,7 +796,12 @@ def test_every_command_tells_python_not_to_import_from_where_it_runs(
 ) -> None:
     spawn = Spawned()
     start_job(project, strategy, "search", NOW, spawn=spawn)
-    record = {"id": SEARCH_ID, "kind": "search", "strategy_id": "ma_crossover"}
+    record = {
+        "id": SEARCH_ID,
+        "kind": "search",
+        "strategy_id": "ma_crossover",
+        "config_hash": MA_HASH,
+    }
 
     assert spawn.calls[0][0][1] == "-P"
     assert command_for(record, project)[1] == "-P"
@@ -938,7 +960,13 @@ def test_a_job_id_with_anything_after_it_is_not_a_job_id(
     assert read_job(project, LUCK_ID + suffix, NOW) is None
     with pytest.raises(JobRefused):
         command_for(
-            {"id": LUCK_ID + suffix, "kind": "luck_test", "strategy_id": "ma_crossover"}, project
+            {
+                "id": LUCK_ID + suffix,
+                "kind": "luck_test",
+                "strategy_id": "ma_crossover",
+                "config_hash": MA_HASH,
+            },
+            project,
         )
 
 
@@ -955,7 +983,6 @@ def test_a_stop_file_that_cannot_be_written_is_a_refusal_not_an_error(
 def test_a_jobs_folder_that_cannot_be_made_is_a_refusal_not_an_error(
     project: Path, strategy: StrategyFile
 ) -> None:
-    (project / "state").mkdir()
     (project / JOBS_DIR).write_text("in the way", encoding="utf-8")
     spawn = Spawned()
 
@@ -1006,8 +1033,40 @@ def test_an_id_written_to_climb_out_of_the_jobs_folder_reads_nothing(project: Pa
     # path that reaches it. Only the shape of the id stands in the way.
     (project / JOBS_DIR).mkdir(parents=True)
     climbing = "../../outside"
-    record = {"schema_version": 1, "id": climbing, "kind": "search", "strategy_id": "ma_crossover"}
+    record = {
+        "schema_version": 1,
+        "id": climbing,
+        "kind": "search",
+        "strategy_id": "ma_crossover",
+        "config_hash": MA_HASH,
+    }
     (project / "outside.json").write_text(json.dumps(record), encoding="utf-8")
     assert (project / JOBS_DIR / f"{climbing}.json").exists()
 
     assert read_job(project, climbing, NOW) is None
+
+
+def test_the_runner_refuses_a_job_whose_strategy_file_changed_after_it_started(
+    project: Path, strategy: StrategyFile
+) -> None:
+    _start(project, strategy, "search")
+    path = project / "configs" / "ma_crossover.yaml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("max: 30", "max: 25"), encoding="utf-8"
+    )
+    ran: list[list[str]] = []
+
+    returned = run_job(project, SEARCH_ID, lambda command, root: ran.append(command) or 0)
+
+    assert ran == []
+    assert returned == COULD_NOT_RUN
+
+
+def test_a_job_record_names_the_content_it_was_started_for(
+    project: Path, strategy: StrategyFile
+) -> None:
+    _start(project, strategy, "search")
+
+    record = json.loads((project / JOBS_DIR / f"{SEARCH_ID}.json").read_text(encoding="utf-8"))
+
+    assert record["config_hash"] == strategy.config_hash == MA_HASH

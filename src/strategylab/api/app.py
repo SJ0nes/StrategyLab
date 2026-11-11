@@ -41,9 +41,11 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from strategylab.api.drafts import StaleConfirmation, confirm
 from strategylab.api.history import list_exams, list_searches, read_graveyard, search_detail
 from strategylab.api.jobs import JOB_KINDS, JobRefused, list_jobs, request_stop, start_job
 from strategylab.api.overview import read_overview
@@ -156,6 +158,12 @@ class LocalOnly:
         await self.app(scope, receive, send_with_headers)
 
 
+class Shown(BaseModel):
+    """What a confirmation request carries: the config hash the rules were shown for."""
+
+    config_hash: str = Field(min_length=64, max_length=64)
+
+
 def create_app(
     root: Path,
     token: str,
@@ -243,6 +251,20 @@ def create_app(
         except JobRefused as exc:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         return JSONResponse(job, status_code=201)
+
+    @application.post("/api/strategies/{strategy_id}/confirm")
+    def confirm_rules(strategy_id: str, shown: Shown) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        try:
+            return confirm(root, strategy, shown.config_hash, datetime.now(UTC))
+        except StaleConfirmation as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        except OSError:
+            return JSONResponse(
+                {"detail": "the confirmation could not be recorded"}, status_code=500
+            )
 
     @application.post("/api/jobs/{job_id}/stop")
     def stop(job_id: str) -> Any:

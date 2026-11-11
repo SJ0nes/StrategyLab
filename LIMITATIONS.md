@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty-two modules have working bodies: `protocol.py`, `windows.py`,
+Thirty-four modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -15,7 +15,7 @@ Thirty-two modules have working bodies: `protocol.py`, `windows.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
 `execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
-`api/job_runner.py`,
+`api/job_runner.py`, `api/rules.py`, `api/drafts.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
@@ -239,15 +239,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2233 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2304 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-six
+server and what it reports, and the commit-time credential scan — twenty-seven
 areas, one per test file.
-520 of the 2233 are the risk layer's,
+520 of the 2304 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -968,7 +968,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in thirteen
+  `tests/mutation/` now holds a harness and a list of named mutants in fourteen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
@@ -976,13 +976,16 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and it can start one kind of work.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has six
+for a desktop app (`docs/decisions/0014`). It has ten
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
-each strategy config with its newest search. Three report a strategy's
+each strategy config with its newest search, its rules in words, where it
+came from and whether its rules are confirmed. Three report a strategy's
 history: its searches, one search in full, and its reads of the held-back
-window. One reports the graveyard, and one the jobs it has started. Two change
-something: one starts a job and one asks a running job to stop. A job is
+window. One reports the graveyard, and one the jobs it has started. Three change
+something: one records that the operator has read a strategy's rules, one
+starts a job and one asks a running job to stop. No job starts for a strategy
+whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the
 hundred the noise gate needs, and nothing else (`docs/decisions/0017`). The
 server cannot run `validate`, `run` or `fetch`, places no order, and reads no
@@ -1007,6 +1010,28 @@ held-back bar. What is worth knowing about it:
   held-back years beside the in-sample ones, and checking its hash means loading
   the file. No held-back bar is used for anything, and the access counter is not
   moved, which is the same thing `status` has always done.
+- **A confirmation says a button was pressed, not that rules were compared.**
+  The page sends the content hash of the file it showed the rules for, and the
+  server refuses if the file has changed since; an edit to the config or to its
+  source file afterwards undoes the confirmation, and the job records the hash
+  it was started for and will not run a changed file. Nothing can say whether
+  the operator read the rules against the video. Confirmations live in
+  `state/`, so a fresh clone has none and the committed strategy must be
+  confirmed once before the app will search it.
+- **The import skill has never been run on a real video.** Its two checking
+  commands were run by hand on a scratch copy holding a strategy written for
+  the purpose. Everything else in it is instructions to an assistant, and an
+  assistant reading a video can misread it; the draft page says so. A review
+  found the first version of the skill would have pasted a name from the
+  video into a shell command and could have overwritten
+  `configs/risk_limits.yaml`. The skill now has the name checked against a
+  pattern and passed as an argument, refuses existing files and the risk
+  file's name, caps the grid, and says the video is data, not instructions.
+  Those are rules for an assistant to follow, not code that enforces them.
+- **Nothing caps a grid's size in code.** The loader accepts a search of any
+  size; the app counts one without building it, so the first screen does not
+  stall, but a search of a vast grid started from the app would run for as
+  long as it takes. The import skill caps its own grids at 200 versions.
 - **A job was watched surviving the window once, on one machine.** On a copy
   of the project, a search was started from the real window, the window was
   closed, and the search ran on, finished, and was on screen when the window

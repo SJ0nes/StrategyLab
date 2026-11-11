@@ -6,8 +6,8 @@ extension. Nothing is copied and nothing is stored beside the file, so there
 is no second record that can disagree with it.
 
 EVERY STRATEGY IS A DRAFT, because nothing in this project can deploy one yet.
-When deploying exists, the state it sets will need a file of its own; until
-then a state file would record a thing that cannot change.
+What else is known about a draft - where it came from, whether its rules have
+been confirmed - is in :mod:`strategylab.api.drafts`.
 
 AN ID FROM A REQUEST IS LOOKED UP, NEVER OPENED. :func:`find_strategy` compares
 the id against the ids of the files that are there. It builds no path from it,
@@ -21,6 +21,7 @@ from pathlib import Path
 
 from strategylab.api.reading import plain_reason
 from strategylab.core.config import StrategyConfigError, config_content_hash, load_strategy
+from strategylab.core.types import StrategyDef
 
 #: Where strategy configs live, relative to the project root.
 CONFIGS_DIR = Path("configs")
@@ -44,6 +45,7 @@ class StrategyFile:
         config: The file's path relative to the project root, with forward
             slashes.
         config_hash: Content hash of the config as it is now.
+        definition: The config as the loader read it.
     """
 
     id: str
@@ -51,6 +53,7 @@ class StrategyFile:
     description: str
     config: str
     config_hash: str
+    definition: StrategyDef
 
 
 def list_strategies(root: Path) -> tuple[list[StrategyFile], list[dict[str, str]]]:
@@ -105,6 +108,7 @@ def list_strategies(root: Path) -> tuple[list[StrategyFile], list[dict[str, str]
                 description=" ".join(definition.description.split()),
                 config=relative.as_posix(),
                 config_hash=config_hash,
+                definition=definition,
             )
         )
     return loaded, refused

@@ -25,9 +25,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from strategylab.api.drafts import confirmation, read_source
 from strategylab.api.history import latest_search
 from strategylab.api.reading import missing, plain_reason
 from strategylab.api.registry import LIMITS_FILE, list_strategies
+from strategylab.api.rules import describe
 from strategylab.data.source import DataQualityError, cache_read
 from strategylab.protocol import Protocol, load_protocol
 from strategylab.risk.limits import load_limits
@@ -97,7 +99,11 @@ def read_overview(root: Path, environ: Mapping[str, str]) -> dict[str, Any]:
         held-back window has been read, the cached prices, the kill switch, what
         the environment says about the venue, the strategies, and the configs
         that would not load. Every strategy's state is ``draft``: nothing in
-        this project can deploy one yet. The venue block holds the value of
+        this project can deploy one yet. Each strategy carries its rules in
+        words (:func:`~strategylab.api.rules.describe`), where it came from
+        (:func:`~strategylab.api.drafts.read_source`) and whether its rules
+        are confirmed (:func:`~strategylab.api.drafts.confirmation`). The
+        venue block holds the value of
         ``T212_ENVIRONMENT`` (or ``None``) and whether ``T212_API_KEY`` is set;
         it never holds the key.
 
@@ -114,8 +120,12 @@ def read_overview(root: Path, environ: Mapping[str, str]) -> dict[str, Any]:
             "name": strategy.name,
             "description": strategy.description,
             "config": strategy.config,
+            "config_hash": strategy.config_hash,
             "state": "draft",
             "latest_search": latest_search(root, strategy),
+            "rules": describe(strategy.definition),
+            "source": read_source(root, strategy),
+            **confirmation(root, strategy),
         }
         for strategy in loaded
     ]
