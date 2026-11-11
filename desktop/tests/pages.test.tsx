@@ -98,8 +98,14 @@ const STRATEGY: Strategy = {
   name: "ma_crossover",
   description: "Trend following.",
   config: "configs/ma_crossover.yaml",
+  config_hash: "a".repeat(64),
   state: "draft",
   latest_search: { ...SUMMARY, cells: 8 },
+  rules: { entry: ["Buy rule."], exit: ["Sell rule."], search: ["fast: 5 to 30 days."], fixed: [], versions: 90 },
+  source: null,
+  confirmed: false,
+  confirmed_at: null,
+  stale: false,
 };
 
 const OVERVIEW: Overview = {

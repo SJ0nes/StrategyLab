@@ -13,9 +13,10 @@ A window that reads. It opens, starts the server, and shows:
 - the top bar: a strategy dropdown, whether price data is stored and up to which
   bar, and whether a venue key is set;
 - the six sections of the mock in the menu;
-- **Dashboard** - the chosen strategy's real state: its newest search, the
-  candidate, whether it passed the noise gate, and how many times the held-back
-  window has been read;
+- **Dashboard** - for a draft, as every strategy is: its rules in words, what
+  the video it came from said that the config leaves out, and the path to
+  deployment - confirm the rules, backtest, luck test, deploy - with a button
+  at the step it has reached. Deploy is disabled;
 - **Improve** - the newest search as a grid, one square per version tried, with
   each version's growth line and figures; the versions ruled out across the
   project; and every search on record, including any that could not be read;
@@ -26,6 +27,11 @@ A window that reads. It opens, starts the server, and shows:
   says why.
 
 Trades and Compare say they are not built.
+
+**Rules are right** on the Dashboard records that the rules on screen were
+read, for the file as it was shown; no search starts until it has been
+pressed, and an edit to the file means pressing it again
+(`docs/decisions/0018`).
 
 Three buttons start work, and it is real work on the project the window is
 serving:

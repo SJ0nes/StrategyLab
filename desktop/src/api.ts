@@ -44,14 +44,46 @@ export interface LatestSearch {
   config_changed_since: boolean;
 }
 
+/** A strategy's rules, worded by the server from what the loader read. */
+export interface Rules {
+  entry: string[];
+  exit: string[];
+  search: string[];
+  fixed: string[];
+  /** How many versions a search of it tries. */
+  versions: number;
+}
+
+/** Where a strategy read out of a video came from, as its source file records it. */
+export interface Source {
+  available: true;
+  /** An https link, shown as text and never opened; null when there is none. */
+  url: string | null;
+  title: string | null;
+  channel: string | null;
+  watched_at: string | null;
+  rules: { rule: string; at: string | null }[];
+  left_out: { what: string; why: string | null; at: string | null }[];
+}
+
 export interface Strategy {
   id: string;
   name: string;
   description: string;
   config: string;
+  /** Content hash of the config the rules below were worded from. */
+  config_hash: string;
   /** Nothing can be deployed yet, so every strategy is a draft. */
   state: "draft";
   latest_search: LatestSearch | null;
+  rules: Rules;
+  /** Null for a strategy written by hand. */
+  source: Source | Missing | null;
+  /** True only when the rules were confirmed for the file as it is now. */
+  confirmed: boolean;
+  confirmed_at: string | null;
+  /** True when a confirmation is on record for an earlier version of the file. */
+  stale: boolean;
 }
 
 /** A file in `configs/` that would not load as a strategy, and why. */
@@ -217,10 +249,15 @@ export interface Jobs {
 }
 
 /** Ask the server to do something. A refusal's own words become the error's message. */
-export async function post<T>(path: string): Promise<T> {
+export async function post<T>(path: string, body?: unknown): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { method: "POST" });
+    response = await fetch(
+      path,
+      body === undefined
+        ? { method: "POST" }
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    );
   } catch {
     throw new ApiError("The StrategyLab server is not answering. Close the app and open it again.");
   }
@@ -243,3 +280,11 @@ export const startJob = (id: string, kind: JobKind): Promise<Job> =>
   post<Job>(`${strategyPath(id)}/jobs/${kind}`);
 
 export const stopJob = (jobId: string): Promise<Job> => post<Job>(`/api/jobs/${encodeURIComponent(jobId)}/stop`);
+
+/**
+ * Record that the rules on screen have been read and are right. The hash the
+ * rules were shown for goes with the request: if the file has changed since,
+ * the server refuses, and nobody approves rules they did not see.
+ */
+export const confirmStrategy = (id: string, configHash: string): Promise<{ confirmed: boolean }> =>
+  post<{ confirmed: boolean }>(`${strategyPath(id)}/confirm`, { config_hash: configHash });

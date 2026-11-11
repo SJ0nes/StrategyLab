@@ -36,8 +36,14 @@ const OVERVIEW: Overview = {
       name: "ma_crossover",
       description: "Trend following.",
       config: "configs/ma_crossover.yaml",
+      config_hash: "a".repeat(64),
       state: "draft",
       latest_search: FAILED,
+      rules: { entry: ["Buy rule."], exit: ["Sell rule."], search: ["fast: 5 to 30 days."], fixed: [], versions: 90 },
+      source: null,
+      confirmed: false,
+      confirmed_at: null,
+      stale: false,
     },
   ],
   unreadable_configs: [],
@@ -106,9 +112,9 @@ describe("the app", () => {
     answerWith(OVERVIEW);
     render(<App />);
 
-    expect(await screen.findByText("Failed the luck test: beat 25 of 100, needed 95.")).toBeInTheDocument();
-    expect(screen.getByText("fast 10, slow 80, trend 150")).toBeInTheDocument();
-    expect(screen.getByText("0.64")).toBeInTheDocument();
+    expect(await screen.findByText(/Beat 25 of 100, needed 95\./)).toBeInTheDocument();
+    expect(screen.getByText("Best of 90 versions: fast 10, slow 80, trend 150, score 0.64.")).toBeInTheDocument();
+    expect(screen.getByText("Buy rule.")).toBeInTheDocument();
     expect(screen.getByText("No venue key set")).toBeInTheDocument();
     expect(screen.getByText(/Prices stored to 2024-12-31/)).toBeInTheDocument();
   });
@@ -122,9 +128,9 @@ describe("the app", () => {
     answerWith(empty);
     render(<App />);
 
-    expect(await screen.findByText("No search has been run for this strategy.")).toBeInTheDocument();
+    expect(await screen.findByText("Replay every version on old prices. A few minutes.")).toBeInTheDocument();
     expect(screen.getByText("No price data")).toBeInTheDocument();
-    expect(screen.getAllByText("none")).toHaveLength(2);
+    expect(screen.queryByText(/score/)).toBeNull();
   });
 
   it("says a section is not built instead of drawing an empty one", async () => {

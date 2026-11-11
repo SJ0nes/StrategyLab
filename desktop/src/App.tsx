@@ -33,6 +33,8 @@ export function App() {
   // Counts the jobs seen to end. Pages are keyed on it, so each reads the
   // project again when a job has written something new.
   const [ended, setEnded] = useState(0);
+  // Counts the changes made from this window that are not jobs: a confirmation.
+  const [changed, setChanged] = useState(0);
   const wasRunning = useRef(false);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export function App() {
           message: error instanceof ApiError ? error.message : "The app could not read the project.",
         }),
       );
-  }, [ended]);
+  }, [ended, changed]);
 
   const askJobs = useCallback(() => {
     getJobs()
@@ -70,7 +72,7 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  if (load.state === "loading" && ended === 0) {
+  if (load.state === "loading" && ended === 0 && changed === 0) {
     return <p className="soft" style={{ padding: "2rem" }}>Reading the project…</p>;
   }
   if (load.state === "failed") {
@@ -108,7 +110,11 @@ export function App() {
             </div>
           ) : section === "dashboard" ? (
             <>
-              <Dashboard overview={overview} strategy={strategy} />
+              <Dashboard
+                strategy={strategy}
+                onStart={setDialog}
+                onChanged={() => setChanged((count) => count + 1)}
+              />
               {overview.unreadable_configs.map((file) => (
                 <div className="empty" key={file.config}>
                   <b>
