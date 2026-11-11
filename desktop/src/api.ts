@@ -229,7 +229,7 @@ export const getExams = (id: string): Promise<Exam[]> => get<Exam[]>(`${strategy
 export const getGraveyard = (): Promise<Graveyard | Missing> => get<Graveyard | Missing>("/api/graveyard");
 
 /** The kinds of work the window can start. The server's closed list. */
-export type JobKind = "search" | "luck_test" | "daily_check";
+export type JobKind = "search" | "luck_test" | "daily_check" | "final_exam";
 
 /** One piece of work started from the window, and where it has got to. */
 export interface Job {
@@ -374,3 +374,14 @@ export const changeDeployment = (action: "pause" | "resume" | "undeploy"): Promi
 
 export const setStopAll = (stopped: boolean): Promise<DeploymentStatus["stop_all"]> =>
   post<DeploymentStatus["stop_all"]>("/api/stop-all", { stopped });
+
+/** Whether a strategy may take the final exam now: the reason it may not, or the search it would use. */
+export interface ExamStatus {
+  refusal: string | null;
+  artifact: string | null;
+}
+
+export const getExamStatus = (id: string): Promise<ExamStatus> => get<ExamStatus>(`${strategyPath(id)}/final-exam`);
+
+/** Start the final exam. `typed` is the phrase as the operator typed it; the server checks it. */
+export const takeExam = (id: string, typed: string): Promise<Job> => post<Job>(`${strategyPath(id)}/final-exam`, { typed });

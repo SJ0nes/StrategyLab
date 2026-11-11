@@ -134,12 +134,12 @@ describe("the app", () => {
     expect(screen.queryByText(/score/)).toBeNull();
   });
 
-  it("says a section is not built instead of drawing an empty one", async () => {
+  it("opens the section the address names, and says why Compare has nothing to compare", async () => {
     window.location.hash = "#compare";
     answerWith(OVERVIEW);
     render(<App />);
 
-    expect(await screen.findByText("Not built yet")).toBeInTheDocument();
+    expect(await screen.findByText("One strategy so far")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Compare" })).toHaveAttribute("aria-current", "page");
   });
 

@@ -430,7 +430,8 @@ describe("Tests", () => {
 
     expect(examNote(STRATEGY)).toMatch(/locked: this strategy has not passed the luck test/);
     expect(examNote({ ...STRATEGY, latest_search: null })).toMatch(/locked/);
-    expect(examNote(passed)).toMatch(/not built yet/);
+    expect(examNote(passed)).toMatch(/may take the final exam/);
+    expect(examNote(passed, "this is a git worktree")).toBe("Final exam is locked: this is a git worktree.");
   });
 
   it("lists every test newest first, with the read counter from the protocol", async () => {
@@ -460,8 +461,16 @@ describe("Tests", () => {
     await waitFor(() => expect(screen.queryByText(/It beat 25 of 100 scrambled price histories/)).toBeNull());
   });
 
-  it("cannot take the final exam", async () => {
+  it("cannot take the final exam when its status cannot be read", async () => {
     serve(ROUTES);
+    render(<Tests overview={OVERVIEW} strategy={{ ...STRATEGY, latest_search: { ...SUMMARY, cells: 8, gate: { ...GATE, status: "passed" as const } } }} />);
+    await screen.findByText(/could not be read/);
+
+    expect(screen.getByRole("button", { name: "Take final exam…" })).toBeDisabled();
+  });
+
+  it("cannot take the final exam while the server says it is locked", async () => {
+    serve({ ...ROUTES, "/api/strategies/ma_crossover/final-exam": { refusal: "its newest search did not pass", artifact: null } });
     render(<Tests overview={OVERVIEW} strategy={STRATEGY} />);
     await screen.findByText("Beat 25 of 100, needed 95");
 
@@ -474,5 +483,48 @@ describe("Tests", () => {
     render(<Tests overview={OVERVIEW} strategy={STRATEGY} />);
 
     expect(await screen.findByText("No tests yet")).toBeInTheDocument();
+  });
+});
+
+describe("the final exam", () => {
+  const PASSED = {
+    ...STRATEGY,
+    latest_search: { ...SUMMARY, cells: 8, gate: { ...GATE, status: "passed" as const, beaten: 97 } },
+  };
+
+  it("opens with the looks used so far, and starts only once the phrase is typed", async () => {
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string, init?: RequestInit) => {
+        asked.push(`${init?.method ?? "GET"} ${path} ${String(init?.body ?? "")}`);
+        if (path.endsWith("/final-exam") && init?.method !== "POST") {
+          return new Response(JSON.stringify({ refusal: null, artifact: "search-b.json" }));
+        }
+        if (path.endsWith("/final-exam")) {
+          return new Response(JSON.stringify({ id: "x", kind: "final_exam" }), { status: 201 });
+        }
+        const routes: Record<string, unknown> = ROUTES;
+        return new Response(JSON.stringify(routes[path] ?? []));
+      }),
+    );
+    const onExamStarted = vi.fn();
+    render(<Tests overview={{ ...OVERVIEW, held_back_reads: 2 }} strategy={PASSED} onExamStarted={onExamStarted} />);
+
+    const open = await screen.findByRole("button", { name: "Take final exam…" });
+    await waitFor(() => expect(open).toBeEnabled());
+    fireEvent.click(open);
+    expect(screen.getByText(/Looks used so far: 2\. This makes 3\./)).toBeInTheDocument();
+    const take = screen.getByRole("button", { name: "Take the final exam" });
+    expect(take).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Confirmation phrase" }), { target: { value: "ma_crossover" } });
+    expect(take).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Confirmation phrase" }), { target: { value: " SPEND ONE LOOK " } });
+    fireEvent.click(take);
+
+    await waitFor(() => expect(onExamStarted).toHaveBeenCalledTimes(1));
+    expect(asked.filter((line) => line.startsWith("POST"))).toEqual([
+      'POST /api/strategies/ma_crossover/final-exam {"typed":" SPEND ONE LOOK "}',
+    ]);
   });
 });

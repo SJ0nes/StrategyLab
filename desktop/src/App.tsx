@@ -18,10 +18,10 @@ import { Tour, Welcome, confetti } from "./components/Tour";
 import { Nav, SECTIONS, type SectionId } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
 import { Backtest } from "./pages/Backtest";
+import { Compare } from "./pages/Compare";
 import { Dashboard } from "./pages/Dashboard";
 import { Deployed } from "./pages/Deployed";
 import { Improve } from "./pages/Improve";
-import { NotBuilt } from "./pages/NotBuilt";
 import { Tests } from "./pages/Tests";
 import { Trades } from "./pages/Trades";
 
@@ -230,13 +230,21 @@ export function App() {
           ) : section === "trades" ? (
             <Trades strategy={strategy} status={deployment} />
           ) : section === "tests" ? (
-            <Tests overview={overview} strategy={strategy} key={`${strategy.id}-${ended}`} />
+            <Tests
+              overview={overview}
+              strategy={strategy}
+              key={`${strategy.id}-${ended}-${changed}`}
+              onExamStarted={() => {
+                askJobs();
+                setDialog("final_exam");
+              }}
+            />
           ) : section === "backtest" ? (
             <Backtest strategy={strategy} key={`${strategy.id}-${ended}`} onStart={setDialog} />
           ) : section === "improve" ? (
             <Improve strategy={strategy} key={`${strategy.id}-${ended}`} onStart={setDialog} />
           ) : (
-            <NotBuilt section={section} />
+            <Compare strategies={overview.strategies} key={`compare-${ended}`} />
           )}
         </div>
       </main>

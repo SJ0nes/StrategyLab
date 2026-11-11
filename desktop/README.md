@@ -61,7 +61,10 @@ The app trades only with the practice account set in the environment it is
 started from - `T212_ENVIRONMENT=demo` and `T212_API_KEY` - and only while it
 is open. It does not read `.env`.
 
-The final exam is drawn and disabled.
+**Take final exam…** on Tests unlocks once the newest search on the file as
+it is passed the luck test. Its dialog shows the looks used so far, and starts
+it only once SPEND ONE LOOK is typed; it cannot be stopped. **Compare** sets two
+strategies' newest searches side by side. Rules: `docs/decisions/0020`.
 
 The first launch offers the **tour**: a welcome, then seven stops, each lit
 with a spotlight and explained in a sentence, worded for what the app does
@@ -89,6 +92,7 @@ are all places where the mock shows something the project does not have:
 | Backtest | "Run backtest" runs one backtest | It runs a search, the same as "Search again" | A search is the grid of backtests; the project has no single-backtest command (`docs/decisions/0017`) |
 | Improve | A sped-up progress bar | A bar that moves only for a luck test, one step per finished trial | A plain search reports nothing until it ends |
 | Tests | Rows for single backtests and live-against-backtest checks | Rows for searches and final exams only | Those are the tests the project keeps on record |
+| Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | One strategy is deployed at a time (`docs/decisions/0019`) |
 
 ## Trying it on a copy
 

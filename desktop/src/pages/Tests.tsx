@@ -1,6 +1,15 @@
 import { Fragment, type ReactNode, useState } from "react";
 
-import { type Exam, type Overview, type SearchEntry, type Strategy, getExams, getSearches } from "../api";
+import {
+  type Exam,
+  type Overview,
+  type SearchEntry,
+  type Strategy,
+  getExamStatus,
+  getExams,
+  getSearches,
+} from "../api";
+import { ExamDialog } from "../components/ExamDialog";
 import { Term, Waiting } from "../components/Term";
 import { useLoad } from "../useLoad";
 import { gatePill, gateSentence, versionLabel, whenLabel } from "../words";
@@ -82,16 +91,29 @@ export function examRow(exam: Exam): Row {
 }
 
 /** Why the final exam cannot be taken from this window, in one sentence. */
-export function examNote(strategy: Strategy): string {
-  const status = strategy.latest_search?.gate.status;
-  if (status === "passed") {
-    return "This strategy passed the luck test. Taking the final exam from the app is not built yet.";
+export function examNote(strategy: Strategy, refusal: string | null = null): string {
+  if (refusal === null && strategy.latest_search?.gate.status === "passed") {
+    return "This strategy passed the luck test and may take the final exam: one look at the unseen years.";
+  }
+  if (refusal !== null && strategy.latest_search?.gate.status === "passed") {
+    return `Final exam is locked: ${refusal}.`;
   }
   return "Final exam is locked: this strategy has not passed the luck test.";
 }
 
-export function Tests({ overview, strategy }: { overview: Overview; strategy: Strategy }) {
+export function Tests({
+  overview,
+  strategy,
+  onExamStarted,
+}: {
+  overview: Overview;
+  strategy: Strategy;
+  onExamStarted?: () => void;
+}) {
   const [open, setOpen] = useState<string | null>(null);
+  const [examining, setExamining] = useState(false);
+  const exam = useLoad(`${strategy.id}-exam`, () => getExamStatus(strategy.id));
+  const refusal = exam.state === "ready" ? exam.value.refusal : "its exam status could not be read";
   const load = useLoad(strategy.id, async () => ({
     searches: await getSearches(strategy.id),
     exams: await getExams(strategy.id),
@@ -114,7 +136,13 @@ export function Tests({ overview, strategy }: { overview: Overview; strategy: St
           <button type="button" className="btn" disabled title="Nothing is deployed, so there are no live days to check">
             Check live vs backtest
           </button>
-          <button type="button" className="btn go" disabled title={examNote(strategy)}>
+          <button
+            type="button"
+            className="btn go"
+            disabled={refusal !== null}
+            title={examNote(strategy, refusal)}
+            onClick={() => setExamining(true)}
+          >
             Take final exam…
           </button>
         </span>
@@ -192,9 +220,21 @@ export function Tests({ overview, strategy }: { overview: Overview; strategy: St
             </table>
           </div>
           <p className="soft" style={{ fontSize: "var(--t-s)" }}>
-            {examNote(strategy)} A single backtest is not kept on record; each search above is a grid of them.
+            {examNote(strategy, refusal)} A single backtest is not kept on record; each search above is a grid of
+            them.
           </p>
         </div>
+      )}
+      {examining && (
+        <ExamDialog
+          strategy={strategy}
+          looks={overview.held_back_reads}
+          onClose={() => setExamining(false)}
+          onStarted={() => {
+            setExamining(false);
+            onExamStarted?.();
+          }}
+        />
       )}
     </>
   );

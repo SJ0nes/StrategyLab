@@ -14,6 +14,11 @@ export const JOB_WORDS: Record<JobKind, { title: string; does: string; takes: st
     does: "Runs the deployed strategy's daily check: fetches the latest prices, decides, and sends at most one order to the practice account.",
     takes: "Takes under a minute. It cannot be stopped once started.",
   },
+  final_exam: {
+    title: "Final exam",
+    does: "Tests the version on the years kept back from every search, and records the result. One permanent look.",
+    takes: "Takes a minute or two. It cannot be stopped once started.",
+  },
   luck_test: {
     title: "Run the luck test",
     does: "Runs the search again, then repeats it on 100 scrambled price histories to see whether the best version beats luck.",

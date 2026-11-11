@@ -14,7 +14,7 @@ interface Props {
 
 /** What the running-job button says. */
 export function jobLabel(job: Job): string {
-  const name = job.kind === "luck_test" ? "Luck test" : job.kind === "daily_check" ? "Daily check" : "Search";
+  const name = job.kind === "luck_test" ? "Luck test" : job.kind === "daily_check" ? "Daily check" : job.kind === "final_exam" ? "Final exam" : "Search";
   const state = job.status === "stopping" ? "stopping" : "running";
   return job.progress === null ? `${name} ${state}` : `${name} ${state}: ${job.progress.finished} of ${job.progress.total}`;
 }

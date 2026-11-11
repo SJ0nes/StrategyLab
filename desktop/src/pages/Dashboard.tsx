@@ -116,6 +116,7 @@ const BUTTON: Record<NonNullable<Step["action"]>, string> = {
   luck_test: "Run luck test",
   deploy: "Deploy…",
   daily_check: "Check now",
+  final_exam: "Take final exam…",
 };
 
 interface Props {
