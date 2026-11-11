@@ -102,14 +102,14 @@ is what stands between paper and real money.
 | A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seven routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, the graveyard and the jobs it has started; one that records the operator's confirmation of a strategy's rules, and two that start or stop a job - a search, or a search with a hundred-trial noise ceiling, as a process that outlives the window *(it can start nothing else: not `validate`, not `run`; and nothing for a strategy whose rules are not confirmed)* | |
 | Strategies from videos — `.claude/skills/import-strategy/` turns a `/watch` of a video into `configs/<name>.yaml` and `configs/<name>.source.json`, using the existing vocabulary only and listing what it left out; the app shows it as a draft with its rules in words and a path to deployment *(the skill has never been run on a real video)* | |
 
-**2317 tests pass** — verify with `uv run pytest`. They cover the protocol
+**2332 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log, the risk layer, the Trading 212 adapter, the live
 worker, the command-line wiring, the app's server, what it reports about the project and its history, the jobs it starts, and the
-commit-time credential scan in `.claude/hooks/` — twenty-eight areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
+commit-time credential scan in `.claude/hooks/` — twenty-nine areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
 `uv run python tests/mutation/run.py` breaks the code in named ways, one at a
 time, and fails if the tests stay green; it covers fourteen areas of recent work,
 not the whole codebase, and CI does not run it.
@@ -188,7 +188,7 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**2317 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**2332 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 Three tests start the app's server as a child process and talk to it on
@@ -196,7 +196,7 @@ Three tests start the app's server as a child process and talk to it on
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 2317 tests, none touching the network
+uv run pytest                   # 2332 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

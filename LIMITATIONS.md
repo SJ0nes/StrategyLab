@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty-five modules have working bodies: `protocol.py`, `windows.py`,
+Thirty-six modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -14,7 +14,7 @@ Thirty-five modules have working bodies: `protocol.py`, `windows.py`,
 `report/surface.py`, `report/palette.py`, `report/verdict.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
+`execution/t212.py`, `live/worker.py`, `live/account.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
 `api/job_runner.py`, `api/rules.py`, `api/drafts.py`, `api/window_state.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
@@ -239,15 +239,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2317 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2332 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-eight
+server and what it reports, and the commit-time credential scan — twenty-nine
 areas, one per test file.
-520 of the 2317 are the risk layer's,
+520 of the 2332 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -907,6 +907,13 @@ decision record until it has been read beside the venue's own account page.
   the documentation, and whether `market_value` derived as quantity times current
   price matches the venue's own figure - none of that is established. The first
   real run establishes it, and nothing in the suite can.
+- **The account log records what the venue said, not what was filled.** Each
+  check appends the account's equity and cash, the position, and whether its
+  order was sent, to `state/account-live.jsonl`. "Sent" is the venue
+  accepting a market order; the price it filled at is not recorded, so no
+  figure built on this log can say what a trade made. The line is written by
+  the untested body of `run`; `live/account.py`, which builds and writes it,
+  is tested.
 - **The Trading 212 ticker for `VUAG.L` is unverified.** The adapter maps
   protocol symbols to venue tickers through `symbol_map`, which defaults to the
   identity, so an unmapped symbol is sent as written and refused by the venue

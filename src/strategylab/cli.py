@@ -30,6 +30,7 @@ from strategylab.data.source import (
     validate_bars,
 )
 from strategylab.execution.t212 import T212Error, T212Venue
+from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH, account_record, write_account
 from strategylab.live.worker import (
     DEFAULT_LIVE_LOG_PATH,
     DEFAULT_REPLAY_LOG_PATH,
@@ -1062,7 +1063,9 @@ def run(
     venue; evaluates the latest bar
     through the same core.evaluate the backtester uses; passes the intent
     through the risk layer; writes ONE decision record to
-    state/decisions-live.jsonl; and then sends at most one market order.
+    state/decisions-live.jsonl; sends at most one market order; and appends one
+    line to state/account-live.jsonl - the account's value and position as the
+    venue reported them, and whether an order was sent.
 
     THE RECORD IS WRITTEN BEFORE THE ORDER IS SENT, so a venue failure never
     costs the log the decision that preceded it; the record says what the gate
@@ -1217,15 +1220,41 @@ def run(
     table.add_row("log", DEFAULT_LIVE_LOG_PATH.as_posix())
     console.print(table)
 
+    def log_account(outcome: str, venue_order_id: str | None) -> None:
+        # After the decision and after the order, so the line says how the
+        # check ended. A failure to write it is reported and does not undo
+        # anything the venue has already done.
+        try:
+            write_account(
+                account_record(
+                    recorded_at=datetime.now(UTC),
+                    bar_date=bar_stamp.date(),
+                    strategy=definition.name,
+                    params=candidate.params,
+                    balance=balance,
+                    positions=positions,
+                    ticker=ticker,
+                    order=order,
+                    outcome=outcome,
+                    venue_order_id=venue_order_id,
+                ),
+                DEFAULT_ACCOUNT_LOG_PATH,
+            )
+        except (ValueError, OSError) as exc:
+            err_console.print(f"[bold red]account log[/bold red] {exc}")
+
     if order is None:
+        log_account("none", None)
         console.print("\nNo order to send.")
         return
     try:
         order_id = venue.place_order(order)
     except T212Error as exc:
+        log_account("failed", None)
         err_console.print(f"[bold red]order failed[/bold red] {exc}")
         err_console.print("The decision record above was written; the order was not confirmed.")
         raise typer.Exit(code=1) from exc
+    log_account("sent", str(order_id))
     console.print(
         f"\n[green]sent[/green] {order.side.value} {order.quantity:.6f} {order.ticker} "
         f"(venue id {order_id})"
