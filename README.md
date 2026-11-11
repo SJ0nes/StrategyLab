@@ -101,7 +101,7 @@ is what stands between paper and real money.
 | All eight commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff`, `serve` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
 | A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, six read-only routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, and the graveyard *(nothing it serves can change anything yet)* | |
 
-**2115 tests pass** — verify with `uv run pytest`. They cover the protocol
+**2117 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
@@ -187,7 +187,7 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**2115 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**2117 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 Three tests start the app's server as a child process and talk to it on
@@ -195,7 +195,7 @@ Three tests start the app's server as a child process and talk to it on
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 2115 tests, none touching the network
+uv run pytest                   # 2117 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

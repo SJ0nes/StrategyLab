@@ -374,7 +374,9 @@ def noise_ceiling(
         on_trial: Called in the calling process each time a trial finishes,
             with how many have finished and ``n_trials``. With several workers
             the trials finish in no fixed order; the count still rises by one
-            each call.
+            each call. It may raise to stop the ceiling: the exception leaves
+            this function unchanged, no trial that has not started is run, and
+            with several workers the trials already running finish first.
 
     Returns:
         The distribution of best-in-grid Sharpe across the trials, one value per
@@ -414,9 +416,16 @@ def noise_ceiling(
                 pool.submit(best_in_grid, definition, grid, surrogate, costs): trial
                 for trial, surrogate in enumerate(surrogates)
             }
-            for finished, future in enumerate(as_completed(pending), start=1):
-                best[pending[future]] = future.result()
-                if on_trial is not None:
-                    on_trial(finished, n_trials)
+            try:
+                for finished, future in enumerate(as_completed(pending), start=1):
+                    best[pending[future]] = future.result()
+                    if on_trial is not None:
+                        on_trial(finished, n_trials)
+            except BaseException:
+                # Leaving the pool waits for every trial handed to it. Dropping
+                # the ones not yet started means it waits only for those in hand.
+                for future in pending:
+                    future.cancel()
+                raise
 
     return pd.Series(best, index=pd.RangeIndex(n_trials), name="best_in_grid_sharpe")

@@ -838,3 +838,51 @@ def test_anything_short_of_a_pass_says_it_cannot_be_validated(gate: NoiseGate) -
 
 def test_a_pass_does_not_say_it_cannot_be_validated() -> None:
     assert "cannot be validated" not in describe_gate(NoiseGate(GATE_PASSED, 1.31, 100, 97, 95))
+
+
+class _StopAsked(Exception):
+    """What a caller's on_trial raises to stop a ceiling."""
+
+
+def test_a_callback_that_raises_stops_the_ceiling_in_one_process(bars: pd.DataFrame) -> None:
+    seen: list[int] = []
+
+    def stop_after_two(finished: int, total: int) -> None:
+        seen.append(finished)
+        if finished == 2:
+            raise _StopAsked
+
+    with pytest.raises(_StopAsked):
+        noise_ceiling(
+            _strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=5, workers=1, on_trial=stop_after_two
+        )
+
+    assert seen == [1, 2]
+
+
+def test_a_callback_that_raises_drops_the_trials_not_yet_started(
+    bars: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handed_over: list[Future[float]] = []
+
+    class _PoolThatRunsOnlyTheFirst(_PoolInThisProcess):
+        def submit(self, job: Callable[..., float], *args: Any) -> Future[float]:
+            future: Future[float] = Future()
+            if not handed_over:
+                future.set_result(job(*args))
+            handed_over.append(future)
+            return future
+
+    monkeypatch.setattr("strategylab.search.noise.ProcessPoolExecutor", _PoolThatRunsOnlyTheFirst)
+    monkeypatch.setattr("strategylab.search.noise.as_completed", lambda pending: list(pending)[:1])
+
+    def stop_at_once(finished: int, total: int) -> None:
+        raise _StopAsked
+
+    with pytest.raises(_StopAsked):
+        noise_ceiling(
+            _strategy(), TINY_SPEC, bars, TEST_COSTS, n_trials=4, workers=2, on_trial=stop_at_once
+        )
+
+    assert len(handed_over) == 4
+    assert [future.cancelled() for future in handed_over] == [False, True, True, True]
