@@ -90,7 +90,7 @@ is what stands between paper and real money.
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A latch that survives its own file — the daily-loss limit now holds for the session, and deleting `state/session.json` clears it |
 | Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
-| The graveyard — append-only JSON Lines, closed reason vocabulary | A desktop app that can deploy, pause or validate anything — `desktop/` opens a window that shows the project's real state, the newest search as a grid, the tests on record and the recorded replay of the candidate, and can start a search or a luck test and nothing else; `docs/prototype/` holds the approved mock it has to grow into. No deployed strategies, no live performance figures, no scheduler, no control that starts or spends anything |
+| The graveyard — append-only JSON Lines, closed reason vocabulary | A daily check that has reached Trading 212 — `desktop/` can deploy a strategy to the practice account and run its daily check, and that path has never run against the venue: no key has been set, and every check of it used a copy of the project with trading stopped. No final-exam button, no Compare, no running several strategies at once |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, every Sharpe and the surrogate band on one axis, click a cell for its equity curve against buy-and-hold; self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter, and a page drawing the folds side by side | |
@@ -99,19 +99,19 @@ is what stands between paper and real money.
 | The Trading 212 adapter — demo or live by explicit choice, no retry, key masked *(tested against a mock transport only)* | |
 | The live worker's decisions and the replay `diff` compares them against | |
 | All eight commands — `status`, `fetch`, `search`, `report`, `validate`, `run`, `diff`, `serve` *(tested as far as their refusals and what they write; never past the network or a held-back read)* | |
-| A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seven routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, the graveyard and the jobs it has started; one that records the operator's confirmation of a strategy's rules, and two that start or stop a job - a search, or a search with a hundred-trial noise ceiling, as a process that outlives the window *(it can start nothing else: not `validate`, not `run`; and nothing for a strategy whose rules are not confirmed)* | |
+| A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seven routes that report the project's state, each strategy's searches (one of them in full, cell by cell), its reads of the held-back window, the graveyard and the jobs it has started; one that records the operator's confirmation of a strategy's rules, two that start or stop a job - a search, a search with a hundred-trial noise ceiling, or the deployed strategy's daily check, as a process that outlives the window - and four that deploy, pause, resume, undeploy and stop all trading from the app; a scheduler starts the daily check once a weekday after the close while the app is open *(it cannot start `validate` or `fetch`; it runs `run` for the one deployed strategy, on the practice account only)* | |
 | Strategies from videos — `.claude/skills/import-strategy/` turns a `/watch` of a video into `configs/<name>.yaml` and `configs/<name>.source.json`, using the existing vocabulary only and listing what it left out; the app shows it as a draft with its rules in words and a path to deployment *(the skill has never been run on a real video)* | |
 
-**2332 tests pass** — verify with `uv run pytest`. They cover the protocol
+**2437 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log, the risk layer, the Trading 212 adapter, the live
 worker, the command-line wiring, the app's server, what it reports about the project and its history, the jobs it starts, and the
-commit-time credential scan in `.claude/hooks/` — twenty-nine areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
+commit-time credential scan in `.claude/hooks/` — thirty areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
 `uv run python tests/mutation/run.py` breaks the code in named ways, one at a
-time, and fails if the tests stay green; it covers fourteen areas of recent work,
+time, and fails if the tests stay green; it covers fifteen areas of recent work,
 not the whole codebase, and CI does not run it.
 520 of them are the risk layer's, which is a statement about parameterisation
 rather than about size. Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. Of the 486 before
@@ -188,7 +188,7 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**2332 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**2437 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 Three tests start the app's server as a child process and talk to it on
@@ -196,7 +196,7 @@ Three tests start the app's server as a child process and talk to it on
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 2332 tests, none touching the network
+uv run pytest                   # 2437 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 

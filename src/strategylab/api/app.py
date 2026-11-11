@@ -45,12 +45,24 @@ from pydantic import BaseModel, Field
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from strategylab.api.deployment import (
+    DeployRefused,
+    deploy,
+    read_deployment,
+    set_paused,
+    set_stop_all,
+    stop_all,
+    undeploy,
+    venue_ready,
+)
 from strategylab.api.drafts import StaleConfirmation, confirm
 from strategylab.api.history import list_exams, list_searches, read_graveyard, search_detail
 from strategylab.api.jobs import JOB_KINDS, JobRefused, list_jobs, request_stop, start_job
+from strategylab.api.live import read_live
 from strategylab.api.overview import read_overview
 from strategylab.api.reading import plain_reason
 from strategylab.api.registry import find_strategy
+from strategylab.api.schedule import schedule_report
 from strategylab.api.window_state import mark_tour_seen
 from strategylab.protocol import ProtocolError
 
@@ -159,6 +171,18 @@ class LocalOnly:
         await self.app(scope, receive, send_with_headers)
 
 
+class Typed(BaseModel):
+    """What a deploy request carries: the strategy's name, as the operator typed it."""
+
+    typed: str = Field(max_length=200)
+
+
+class Switch(BaseModel):
+    """What a stop-all request carries."""
+
+    stopped: bool
+
+
 class Shown(BaseModel):
     """What a confirmation request carries: the config hash the rules were shown for."""
 
@@ -248,7 +272,7 @@ def create_app(
         if kind not in JOB_KINDS:
             return JSONResponse({"detail": "no such kind of job"}, status_code=404)
         try:
-            job = start_job(root, strategy, kind, datetime.now(UTC))
+            job = start_job(root, strategy, kind, datetime.now(UTC), environ=environ)
         except JobRefused as exc:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         return JSONResponse(job, status_code=201)
@@ -266,6 +290,61 @@ def create_app(
             return JSONResponse(
                 {"detail": "the confirmation could not be recorded"}, status_code=500
             )
+
+    def refused(exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @application.get("/api/deployment")
+    def deployment() -> Any:
+        now = datetime.now(UTC)
+        deployed = read_deployment(root)
+        live = None
+        if deployed is not None and deployed["available"]:
+            strategy = find_strategy(root, str(deployed["strategy_id"]))
+            name = strategy.name if strategy is not None else str(deployed["strategy_id"])
+            live = read_live(root, deployed, name, now)
+        return {
+            "deployment": deployed,
+            "stop_all": stop_all(root),
+            "venue_unready": venue_ready(environ),
+            "schedule": schedule_report(root, now, environ),
+            "live": live,
+        }
+
+    @application.post("/api/strategies/{strategy_id}/deploy")
+    def deploy_strategy(strategy_id: str, typed: Typed) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        try:
+            return deploy(root, strategy, typed.typed, environ, datetime.now(UTC))
+        except DeployRefused as exc:
+            return refused(exc)
+        except OSError:
+            return JSONResponse({"detail": "the deployment could not be recorded"}, status_code=500)
+
+    @application.post("/api/deployment/{action}")
+    def change_deployment(action: str) -> Any:
+        try:
+            if action == "pause":
+                return set_paused(root, True, datetime.now(UTC))
+            if action == "resume":
+                return set_paused(root, False, datetime.now(UTC))
+            if action == "undeploy":
+                undeploy(root)
+                return {"deployment": None}
+        except DeployRefused as exc:
+            return refused(exc)
+        except OSError:
+            return JSONResponse({"detail": "the deployment could not be changed"}, status_code=500)
+        return JSONResponse({"detail": "no such change"}, status_code=404)
+
+    @application.post("/api/stop-all")
+    def change_stop_all(switch: Switch) -> Any:
+        try:
+            return set_stop_all(root, switch.stopped, datetime.now(UTC))
+        except OSError:
+            return JSONResponse({"detail": "the switch could not be recorded"}, status_code=500)
 
     @application.post("/api/tour/seen")
     def tour_seen() -> Any:

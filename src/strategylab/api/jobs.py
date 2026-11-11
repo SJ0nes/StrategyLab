@@ -45,6 +45,7 @@ are tested against each other so the wording cannot drift from its reader.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -56,6 +57,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from strategylab.api.deployment import (
+    ARTIFACT_NAME,
+    check_refusal,
+    read_deployment,
+    window_refusal,
+)
 from strategylab.api.drafts import confirmation
 from strategylab.api.reading import (
     Unreadable,
@@ -73,10 +80,13 @@ JOBS_DIR = Path("state") / "jobs"
 #: Schema version of a job record.
 JOB_SCHEMA_VERSION = 1
 
+#: The daily check: one bar of ``strategylab run`` for the deployed strategy.
+DAILY_CHECK = "daily_check"
+
 #: Every kind of job, and the surrogate trials it runs. ``search`` runs none;
 #: ``luck_test`` runs the number the noise gate needs to reach a verdict, and
-#: no other number is on offer.
-JOB_KINDS: dict[str, int] = {"search": 0, "luck_test": RELIABLE_TRIALS}
+#: no other number is on offer; the daily check is not a search and runs none.
+JOB_KINDS: dict[str, int] = {"search": 0, "luck_test": RELIABLE_TRIALS, DAILY_CHECK: 0}
 
 #: Exit code the search command ends with when it stopped because it was asked.
 STOPPED_EXIT_CODE = 3
@@ -192,6 +202,8 @@ def command_for(record: dict[str, Any], root: Path) -> list[str]:
         raise JobRefused("the job's strategy is not in configs/")
     if record.get("config_hash") != strategy.config_hash:
         raise JobRefused("the strategy file has changed since the job was started")
+    if kind == DAILY_CHECK:
+        return _daily_check_command(root, strategy)
     return [
         sys.executable,
         "-P",
@@ -206,38 +218,82 @@ def command_for(record: dict[str, Any], root: Path) -> list[str]:
     ]
 
 
-def job_environment(environ: Mapping[str, str]) -> dict[str, str]:
+def _daily_check_command(root: Path, strategy: StrategyFile) -> list[str]:
+    """Build the daily check's command from the deployment record.
+
+    Args:
+        root: The project root.
+        strategy: The strategy the job is for, as the registry found it.
+
+    Returns:
+        This interpreter with ``-P``, ``strategylab run``, and the deployed
+        search artifact's path under ``state/``.
+
+    Raises:
+        JobRefused: If a check may not run for the strategy now
+            (:func:`~strategylab.api.deployment.check_refusal`, asked with this
+            process's environment) - it is not the one deployed, is paused,
+            stop all is on, its file has changed, or the practice account is
+            not set - or the deployment's artifact is not a search file that is
+            there.
+    """
+    # Asked again here, when the runner is about to start the command and not
+    # only when the job was started: stop all, or pause, pressed in between must
+    # stop it. The runner's environment is the one the check would trade with.
+    refusal = check_refusal(root, strategy.id, os.environ)
+    if refusal is not None:
+        raise JobRefused(refusal)
+    deployed = read_deployment(root)
+    if deployed is None or not deployed["available"]:
+        raise JobRefused("the job's strategy is not the one deployed")
+    artifact = deployed["artifact"]
+    if not isinstance(artifact, str) or ARTIFACT_NAME.fullmatch(artifact) is None:
+        raise JobRefused("the deployed search's file name is not one this app reads")
+    path = Path("state") / artifact
+    if not (root / path).is_file():
+        raise JobRefused("the deployed search's file is not in state/")
+    return [sys.executable, "-P", "-m", "strategylab.cli", "run", path.as_posix()]
+
+
+def job_environment(environ: Mapping[str, str], venue: bool = False) -> dict[str, str]:
     """Make the environment a job is started with.
 
     Args:
         environ: The server's own environment.
+        venue: Whether to keep the practice account's settings.
 
     Returns:
-        A copy without :data:`WITHHELD_VARIABLE` and without any variable whose
-        name starts with :data:`WITHHELD_PREFIX`, compared without regard to
-        case as Windows compares them, and with ``PYTHONSAFEPATH`` set so that
-        no Python process the job starts imports from its working directory.
+        A copy without :data:`WITHHELD_VARIABLE` and - unless ``venue`` is
+        true - without any variable whose name starts with
+        :data:`WITHHELD_PREFIX`, compared without regard to case as Windows
+        compares them, and with ``PYTHONSAFEPATH`` set so that no Python
+        process the job starts imports from its working directory. ``venue``
+        is true for the daily check alone, which trades on the practice
+        account and needs its settings; a search never does.
     """
     kept = {
         name: value
         for name, value in environ.items()
-        if name.upper() != WITHHELD_VARIABLE and not name.upper().startswith(WITHHELD_PREFIX)
+        if name.upper() != WITHHELD_VARIABLE
+        and (venue or not name.upper().startswith(WITHHELD_PREFIX))
     }
     kept["PYTHONSAFEPATH"] = "1"
     return kept
 
 
-def _spawn_detached(command: list[str], root: Path, log: Path) -> None:
+def _spawn_detached(command: list[str], root: Path, log: Path, venue: bool = False) -> None:
     """Start a process that goes on running after this one ends.
 
     Its standard input is closed and its output goes to ``log``, so it holds no
     pipe to this process and is not ended by this process going away. Its
-    environment is :func:`job_environment`'s.
+    environment is :func:`job_environment`'s, with the practice account's
+    settings only when ``venue`` is true.
 
     Args:
         command: The argument list. Never run through a shell.
         root: The directory to run it in.
         log: The file its output is appended to.
+        venue: Whether the process may see the practice account's settings.
 
     Raises:
         OSError: If the process cannot be started.
@@ -245,7 +301,7 @@ def _spawn_detached(command: list[str], root: Path, log: Path) -> None:
     with log.open("ab") as output:
         options: dict[str, Any] = {
             "cwd": root,
-            "env": job_environment(os.environ),
+            "env": job_environment(os.environ, venue=venue),
             "stdin": subprocess.DEVNULL,
             "stdout": output,
             "stderr": subprocess.STDOUT,
@@ -405,6 +461,35 @@ def read_job(root: Path, job_id: str, now: datetime) -> dict[str, Any] | None:
     }
 
 
+def list_job_records(root: Path) -> list[dict[str, str]]:
+    """List every job on record by id and kind, without reading its state.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``{"id", "kind"}`` for each record whose file name is a job id, whose
+        content names that same id, is of this schema version, and has a kind
+        in :data:`JOB_KINDS`. Newest first.
+    """
+    kept: list[dict[str, str]] = []
+    for path in sorted((root / JOBS_DIR).glob("*.json"), reverse=True):
+        if _JOB_ID.fullmatch(path.stem) is None:
+            continue
+        try:
+            record = read_json_object(path, MAX_RECORD_BYTES)
+        except Unreadable:
+            continue
+        kind = text_or_none(record.get("kind"))
+        if (
+            record.get("schema_version") == JOB_SCHEMA_VERSION
+            and record.get("id") == path.stem
+            and kind in JOB_KINDS
+        ):
+            kept.append({"id": path.stem, "kind": str(kind)})
+    return kept
+
+
 def list_jobs(root: Path, now: datetime) -> dict[str, Any]:
     """Report the job that is running, if any, and the most recent ones.
 
@@ -440,6 +525,7 @@ def start_job(
     kind: str,
     now: datetime,
     spawn: Callable[[list[str], Path, Path], None] | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Start a job, unless one is running.
 
@@ -454,6 +540,8 @@ def start_job(
         now: The present moment, timezone-aware. Names the job.
         spawn: Starts the runner. ``None`` starts a real, detached process;
             tests pass a stand-in and start none.
+        environ: The server's environment, for whether the practice account
+            is set. ``None`` reads this process's own.
 
     Returns:
         The job, as :func:`read_job` reports it.
@@ -461,8 +549,10 @@ def start_job(
     Raises:
         JobRefused: If ``kind`` is not in :data:`JOB_KINDS`, the strategy's
             rules are not confirmed for its file as it is now
-            (``docs/decisions/0018``), a job is already running - the message
-            names it - or the runner cannot be started.
+            (``docs/decisions/0018``), a daily check may not run for it now
+            (:func:`~strategylab.api.deployment.check_refusal`), a job is
+            already running - the message names it - or the runner cannot be
+            started.
     """
     if kind not in JOB_KINDS:
         raise JobRefused("that is not a kind of job this app runs")
@@ -471,6 +561,18 @@ def start_job(
             "the strategy's rules have not been confirmed for the file as it is now; "
             "read them on its Dashboard first"
         )
+    if kind == DAILY_CHECK:
+        refusal = check_refusal(
+            root, strategy.id, os.environ if environ is None else environ
+        ) or window_refusal(now)
+        if refusal is not None:
+            raise JobRefused(refusal)
+        today = f"{now.astimezone(UTC):%Y%m%d}"
+        if any(
+            record["kind"] == DAILY_CHECK and record["id"].startswith(today)
+            for record in list_job_records(root)
+        ):
+            raise JobRefused("today's check has already been started")
     stamp = now.astimezone(UTC)
     job_id = f"{stamp:%Y%m%dT%H%M%SZ}-{kind}"
     directory = root / JOBS_DIR
@@ -499,7 +601,7 @@ def start_job(
         except FileExistsError as exc:
             raise JobRefused(f"a job was started this second: {job_id}") from exc
         try:
-            (spawn or _spawn_detached)(
+            (spawn or functools.partial(_spawn_detached, venue=kind == DAILY_CHECK))(
                 [sys.executable, "-P", "-m", "strategylab.api.job_runner", job_id],
                 root,
                 directory / f"{job_id}.log",

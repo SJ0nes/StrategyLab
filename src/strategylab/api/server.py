@@ -8,6 +8,11 @@ one. The process that started the server learns it from the first line of
 standard output: ``{"port": N}``. The socket is already listening when that
 line is printed, so a reader that connects at once is not refused.
 
+IT STARTS THE DAILY CHECK. While it runs, a thread asks once a minute whether
+the deployed strategy's check is due (:mod:`strategylab.api.schedule`) and
+starts it if so. That is the only thing the server does without being asked,
+and it stops with the server: nothing runs while the app is closed.
+
 IT STOPS WHEN ITS STANDARD INPUT CLOSES. The window holds the other end of that
 pipe. When the window exits - cleanly, or by crashing, or by being killed - the
 pipe closes and the server shuts down, so no server is left running with nobody
@@ -27,12 +32,37 @@ import socket
 import sys
 import threading
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
 import uvicorn
 
 from strategylab.api.app import create_app
+from strategylab.api.schedule import start_if_due
+
+#: Seconds between the scheduler's questions.
+SCHEDULE_EVERY_SECONDS = 60.0
+
+
+def _check_each_minute(root: Path, environ: Mapping[str, str], stopping: threading.Event) -> None:
+    """Start the deployed strategy's daily check when it falls due, until told to stop.
+
+    Args:
+        root: The project root.
+        environ: The server's environment.
+        stopping: Set when the server stops.
+    """
+    while not stopping.wait(SCHEDULE_EVERY_SECONDS):
+        try:
+            start_if_due(root, datetime.now(UTC), environ)
+        except Exception:  # noqa: BLE001
+            # Whatever went wrong this minute - a file held open, a damaged
+            # record - is tried again the next. An exception that ended this
+            # thread would end the daily check for the rest of the session with
+            # nothing on screen to say so.
+            continue
+
 
 #: The only address the server listens on.
 LOOPBACK = "127.0.0.1"
@@ -105,8 +135,14 @@ def serve(
         daemon=True,
     ).start()
 
+    stopping = threading.Event()
+    threading.Thread(target=_check_each_minute, args=(root, environ, stopping), daemon=True).start()
+
     out = sys.stdout if announce is None else announce
     listener.listen()
     out.write(json.dumps({"port": listener.getsockname()[1]}) + "\n")
     out.flush()
-    server.run(sockets=[listener])
+    try:
+        server.run(sockets=[listener])
+    finally:
+        stopping.set()

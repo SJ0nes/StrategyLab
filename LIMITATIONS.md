@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty-six modules have working bodies: `protocol.py`, `windows.py`,
+Thirty-nine modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -15,7 +15,8 @@ Thirty-six modules have working bodies: `protocol.py`, `windows.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
 `execution/t212.py`, `live/worker.py`, `live/account.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
-`api/job_runner.py`, `api/rules.py`, `api/drafts.py`, `api/window_state.py`,
+`api/job_runner.py`, `api/rules.py`, `api/drafts.py`, `api/window_state.py`, `api/deployment.py`,
+`api/schedule.py`, `api/live.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
@@ -239,15 +240,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2332 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2437 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-nine
+server and what it reports, and the commit-time credential scan — thirty
 areas, one per test file.
-520 of the 2332 are the risk layer's,
+520 of the 2437 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -975,15 +976,15 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in fourteen
+  `tests/mutation/` now holds a harness and a list of named mutants in fifteen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
   codebase, and it is run by hand - CI does not run it. A mutant list is also
   only as good as the mutants someone thought of.
 
-**There is a server now, and it can start one kind of work.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has eleven
+**There is a server now, and it can trade on the practice account.** `strategylab serve` exists
+for a desktop app (`docs/decisions/0014`). It has sixteen
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
 each strategy config with its newest search, its rules in words, where it
@@ -994,9 +995,13 @@ something: one remembers that the window's tour has been seen, one records that 
 starts a job and one asks a running job to stop. No job starts for a strategy
 whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the
-hundred the noise gate needs, and nothing else (`docs/decisions/0017`). The
-server cannot run `validate`, `run` or `fetch`, places no order, and reads no
-held-back bar. What is worth knowing about it:
+hundred the noise gate needs (`docs/decisions/0017`), or the deployed
+strategy's daily check, `strategylab run` on its search (`docs/decisions/0019`).
+One report and four routes deploy a strategy, pause, resume and undeploy it,
+and turn the app's stop-all switch on and off; while the server runs, a thread
+starts the daily check once a weekday after 17:30 UTC. The server cannot run
+`validate` or `fetch`, and reads no held-back bar. What is worth knowing about
+it:
 
 - **Its guard was reviewed, not attacked.** Every request must name this machine
   in its Host header, carry no foreign Origin, and present a token made for that
@@ -1017,6 +1022,38 @@ held-back bar. What is worth knowing about it:
   held-back years beside the in-sample ones, and checking its hash means loading
   the file. No held-back bar is used for anything, and the access counter is not
   moved, which is the same thing `status` has always done.
+- **The daily check has never reached Trading 212.** Every check of deploying
+  ran on a copy of the project with a key that is not a key and the app's
+  stop-all switch already on, so no check could start. Its tests start no
+  process. The first real daily check is the first time this path runs, and
+  everything under "The live half has never run" applies to it.
+- **The app trades only while it is open.** The scheduler is a thread in the
+  server. A weekday with the app closed is shown as missed and never made up.
+- **The app finds the practice account in its own environment.** It does not
+  read `.env`. `T212_ENVIRONMENT=demo` and `T212_API_KEY` must be set where the
+  app is started; only the daily check's process is given them.
+- **Stop all is the app's switch, not the risk layer's.** It stops the daily
+  check, asked when a check is started and again when its process starts the
+  command. A check already inside `strategylab run` is not stopped, and
+  `strategylab run` typed by hand ignores the switch. The risk layer's kill
+  switch is still set by editing `configs/risk_limits.yaml`, which the app never
+  touches; the top bar shows it.
+- **Live figures are not evidence about the strategy.** Return, largest fall
+  and Sharpe are worked out from the equity the venue reported at each check,
+  with the backtest's own functions; Sharpe waits for twenty checks. A strategy
+  that failed the luck test may be deployed, labelled unproven, as `run`
+  already allowed. No win rate or result per trade is shown, because fill
+  prices are not recorded.
+- **One strategy is deployed at a time.** The worker holds one position in one
+  instrument for the whole account, so two deployed strategies would share it.
+- **The deploy code was reviewed, not attacked.** A second assistant probed it
+  on throwaway projects and found that stop all or pause pressed after a check
+  had started did not stop it, a hand-edited `paused` value other than `true`
+  read as not paused, "Check now" could run during the trading day and cache an
+  unfinished day's price for good, and three malformed files that broke the
+  status route or would have ended the scheduler silently. Each is fixed and
+  pinned by a test. It found no way to trade on a live account or for a
+  strategy that is not deployed, and no way for the key to reach a response.
 - **A confirmation says a button was pressed, not that rules were compared.**
   The page sends the content hash of the file it showed the rules for, and the
   server refuses if the file has changed since; an edit to the config or to its

@@ -94,10 +94,12 @@ class Spawned:
     def __init__(self) -> None:
         """Start with nothing asked for."""
         self.calls: list[tuple[list[str], Path, Path]] = []
+        self.venue: list[bool] = []
 
-    def __call__(self, command: list[str], root: Path, log: Path) -> None:
+    def __call__(self, command: list[str], root: Path, log: Path, venue: bool = False) -> None:
         """Record one request to start a process, and start none."""
         self.calls.append((command, root, log))
+        self.venue.append(venue)
 
 
 def _start(project: Path, strategy: StrategyFile, kind: str = "luck_test") -> dict[str, Any]:
@@ -146,8 +148,8 @@ def test_a_line_that_is_not_a_trial_line_is_not_progress(line: str) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_kinds_are_a_search_and_a_search_with_the_trials_the_gate_needs() -> None:
-    assert JOB_KINDS == {"search": 0, "luck_test": RELIABLE_TRIALS}
+def test_the_kinds_are_two_searches_and_the_daily_check() -> None:
+    assert JOB_KINDS == {"search": 0, "luck_test": RELIABLE_TRIALS, "daily_check": 0}
 
 
 @pytest.mark.parametrize(("kind", "trials"), [("search", "0"), ("luck_test", str(RELIABLE_TRIALS))])
