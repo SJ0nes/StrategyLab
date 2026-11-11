@@ -149,7 +149,12 @@ def test_a_line_that_is_not_a_trial_line_is_not_progress(line: str) -> None:
 
 
 def test_the_kinds_are_two_searches_and_the_daily_check() -> None:
-    assert JOB_KINDS == {"search": 0, "luck_test": RELIABLE_TRIALS, "daily_check": 0}
+    assert JOB_KINDS == {
+        "search": 0,
+        "luck_test": RELIABLE_TRIALS,
+        "daily_check": 0,
+        "final_exam": 0,
+    }
 
 
 @pytest.mark.parametrize(("kind", "trials"), [("search", "0"), ("luck_test", str(RELIABLE_TRIALS))])

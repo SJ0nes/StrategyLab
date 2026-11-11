@@ -64,6 +64,7 @@ from strategylab.api.deployment import (
     window_refusal,
 )
 from strategylab.api.drafts import confirmation
+from strategylab.api.history import latest_search
 from strategylab.api.reading import (
     Unreadable,
     count_or_none,
@@ -83,10 +84,23 @@ JOB_SCHEMA_VERSION = 1
 #: The daily check: one bar of ``strategylab run`` for the deployed strategy.
 DAILY_CHECK = "daily_check"
 
+#: The final exam: ``strategylab validate`` on a search whose luck test passed.
+#: It spends one permanent read of the held-back years (``docs/decisions/0020``).
+FINAL_EXAM = "final_exam"
+
+#: What the operator types to take the final exam. Not the strategy's name,
+#: which is what deploying asks for: the two must not be confused.
+EXAM_PHRASE = "SPEND ONE LOOK"
+
 #: Every kind of job, and the surrogate trials it runs. ``search`` runs none;
 #: ``luck_test`` runs the number the noise gate needs to reach a verdict, and
 #: no other number is on offer; the daily check is not a search and runs none.
-JOB_KINDS: dict[str, int] = {"search": 0, "luck_test": RELIABLE_TRIALS, DAILY_CHECK: 0}
+JOB_KINDS: dict[str, int] = {
+    "search": 0,
+    "luck_test": RELIABLE_TRIALS,
+    DAILY_CHECK: 0,
+    FINAL_EXAM: 0,
+}
 
 #: Exit code the search command ends with when it stopped because it was asked.
 STOPPED_EXIT_CODE = 3
@@ -204,6 +218,8 @@ def command_for(record: dict[str, Any], root: Path) -> list[str]:
         raise JobRefused("the strategy file has changed since the job was started")
     if kind == DAILY_CHECK:
         return _daily_check_command(root, strategy)
+    if kind == FINAL_EXAM:
+        return _final_exam_command(root, record)
     return [
         sys.executable,
         "-P",
@@ -253,6 +269,61 @@ def _daily_check_command(root: Path, strategy: StrategyFile) -> list[str]:
     if not (root / path).is_file():
         raise JobRefused("the deployed search's file is not in state/")
     return [sys.executable, "-P", "-m", "strategylab.cli", "run", path.as_posix()]
+
+
+def exam_refusal(root: Path, strategy: StrategyFile) -> tuple[str | None, str | None]:
+    """Say why a strategy may not take the final exam, or which search it would take it on.
+
+    Args:
+        root: The project root.
+        strategy: The strategy, as the registry found it now.
+
+    Returns:
+        ``(None, artifact)`` when the newest readable search on the file as it
+        is now passed the luck test and this is not a git worktree; otherwise
+        ``(reason, None)``. ``strategylab validate`` checks the gate itself as
+        well; this is asked first so the window can say so before anything
+        starts.
+    """
+    if (root / ".git").is_file():
+        return (
+            "this is a git worktree, whose protocol keeps its own count of looks; "
+            "take the final exam from the main checkout",
+            None,
+        )
+    search = latest_search(root, strategy)
+    if search is None or search["config_changed_since"]:
+        return "no search on the strategy file as it is now", None
+    if search["gate"]["status"] != "passed":
+        return "its newest search did not pass the luck test", None
+    artifact = str(search["artifact"])
+    if ARTIFACT_NAME.fullmatch(artifact) is None:
+        return "the search's file name is not one this app reads", None
+    return None, artifact
+
+
+def _final_exam_command(root: Path, record: dict[str, Any]) -> list[str]:
+    """Build the final exam's command from its record.
+
+    Args:
+        root: The project root.
+        record: The job record, naming the search it was started on.
+
+    Returns:
+        This interpreter with ``-P``, ``strategylab validate``, and the search's
+        path under ``state/``.
+
+    Raises:
+        JobRefused: If the record names no search file, or one that is not
+            there.
+    """
+    artifact = record.get("artifact")
+    if not isinstance(artifact, str) or ARTIFACT_NAME.fullmatch(artifact) is None:
+        raise JobRefused("the exam's search file name is not one this app reads")
+    path = Path("state") / artifact
+    if not (root / path).is_file():
+        raise JobRefused("the exam's search file is not in state/")
+    return [sys.executable, "-P", "-m", "strategylab.cli", "validate", path.as_posix()]
 
 
 def job_environment(environ: Mapping[str, str], venue: bool = False) -> dict[str, str]:
@@ -526,6 +597,7 @@ def start_job(
     now: datetime,
     spawn: Callable[[list[str], Path, Path], None] | None = None,
     environ: Mapping[str, str] | None = None,
+    phrase: str | None = None,
 ) -> dict[str, Any]:
     """Start a job, unless one is running.
 
@@ -542,6 +614,8 @@ def start_job(
             tests pass a stand-in and start none.
         environ: The server's environment, for whether the practice account
             is set. ``None`` reads this process's own.
+        phrase: What the operator typed, for the final exam alone, which needs
+            :data:`EXAM_PHRASE`.
 
     Returns:
         The job, as :func:`read_job` reports it.
@@ -561,6 +635,13 @@ def start_job(
             "the strategy's rules have not been confirmed for the file as it is now; "
             "read them on its Dashboard first"
         )
+    artifact: str | None = None
+    if kind == FINAL_EXAM:
+        if (phrase or "").strip() != EXAM_PHRASE:
+            raise JobRefused(f"type {EXAM_PHRASE} to take the final exam")
+        reason, artifact = exam_refusal(root, strategy)
+        if reason is not None:
+            raise JobRefused(reason)
     if kind == DAILY_CHECK:
         refusal = check_refusal(
             root, strategy.id, os.environ if environ is None else environ
@@ -595,6 +676,8 @@ def start_job(
             "trials": JOB_KINDS[kind],
             "started_at": stamp.isoformat(),
         }
+        if artifact is not None:
+            record["artifact"] = artifact
         try:
             with (directory / f"{job_id}.json").open("x", encoding="utf-8") as handle:
                 json.dump(record, handle, indent=2)

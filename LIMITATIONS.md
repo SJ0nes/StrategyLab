@@ -240,15 +240,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2437 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2463 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — thirty
+server and what it reports, and the commit-time credential scan — thirty-one
 areas, one per test file.
-520 of the 2437 are the risk layer's,
+520 of the 2463 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -976,7 +976,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in fifteen
+  `tests/mutation/` now holds a harness and a list of named mutants in sixteen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
@@ -984,7 +984,7 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and it can trade on the practice account.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has sixteen
+for a desktop app (`docs/decisions/0014`). It has nineteen
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
 each strategy config with its newest search, its rules in words, where it
@@ -995,13 +995,15 @@ something: one remembers that the window's tour has been seen, one records that 
 starts a job and one asks a running job to stop. No job starts for a strategy
 whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the
-hundred the noise gate needs (`docs/decisions/0017`), or the deployed
-strategy's daily check, `strategylab run` on its search (`docs/decisions/0019`).
+hundred the noise gate needs (`docs/decisions/0017`), the deployed
+strategy's daily check, `strategylab run` on its search (`docs/decisions/0019`),
+or the final exam, `strategylab validate` on a search whose luck test passed,
+started through a route of its own with SPEND ONE LOOK typed
+(`docs/decisions/0020`).
 One report and four routes deploy a strategy, pause, resume and undeploy it,
 and turn the app's stop-all switch on and off; while the server runs, a thread
 starts the daily check once a weekday after 17:30 UTC. The server cannot run
-`validate` or `fetch`, and reads no held-back bar. What is worth knowing about
-it:
+`fetch`. What is worth knowing about it:
 
 - **Its guard was reviewed, not attacked.** Every request must name this machine
   in its Host header, carry no foreign Origin, and present a token made for that
@@ -1022,6 +1024,12 @@ it:
   held-back years beside the in-sample ones, and checking its hash means loading
   the file. No held-back bar is used for anything, and the access counter is not
   moved, which is the same thing `status` has always done.
+- **One button spends what cannot be recovered.** The final exam reads the
+  held-back years and adds a permanent look to `protocol.yaml`. It is locked
+  until the newest search on the file as it is passed the luck test, asks for a
+  phrase, and is refused in a git worktree; a copy of the project with no `.git`
+  is not refused, and a look spent there counts only there. It has never run
+  from the app: its tests start a stand-in, and the assistant never takes it.
 - **The daily check has never reached Trading 212.** Every check of deploying
   ran on a copy of the project with a key that is not a key and the app's
   stop-all switch already on, so no check could start. Its tests start no

@@ -57,7 +57,15 @@ from strategylab.api.deployment import (
 )
 from strategylab.api.drafts import StaleConfirmation, confirm
 from strategylab.api.history import list_exams, list_searches, read_graveyard, search_detail
-from strategylab.api.jobs import JOB_KINDS, JobRefused, list_jobs, request_stop, start_job
+from strategylab.api.jobs import (
+    FINAL_EXAM,
+    JOB_KINDS,
+    JobRefused,
+    exam_refusal,
+    list_jobs,
+    request_stop,
+    start_job,
+)
 from strategylab.api.live import read_live
 from strategylab.api.overview import read_overview
 from strategylab.api.reading import plain_reason
@@ -273,6 +281,27 @@ def create_app(
             return JSONResponse({"detail": "no such kind of job"}, status_code=404)
         try:
             job = start_job(root, strategy, kind, datetime.now(UTC), environ=environ)
+        except JobRefused as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return JSONResponse(job, status_code=201)
+
+    @application.get("/api/strategies/{strategy_id}/final-exam")
+    def exam_status(strategy_id: str) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        reason, artifact = exam_refusal(root, strategy)
+        return {"refusal": reason, "artifact": artifact}
+
+    @application.post("/api/strategies/{strategy_id}/final-exam")
+    def final_exam(strategy_id: str, typed: Typed) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        try:
+            job = start_job(
+                root, strategy, FINAL_EXAM, datetime.now(UTC), environ=environ, phrase=typed.typed
+            )
         except JobRefused as exc:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         return JSONResponse(job, status_code=201)
