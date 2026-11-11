@@ -9,6 +9,11 @@ export const JOB_WORDS: Record<JobKind, { title: string; does: string; takes: st
     does: "Replays every version of the strategy on old prices and records them all. It runs no luck test, so the result cannot be deployed.",
     takes: "Takes a few minutes. It cannot be stopped once started.",
   },
+  daily_check: {
+    title: "Check today's price now",
+    does: "Runs the deployed strategy's daily check: fetches the latest prices, decides, and sends at most one order to the practice account.",
+    takes: "Takes under a minute. It cannot be stopped once started.",
+  },
   luck_test: {
     title: "Run the luck test",
     does: "Runs the search again, then repeats it on 100 scrambled price histories to see whether the best version beats luck.",
@@ -21,8 +26,8 @@ export function jobLine(job: Job): string {
   const done = job.progress === null ? "" : ` ${job.progress.finished} of ${job.progress.total} scrambled histories done.`;
   switch (job.status) {
     case "running":
-      return job.kind === "search"
-        ? "Running. A search without a luck test reports no progress until it ends."
+      return job.kind !== "luck_test"
+        ? "Running. It reports no progress until it ends."
         : `Running.${done === "" ? " The first search is under way; scrambled histories come next." : done}`;
     case "stopping":
       return `Stopping.${done} The histories already being worked on finish first, which can take ten minutes or more.`;

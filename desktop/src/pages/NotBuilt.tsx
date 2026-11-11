@@ -1,10 +1,9 @@
 import { SECTIONS, type SectionId } from "../components/Nav";
 
 /** What each unbuilt section will hold, so its empty page says more than "soon". */
-type Unbuilt = Extract<SectionId, "trades" | "compare">;
+type Unbuilt = Extract<SectionId, "compare">;
 
 const WILL_HOLD: Record<Unbuilt, string> = {
-  trades: "Every order a deployed strategy has placed, and what it decided on each day.",
   compare: "Two strategies side by side.",
 };
 

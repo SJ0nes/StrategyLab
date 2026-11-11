@@ -48,7 +48,20 @@ process: closing the window does not stop it, and the next launch shows where
 it has got to. A luck test can be asked to stop; it ends after the trials in
 hand, writing no result. `docs/decisions/0017` records the design.
 
-Deploying, the final exam and the live check are drawn and disabled.
+**Deploy…**, on a draft's last step, deploys it to the practice account once
+its name is typed; an unproven strategy says so. The deployed strategy's
+Dashboard shows its return, largest fall and live Sharpe as the venue
+reported its account at each daily check, what it decided and why, its
+position, the next check and any missed, with Pause, Undeploy and Check now.
+Trades lists its orders and every day's decision. **Stop all trading** in the
+top bar stops the daily check; a dialog asks before trading is allowed again.
+Rules: `docs/decisions/0019`.
+
+The app trades only with the practice account set in the environment it is
+started from - `T212_ENVIRONMENT=demo` and `T212_API_KEY` - and only while it
+is open. It does not read `.env`.
+
+The final exam is drawn and disabled.
 
 The first launch offers the **tour**: a welcome, then seven stops, each lit
 with a spotlight and explained in a sentence, worded for what the app does

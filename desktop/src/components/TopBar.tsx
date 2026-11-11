@@ -1,4 +1,4 @@
-import type { Job, JobKind, Overview, Strategy } from "../api";
+import type { DeploymentStatus, Job, JobKind, Overview, Strategy } from "../api";
 
 interface Props {
   overview: Overview;
@@ -8,11 +8,13 @@ interface Props {
   job: Job | null;
   onOpenJob: (kind: JobKind) => void;
   onTour: () => void;
+  deployment: DeploymentStatus | null;
+  onStopAll: () => void;
 }
 
 /** What the running-job button says. */
 export function jobLabel(job: Job): string {
-  const name = job.kind === "luck_test" ? "Luck test" : "Search";
+  const name = job.kind === "luck_test" ? "Luck test" : job.kind === "daily_check" ? "Daily check" : "Search";
   const state = job.status === "stopping" ? "stopping" : "running";
   return job.progress === null ? `${name} ${state}` : `${name} ${state}: ${job.progress.finished} of ${job.progress.total}`;
 }
@@ -25,7 +27,9 @@ export function accountLabel(venue: Overview["venue"]): string {
   return venue.environment === "demo" ? "Practice account" : "Venue not set to practice";
 }
 
-export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour }: Props) {
+export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour, deployment, onStopAll }: Props) {
+  const deployed = deployment?.deployment != null && deployment.deployment.available ? deployment.deployment : null;
+  const stopped = deployment?.stop_all.stopped ?? false;
   const { prices } = overview;
   return (
     <div className="bar">
@@ -40,21 +44,39 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour }:
           onChange={(event) => onChoose(event.target.value)}
           disabled={overview.strategies.length === 0}
         >
-          {/* Nothing can be deployed yet, so the only group is drafts. */}
+          {deployed !== null && (
+            <optgroup label="Deployed">
+              {overview.strategies
+                .filter((item) => item.id === deployed.strategy_id)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+            </optgroup>
+          )}
           <optgroup label="Drafts, not deployed">
-            {overview.strategies.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
+            {overview.strategies
+              .filter((item) => item.id !== deployed?.strategy_id)
+              .map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
           </optgroup>
         </select>
-        {strategy !== undefined && (
-          <span className="live off">
-            <i />
-            Draft
-          </span>
-        )}
+        {strategy !== undefined &&
+          (deployed !== null && deployed.strategy_id === strategy.id ? (
+            <span className={`live${deployed.paused || stopped ? " off" : ""}`}>
+              <i />
+              {deployed.paused ? "Paused" : stopped ? "Stopped" : "Running"}
+            </span>
+          ) : (
+            <span className="live off">
+              <i />
+              Draft
+            </span>
+          ))}
       </div>
       <div className="right">
         {job !== null && (
@@ -74,6 +96,20 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour }:
           )}
         </span>
         <span className="pill">{accountLabel(overview.venue)}</span>
+        {overview.kill_switch === true && (
+          <span className="pill bad" title="Set in configs/risk_limits.yaml; the risk layer refuses every order">
+            Risk kill switch on
+          </span>
+        )}
+        <button type="button" className="btn small" onClick={onStopAll} disabled={deployment === null}>
+          {stopped ? (
+            <>
+              <span className="down">■</span> All trading stopped
+            </>
+          ) : (
+            "Stop all trading"
+          )}
+        </button>
         <button type="button" className="btn small" data-tour="help" onClick={onTour}>
           ▶ Tour
         </button>

@@ -100,7 +100,7 @@ describe("the path to deployment", () => {
     expect(actions(few)[3]).toBe("luck_test");
   });
 
-  it("never offers deploying, even after a pass", () => {
+  it("offers deploying once a backtest of the confirmed rules has run, and nothing blocks it", () => {
     const passed = {
       ...DRAFT,
       confirmed: true,
@@ -109,7 +109,31 @@ describe("the path to deployment", () => {
 
     expect(states(passed)).toEqual(["done", "done", "done", "done", "waiting"]);
     expect(actions(passed)).toEqual([null, null, null, null, null]);
-    expect(draftSteps(passed)[4]?.note).toBe("Deploying is not built yet.");
+    expect(draftSteps(passed, null).map((step) => step.action)).toEqual([null, null, null, null, "deploy"]);
+    expect(draftSteps(passed, null)[4]?.note).toBe("It passed the luck test.");
+  });
+
+  it("offers deploying an unproven strategy, and says it is unproven", () => {
+    const failed = { ...DRAFT, confirmed: true, latest_search: { ...SEARCH, gate: GATE } };
+
+    const steps = draftSteps(failed, null);
+
+    expect(steps[4]?.action).toBe("deploy");
+    expect(steps[4]?.note).toContain("Unproven");
+  });
+
+  it("says what blocks deploying, and offers nothing", () => {
+    const tested = { ...DRAFT, confirmed: true, latest_search: SEARCH };
+
+    const steps = draftSteps(tested, "the practice account is not set: T212_API_KEY is missing");
+
+    expect(steps[4]?.action).toBeNull();
+    expect(steps[4]?.note).toBe("The practice account is not set: T212_API_KEY is missing.");
+  });
+
+  it("offers no deploying before the rules are confirmed and backtested, whatever else holds", () => {
+    expect(draftSteps(DRAFT, null)[4]?.action).toBeNull();
+    expect(draftSteps({ ...DRAFT, confirmed: true }, null)[4]?.action).toBeNull();
   });
 
   it("asks for the rules again when the file changed since they were confirmed", () => {
@@ -213,7 +237,18 @@ describe("the draft page", () => {
     expect(onStart.mock.calls).toEqual([["search"], ["luck_test"]]);
   });
 
-  it("keeps Deploy disabled whatever the steps say", () => {
+  it("opens the deploy dialog from the last step when it may", () => {
+    const onDeploy = vi.fn();
+    const tested = { ...DRAFT, confirmed: true, latest_search: SEARCH };
+    render(<Dashboard strategy={tested} onStart={onStart} onChanged={onChanged} blocker={null} onDeploy={onDeploy} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Deploy…" }));
+
+    expect(onDeploy).toHaveBeenCalledTimes(1);
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("keeps Deploy disabled when something blocks it", () => {
     const passed = {
       ...DRAFT,
       confirmed: true,

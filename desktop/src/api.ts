@@ -229,7 +229,7 @@ export const getExams = (id: string): Promise<Exam[]> => get<Exam[]>(`${strategy
 export const getGraveyard = (): Promise<Graveyard | Missing> => get<Graveyard | Missing>("/api/graveyard");
 
 /** The kinds of work the window can start. The server's closed list. */
-export type JobKind = "search" | "luck_test";
+export type JobKind = "search" | "luck_test" | "daily_check";
 
 /** One piece of work started from the window, and where it has got to. */
 export interface Job {
@@ -293,3 +293,84 @@ export const confirmStrategy = (id: string, configHash: string): Promise<{ confi
 
 /** Tell the server the tour has been seen or skipped, so it is not offered at the next launch. */
 export const markTourSeen = (): Promise<{ tour_seen: boolean }> => post<{ tour_seen: boolean }>("/api/tour/seen");
+
+/** The strategy deployed to the practice account, as the server reports it. */
+export interface Deployed {
+  available: true;
+  strategy_id: string;
+  artifact: string | null;
+  /** The version trading, setting name to bars. */
+  params: Record<string, number> | null;
+  /** Whether its luck test passed. Unproven strategies may still trade on the practice account. */
+  proven: boolean;
+  deployed_at: string | null;
+  paused: boolean;
+  paused_at: string | null;
+  /** False when the strategy's file has changed since, or gone; `problem` says which. */
+  current: boolean;
+  problem: string | null;
+}
+
+/** The account at one daily check. Money is in the account's currency. */
+export interface Check {
+  bar_date: string | null;
+  recorded_at: string;
+  equity: number;
+  cash: number | null;
+  currency: string | null;
+  position_quantity: number | null;
+  order_side: string | null;
+  order_outcome: "none" | "sent" | "failed" | null;
+}
+
+/** One live decision and the risk layer's answer. */
+export interface Decision {
+  bar_date: string | null;
+  recorded_at: string;
+  action: string | null;
+  risk_verdict: string | null;
+  risk_reason: string | null;
+  conditions_met: string[];
+  conditions_failed: string[];
+}
+
+export interface LiveFigures {
+  /** Percentages, or null with the reason in `why_missing`. */
+  return_pct: number | null;
+  sharpe: number | null;
+  max_drawdown_pct: number | null;
+  sent: number;
+  failed: number;
+  checks: number;
+  why_missing: Record<string, string>;
+}
+
+export interface Live {
+  available: true;
+  checks: Check[];
+  figures: LiveFigures;
+  decisions: Decision[];
+  /** True when the daily loss limit has locked buying today; null when unknown. */
+  loss_lock: boolean | null;
+}
+
+export interface DeploymentStatus {
+  deployment: Deployed | Missing | null;
+  stop_all: { stopped: boolean; stopped_at: string | null; damaged: boolean };
+  /** Why the practice account is not set, or null when it is. */
+  venue_unready: string | null;
+  schedule: { next_check: string | null; why_not: string | null; missed: string[]; checked_today: boolean };
+  live: Live | Missing | null;
+}
+
+export const getDeployment = (): Promise<DeploymentStatus> => get<DeploymentStatus>("/api/deployment");
+
+/** Deploy a strategy's newest searched version. `typed` is the name as the operator typed it. */
+export const deployStrategy = (id: string, typed: string): Promise<Deployed> =>
+  post<Deployed>(`${strategyPath(id)}/deploy`, { typed });
+
+export const changeDeployment = (action: "pause" | "resume" | "undeploy"): Promise<unknown> =>
+  post<unknown>(`/api/deployment/${action}`);
+
+export const setStopAll = (stopped: boolean): Promise<DeploymentStatus["stop_all"]> =>
+  post<DeploymentStatus["stop_all"]>("/api/stop-all", { stopped });

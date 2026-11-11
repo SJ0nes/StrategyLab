@@ -1,18 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, type JobKind, type Jobs, type Overview, getJobs, getOverview, markTourSeen } from "./api";
+import {
+  ApiError,
+  type DeploymentStatus,
+  type JobKind,
+  type Jobs,
+  type Overview,
+  getDeployment,
+  getJobs,
+  getOverview,
+  markTourSeen,
+  setStopAll,
+} from "./api";
+import { DeployDialog } from "./components/DeployDialog";
 import { JobDialog } from "./components/JobDialog";
 import { Tour, Welcome, confetti } from "./components/Tour";
 import { Nav, SECTIONS, type SectionId } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
 import { Backtest } from "./pages/Backtest";
 import { Dashboard } from "./pages/Dashboard";
+import { Deployed } from "./pages/Deployed";
 import { Improve } from "./pages/Improve";
 import { NotBuilt } from "./pages/NotBuilt";
 import { Tests } from "./pages/Tests";
+import { Trades } from "./pages/Trades";
 
 /** How often the window asks what is running, in milliseconds. */
 export const JOB_POLL_MS = 3000;
+
+/** How often the window asks for the deployed strategy's state, in milliseconds. */
+export const DEPLOYMENT_POLL_MS = 30000;
+
+/** Why a strategy cannot be deployed now, from what the server says; null when it can. */
+export function deployBlocker(status: DeploymentStatus | null, strategyId: string): string | null {
+  if (status === null) {
+    return "the deployment could not be read";
+  }
+  const { deployment } = status;
+  if (deployment !== null) {
+    if (!deployment.available) {
+      return "the deployment record is damaged; undeploy it from the deployed strategy's page";
+    }
+    return deployment.strategy_id === strategyId
+      ? "it is already deployed"
+      : `${deployment.strategy_id} is deployed, and only one is deployed at a time`;
+  }
+  return status.venue_unready;
+}
 
 /** The section named in the address bar, or the dashboard. */
 function sectionFromHash(hash: string): SectionId {
@@ -41,6 +75,9 @@ export function App() {
   const [tour, setTour] = useState<"welcome" | "touring" | null>(null);
   const offered = useRef(false);
   const confettiRef = useRef<HTMLCanvasElement>(null);
+  const [deployment, setDeployment] = useState<DeploymentStatus | null>(null);
+  const [deploying, setDeploying] = useState(false);
+  const [allowing, setAllowing] = useState(false);
 
   useEffect(() => {
     getOverview()
@@ -52,6 +89,20 @@ export function App() {
         }),
       );
   }, [ended, changed]);
+
+  const askDeployment = useCallback(() => {
+    getDeployment()
+      // Shown only if it is what the server sends for this route; anything else
+      // reads as "could not be read", which keeps every control off.
+      .then((status) => setDeployment(typeof status === "object" && status !== null && "stop_all" in status ? status : null))
+      .catch(() => setDeployment(null));
+  }, []);
+
+  useEffect(() => {
+    askDeployment();
+    const timer = window.setInterval(askDeployment, DEPLOYMENT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [askDeployment, ended, changed]);
 
   const askJobs = useCallback(() => {
     getJobs()
@@ -127,6 +178,16 @@ export function App() {
         job={jobs?.current ?? null}
         onOpenJob={setDialog}
         onTour={() => setTour("touring")}
+        deployment={deployment}
+        onStopAll={() => {
+          if (deployment?.stop_all.stopped) {
+            setAllowing(true);
+          } else {
+            setStopAll(true)
+              .catch(() => undefined)
+              .finally(() => setChanged((count) => count + 1));
+          }
+        }}
       />
       <Nav current={section} />
       <main id="scroll">
@@ -138,11 +199,25 @@ export function App() {
             </div>
           ) : section === "dashboard" ? (
             <>
-              <Dashboard
-                strategy={strategy}
-                onStart={setDialog}
-                onChanged={() => setChanged((count) => count + 1)}
-              />
+              {deployment?.deployment != null &&
+              deployment.deployment.available &&
+              deployment.deployment.strategy_id === strategy.id ? (
+                <Deployed
+                  strategy={strategy}
+                  deployed={deployment.deployment}
+                  status={deployment}
+                  onStart={setDialog}
+                  onChanged={() => setChanged((count) => count + 1)}
+                />
+              ) : (
+                <Dashboard
+                  strategy={strategy}
+                  onStart={setDialog}
+                  onChanged={() => setChanged((count) => count + 1)}
+                  blocker={deployBlocker(deployment, strategy.id)}
+                  onDeploy={() => setDeploying(true)}
+                />
+              )}
               {overview.unreadable_configs.map((file) => (
                 <div className="empty" key={file.config}>
                   <b>
@@ -152,6 +227,8 @@ export function App() {
                 </div>
               ))}
             </>
+          ) : section === "trades" ? (
+            <Trades strategy={strategy} status={deployment} />
           ) : section === "tests" ? (
             <Tests overview={overview} strategy={strategy} key={`${strategy.id}-${ended}`} />
           ) : section === "backtest" ? (
@@ -166,6 +243,43 @@ export function App() {
       {tour === "welcome" && <Welcome onStart={() => setTour("touring")} onSkip={() => endTour(false)} />}
       {tour === "touring" && <Tour onGo={go} onEnd={endTour} />}
       <canvas id="confetti" ref={confettiRef} hidden />
+      {deploying && strategy !== undefined && (
+        <DeployDialog
+          strategy={strategy}
+          onClose={() => setDeploying(false)}
+          onDone={() => {
+            setDeploying(false);
+            setChanged((count) => count + 1);
+          }}
+        />
+      )}
+      {allowing && (
+        <div className="modal open" role="dialog" aria-modal="true" aria-labelledby="allow-title">
+          <div className="dialog">
+            <h2 id="allow-title" style={{ fontSize: "var(--t-l)" }}>
+              Allow trading again?
+            </h2>
+            <p>The deployed strategy's daily check runs again from the next weekday after the close.</p>
+            <div className="between" style={{ justifyContent: "flex-end" }}>
+              <button type="button" className="btn" onClick={() => setAllowing(false)}>
+                Keep stopped
+              </button>
+              <button
+                type="button"
+                className="btn go"
+                onClick={() => {
+                  setAllowing(false);
+                  setStopAll(false)
+                    .catch(() => undefined)
+                    .finally(() => setChanged((count) => count + 1));
+                }}
+              >
+                Allow trading
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {dialog !== null && strategy !== undefined && (
         <JobDialog
           strategyId={strategy.id}

@@ -135,12 +135,12 @@ describe("the app", () => {
   });
 
   it("says a section is not built instead of drawing an empty one", async () => {
-    window.location.hash = "#trades";
+    window.location.hash = "#compare";
     answerWith(OVERVIEW);
     render(<App />);
 
     expect(await screen.findByText("Not built yet")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Trades" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Compare" })).toHaveAttribute("aria-current", "page");
   });
 
   it("says what went wrong when the server refuses it", async () => {

@@ -34,8 +34,8 @@ export interface Step {
   title: string;
   state: StepState;
   note: string;
-  /** The job a step's button starts, the confirmation it records, or nothing. */
-  action: JobKind | "confirm" | null;
+  /** The job a step's button starts, the confirmation it records, the deploy dialog, or nothing. */
+  action: JobKind | "confirm" | "deploy" | null;
 }
 
 /**
@@ -46,7 +46,7 @@ export interface Step {
  * offers no second try: the test is seeded, so the same file gives the same
  * answer, and trying seeds until one passes is the luck the test measures.
  */
-export function draftSteps(strategy: Strategy): Step[] {
+export function draftSteps(strategy: Strategy, blocker: string | null = "deploying is not available"): Step[] {
   const search = strategy.latest_search;
   const current = search !== null && !search.config_changed_since ? search : null;
   const confirmed = strategy.confirmed;
@@ -94,11 +94,18 @@ export function draftSteps(strategy: Strategy): Step[] {
         : "Must beat 95 of 100 scrambled price histories. About an hour.",
     action: confirmed && backtested && !passed && !failed ? "luck_test" : null,
   };
+  const ready = confirmed && backtested && blocker === null;
   const deploy: Step = {
     title: "Deploy to practice account",
-    state: "waiting",
-    note: passed ? "Deploying is not built yet." : "Unlocks only after the luck test passes.",
-    action: null,
+    state: ready ? "here" : "waiting",
+    note: !(confirmed && backtested)
+      ? "Unlocks after a backtest of the confirmed rules."
+      : blocker !== null
+        ? `${blocker[0]?.toUpperCase()}${blocker.slice(1)}.`
+        : passed
+          ? "It passed the luck test."
+          : "Unproven: it did not pass the luck test. It may still run on the practice account.",
+    action: ready ? "deploy" : null,
   };
   return [written, confirm, backtest, luck, deploy];
 }
@@ -107,6 +114,8 @@ const BUTTON: Record<NonNullable<Step["action"]>, string> = {
   confirm: "Rules are right",
   search: "Run backtest",
   luck_test: "Run luck test",
+  deploy: "Deploy…",
+  daily_check: "Check now",
 };
 
 interface Props {
@@ -114,16 +123,23 @@ interface Props {
   onStart: (kind: JobKind) => void;
   /** Read the project again: something on this page has changed it. */
   onChanged: () => void;
+  /** Why the strategy cannot be deployed now, or null when it can. */
+  blocker?: string | null;
+  onDeploy?: () => void;
 }
 
-export function Dashboard({ strategy, onStart, onChanged }: Props) {
+export function Dashboard({ strategy, onStart, onChanged, blocker = "deploying is not available", onDeploy }: Props) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { rules, source } = strategy;
   const fromVideo = source?.available === true;
-  const steps = draftSteps(strategy);
+  const steps = draftSteps(strategy, blocker);
 
   function press(action: NonNullable<Step["action"]>) {
+    if (action === "deploy") {
+      onDeploy?.();
+      return;
+    }
     if (action !== "confirm") {
       onStart(action);
       return;
@@ -247,7 +263,7 @@ export function Dashboard({ strategy, onStart, onChanged }: Props) {
                     {BUTTON[step.action]}
                   </button>
                 )}
-                {index === steps.length - 1 && (
+                {index === steps.length - 1 && step.action === null && (
                   <button type="button" className="btn small" disabled>
                     Deploy…
                   </button>
