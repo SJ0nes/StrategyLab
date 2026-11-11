@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StrategyLab App Prototype</title>
+<style>
+  /* Layout idea: a trading dashboard. Top bar holds the strategy switcher and its status; a left rail holds six
+     sections; the work area opens on the Dashboard for the chosen strategy. Window-high shell, scrolling inside
+     the work area only; root font size follows window width so it fills a laptop or a 2560 monitor alike.
+     Colours are the project's own report tokens; one accent, semantic green/red for gain and loss. */
+  :root {
+    --font: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --font-text: ui-sans-serif, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    --t-xs: .8rem; --t-s: .9rem; --t-m: 1rem; --t-l: 1.3rem; --t-xl: 1.9rem;
+    --s1: .25rem; --s2: .5rem; --s3: 1rem; --s4: 1.5rem; --s5: 2rem;
+    --nav-w: 13rem; --r: .6rem; --ease: cubic-bezier(.2, .8, .2, 1);
+    --ink: #16181d; --ink-soft: #5c6270; --rule: #d9dce3;
+    --page: #ffffff; --panel: #f6f7f9; --rail: #eef0f4;
+    --accent: #ff5f1f; --accent-ink: #b23c08; --accent-bg: #fff1ea;
+    --good: #1a7f4b; --good-bg: #e6f4ec; --bad: #b3261e; --bad-bg: #fbeae8;
+    --warn: #8a5a00; --warn-bg: #fff6ea; --warn-rule: #e0a558;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ink: #e7e9ee; --ink-soft: #99a0ae; --rule: #2c313b; --page: #14161a; --panel: #1b1e24; --rail: #101216;
+      --accent-ink: #ff8a57; --accent-bg: #2b1a12; --good: #5fd08f; --good-bg: #12281c; --bad: #ff8a80; --bad-bg: #2e1614;
+      --warn: #e6b566; --warn-bg: #2a2113; --warn-rule: #8a6427;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e7e9ee; --ink-soft: #99a0ae; --rule: #2c313b; --page: #14161a; --panel: #1b1e24; --rail: #101216;
+    --accent-ink: #ff8a57; --accent-bg: #2b1a12; --good: #5fd08f; --good-bg: #12281c; --bad: #ff8a80; --bad-bg: #2e1614;
+    --warn: #e6b566; --warn-bg: #2a2113; --warn-rule: #8a6427;
+  }
+  * { box-sizing: border-box; }
+  html { height: 100%; font-size: clamp(12.5px, 7.5px + .37vw, 17px); }
+  body { height: 100%; margin: 0; background: var(--page); color: var(--ink); font-family: var(--font-text); font-size: var(--t-m); line-height: 1.45; font-variant-numeric: tabular-nums; }
+  .app { height: 100%; display: grid; grid-template-columns: var(--nav-w) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  .sample { grid-column: 1 / -1; background: var(--warn-bg); border-bottom: 1px solid var(--warn-rule); color: var(--warn); padding: var(--s1) var(--s3); font-size: var(--t-xs); }
+  .bar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; padding: var(--s2) var(--s4); border-bottom: 1px solid var(--rule); }
+  .brand { font-family: var(--font); font-weight: 700; letter-spacing: .04em; width: calc(var(--nav-w) - var(--s4)); }
+  .brand span { color: var(--accent-ink); }
+  .pick { display: flex; align-items: center; gap: var(--s2); }
+  .pick label { font-size: var(--t-xs); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  select { font: inherit; font-weight: 600; padding: .45rem 2rem .45rem .8rem; border: 1px solid var(--rule); border-radius: var(--r); background: var(--panel); color: var(--ink); cursor: pointer; }
+  .bar .right { margin-left: auto; display: flex; align-items: center; gap: var(--s3); }
+  nav { background: var(--rail); border-right: 1px solid var(--rule); padding: var(--s3) var(--s2); display: flex; flex-direction: column; gap: var(--s1); overflow-y: auto; }
+  nav a { padding: .6rem var(--s3); border-radius: var(--r); color: var(--ink-soft); text-decoration: none; font-weight: 600; }
+  nav a:hover { background: var(--panel); color: var(--ink); }
+  nav a[aria-current="page"] { background: var(--page); color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+  nav .grp { font-size: var(--t-xs); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; padding: var(--s3) var(--s3) var(--s1); }
+  main { min-width: 0; min-height: 0; overflow: auto; padding: var(--s4) var(--s5) var(--s5); }
+  .wrap { display: flex; flex-direction: column; gap: var(--s4); min-height: 100%; animation: rise .3s var(--ease); }
+  @keyframes rise { from { opacity: 0; transform: translateY(.5rem); } to { opacity: 1; transform: none; } }
+  h1 { font-size: var(--t-xl); margin: 0; font-weight: 650; line-height: 1.15; }
+  h2 { font-size: var(--t-m); margin: 0; font-weight: 600; }
+  p { margin: 0; } .soft { color: var(--ink-soft); } .mono { font-family: var(--font); }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
+  .head p { color: var(--ink-soft); margin-top: .2rem; max-width: 65ch; }
+  .between { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); padding: var(--s3) var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--s3); }
+  .kpi { gap: var(--s1); }
+  .label { font-size: var(--t-xs); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .big { font: 600 var(--t-xl)/1.15 var(--font); }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  .kpi small { color: var(--ink-soft); font-size: var(--t-s); }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr); gap: var(--s3); }
+  .pill { display: inline-block; font-size: var(--t-xs); font-weight: 600; padding: .1rem .7rem; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-soft); white-space: nowrap; }
+  .pill.good { color: var(--good); background: var(--good-bg); border-color: transparent; }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); border-color: transparent; }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
+  .live { display: inline-flex; align-items: center; gap: .4rem; }
+  .live i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: beat 1.8s infinite; }
+  .live.off i { background: var(--warn-rule); animation: none; }
+  @keyframes beat { 0% { box-shadow: 0 0 0 0 rgba(26,127,75,.5); } 100% { box-shadow: 0 0 0 .55rem rgba(26,127,75,0); } }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; background: var(--page); }
+  .seg button { border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: var(--t-s); padding: .25rem .8rem; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
+  button.btn { font: inherit; font-weight: 600; padding: .55rem 1.1rem; border-radius: var(--r); border: 1px solid var(--rule); background: var(--page); color: var(--ink); cursor: pointer; transition: transform .15s var(--ease), border-color .15s; }
+  button.btn:hover { border-color: var(--ink-soft); transform: translateY(-1px); }
+  button.btn.primary { background: var(--ink); color: var(--page); border-color: var(--ink); }
+  button.btn.go { background: var(--accent); color: #1a0d06; border-color: var(--accent); }
+  button.btn.small { padding: .35rem .8rem; font-size: var(--t-s); white-space: nowrap; }
+  button.btn[disabled] { opacity: .45; cursor: not-allowed; transform: none; }
+  a.more { color: var(--accent-ink); font-weight: 600; font-size: var(--t-s); text-decoration: none; } a.more:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .term { border-bottom: 1px dotted var(--ink-soft); cursor: help; position: relative; }
+  .term:hover::after, .term:focus::after { content: attr(data-def); position: absolute; left: 0; top: 100%; z-index: 5; width: 17rem; background: var(--ink); color: var(--page);
+    font: 400 var(--t-s)/1.4 var(--font-text); padding: var(--s2) var(--s3); border-radius: var(--r); margin-top: var(--s1); white-space: normal; text-transform: none; letter-spacing: 0; }
+  .tablewrap { overflow: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: var(--t-xs); font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; }
+  th, td { padding: .5rem var(--s3) .5rem 0; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-family: var(--font); padding-right: 0; }
+  .rows { display: flex; flex-direction: column; }
+  .rowi { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: .5rem 0; border-bottom: 1px solid var(--rule); }
+  .rowi:last-child { border-bottom: 0; } .rowi small { color: var(--ink-soft); display: block; font-size: var(--t-s); }
+  svg { display: block; width: 100%; height: auto; } svg text { font-family: var(--font); font-size: 11px; fill: var(--ink-soft); }
+  .gauge .top2 { display: flex; justify-content: space-between; margin-bottom: var(--s1); font-size: var(--t-s); }
+  .track { height: .55rem; background: var(--rule); border-radius: 999px; overflow: hidden; } .track i { display: block; height: 100%; background: var(--good); border-radius: 999px; }
+  .heat { display: grid; grid-template-columns: auto repeat(6, minmax(2.4rem, 1fr)); gap: .25rem; }
+  .heat .lab { font: var(--t-xs) var(--font); color: var(--ink-soft); display: flex; align-items: center; justify-content: center; padding: 0 var(--s2); }
+  .cell { border: 0; border-radius: .3rem; height: 2.7rem; font: 600 var(--t-s) var(--font); cursor: pointer; position: relative; min-width: 0; transition: transform .12s var(--ease); }
+  .cell:hover { transform: scale(1.06); z-index: 1; } .cell.sel { outline: .2rem solid var(--accent); outline-offset: 1px; z-index: 1; }
+  .cell.live::before { content: "LIVE"; position: absolute; top: .1rem; left: .25rem; font-size: .55rem; letter-spacing: .05em; }
+  .cell.best::after { content: "★"; position: absolute; top: .05rem; right: .3rem; font-size: var(--t-xs); }
+  input[type=text] { font: inherit; padding: .5rem .7rem; border: 1px solid var(--rule); border-radius: var(--r); background: var(--page); color: var(--ink); }
+  .modal { position: fixed; inset: 0; background: rgba(10,12,16,.6); display: none; align-items: center; justify-content: center; padding: var(--s3); z-index: 40; }
+  .modal.open { display: flex; }
+  .dialog { background: var(--page); border: 1px solid var(--rule); border-radius: 1rem; padding: var(--s5); width: min(36rem, 100%); display: flex; flex-direction: column; gap: var(--s3); box-shadow: 0 12px 32px rgba(0,0,0,.35); animation: pop .35s var(--ease); }
+  @keyframes pop { from { opacity: 0; transform: scale(.94) translateY(.6rem); } to { opacity: 1; transform: none; } }
+  .progress { height: .6rem; background: var(--rule); border-radius: 999px; overflow: hidden; } .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+  .tabs { display: flex; gap: var(--s2); border-bottom: 1px solid var(--rule); }
+  .tabs button { font: inherit; font-weight: 600; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-soft); padding: var(--s2) var(--s3); cursor: pointer; margin-bottom: -1px; }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  tr.click { cursor: pointer; } tr.click:hover td { background: var(--page); }
+  td.wrap { white-space: normal; min-width: 14rem; }
+  .empty { border: 1px dashed var(--rule); border-radius: var(--r); padding: var(--s5) var(--s4); color: var(--ink-soft); }
+  .empty b { color: var(--ink); display: block; font-size: var(--t-l); margin-bottom: var(--s1); }
+  .rule { background: var(--page); border: 1px solid var(--rule); border-radius: var(--r); padding: var(--s3); }
+  .rule .label { display: block; margin-bottom: var(--s1); }
+  .stepn { width: 1.6rem; height: 1.6rem; border-radius: 50%; display: inline-grid; place-items: center; font: 700 var(--t-s) var(--font); border: 2px solid var(--rule); color: var(--ink-soft); margin-right: var(--s2); }
+  .stepn.done { background: var(--good); border-color: var(--good); color: #fff; } .stepn.here { border-color: var(--accent); color: var(--accent-ink); }
+  .chartbox { position: relative; display: flex; flex-direction: column; gap: var(--s2); }
+  .legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); font-size: var(--t-s); color: var(--ink-soft); }
+  .legend i { display: inline-block; width: 1.1rem; height: .2rem; border-radius: 2px; margin-right: .45rem; vertical-align: middle; background: var(--accent); }
+  .legend i.dash { background: repeating-linear-gradient(90deg, var(--ink-soft) 0 4px, transparent 4px 7px); }
+  .legend b { color: var(--ink); font-family: var(--font); margin-left: .35rem; }
+  .tipbox { position: absolute; pointer-events: none; background: var(--ink); color: var(--page); border-radius: var(--r); padding: var(--s2) var(--s3); font-size: var(--t-s);
+            display: none; white-space: nowrap; z-index: 3; line-height: 1.5; }
+  .tipbox i { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .4rem; background: var(--accent); } .tipbox i.g { background: var(--ink-soft); }
+  .tipbox b { font-family: var(--font); float: right; margin-left: var(--s3); } .tipbox .d { opacity: .7; }
+  /* tour */
+  #tourblock { position: fixed; inset: 0; z-index: 50; display: none; }
+  #spot { position: fixed; z-index: 51; border-radius: .8rem; box-shadow: 0 0 0 200vmax rgba(10,12,16,.66); pointer-events: none; display: none; transition: left .5s var(--ease), top .5s var(--ease), width .5s var(--ease), height .5s var(--ease); }
+  #spot::after { content: ""; position: absolute; inset: -4px; border: 3px solid var(--accent); border-radius: 1rem; animation: pulse 1.6s ease-out infinite; }
+  @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.05); } }
+  #tip { position: fixed; z-index: 52; width: min(23rem, calc(100vw - 2rem)); background: var(--page); border: 1px solid var(--rule); border-radius: 1rem; padding: var(--s4); display: none; flex-direction: column; gap: var(--s3);
+         box-shadow: 0 12px 32px rgba(0,0,0,.4); transition: left .5s var(--ease), top .5s var(--ease); }
+  #tip h2 { font-size: var(--t-l); } #tip .txt { animation: rise .4s var(--ease); display: flex; flex-direction: column; gap: var(--s2); }
+  .eyebrow { font: 700 var(--t-xs) var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+  .dots { display: flex; gap: .35rem; align-items: center; } .dots i { width: .5rem; height: .5rem; border-radius: 50%; background: var(--rule); transition: all .3s var(--ease); }
+  .dots i.on { background: var(--accent); width: 1.4rem; border-radius: 999px; }
+  .tour-on #tourblock, .tour-on #spot { display: block; } .tour-on #tip { display: flex; }
+  .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.8s var(--ease) forwards; } .draw.b { animation-delay: .4s; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .fadein { opacity: 0; animation: rise .5s var(--ease) 1.9s forwards; }
+  #confetti { position: fixed; inset: 0; z-index: 60; pointer-events: none; width: 100%; height: 100%; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; } }
+  @media (max-width: 900px) {
+    html, body, .app { height: auto; } .app { grid-template-columns: minmax(0, 1fr); } .brand { width: auto; }
+    nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--rule); } nav .grp { display: none; }
+    main { overflow: visible; padding: var(--s3); } .grid2 { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sample"><b>Prototype.</b> Every strategy, trade and number here is invented sample data.</div>
+  <div class="bar" id="bar"></div>
+  <nav aria-label="Sections" id="nav"></nav>
+  <main id="scroll"><div class="wrap" id="view"></div></main>
+</div>
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><div class="dialog" id="dialog"></div></div>
+<div id="tourblock"></div><div id="spot"></div><div id="tip" role="dialog" aria-live="polite" aria-label="Tour"></div>
+<canvas id="confetti" hidden></canvas>
+
+<script>
+/* ---------- sample data ---------- */
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function walk(seed, n, total, vol) { var r = rng(seed), v = 0, raw = [0], i, k; for (i = 1; i < n; i++) { v += (r() - 0.5) * vol; raw.push(v); }
+  var end = raw[n - 1], out = raw.map(function (x, j) { return 10000 * (1 + x - end * j / (n - 1) + total / 100 * j / (n - 1)); });
+  for (k = 0; k < 2; k++) out = out.map(function (y, j) { return j === 0 || j === n - 1 ? y : (out[j - 1] + 2 * y + out[j + 1]) / 4; }); return out; }
+var STR = [
+  { id: "ma", name: "MA Crossover", on: "SPY", status: "Running", since: "13 Aug 2026", ret: 4.8, hold: 3.1, sharpe: 0.92, expect: 0.71, wins: 7, n: 12, fall: 3.4, pos: "Holding 41 shares", signal: "Hold", why: "Short average still above long average. No cross today.", seed: 11, match: [20, 21], settings: "short 15, long 80, trend 150", lossToday: 0.4 },
+  { id: "mom", name: "Momentum 12-1", on: "QQQ", status: "Running", since: "03 Sep 2026", ret: -1.9, hold: 2.2, sharpe: -0.31, expect: 0.64, wins: 3, n: 9, fall: 6.8, pos: "No position", signal: "Stay out", why: "12-month trend turned negative on 28 Oct.", seed: 23, match: [14, 14], settings: "lookback 12 months, skip 1", lossToday: 0 },
+  { id: "mr", name: "Mean Reversion", on: "GLD", status: "Paused", since: "21 Jul 2026", ret: 1.2, hold: 5.6, sharpe: 0.28, expect: 0.55, wins: 11, n: 19, fall: 4.1, pos: "No position", signal: "Paused", why: "You paused this strategy on 02 Nov.", seed: 37, match: [31, 34], settings: "window 10 days, band 2.0", lossToday: 0 },
+  { id: "draft1", draft: true, name: "Trend Pullback", on: "SPY", status: "Draft", since: "", ret: 0, hold: 0, sharpe: 0, expect: 0.58, wins: 0, n: 1, fall: 0, pos: "No position", signal: "Draft", why: "", seed: 53, match: [0, 0], settings: "short 20, long 50, trend 200", lossToday: 0 }
+];
+STR.forEach(function (s) { var r = rng(s.seed);
+  s.curve = walk(s.seed, 90, s.ret, 0.011); s.holdCurve = walk(s.seed + 500, 90, s.hold, 0.009);
+  var days = ["10 Nov", "05 Nov", "30 Oct", "22 Oct", "15 Oct", "07 Oct", "29 Sep", "18 Sep", "09 Sep", "01 Sep", "24 Aug", "14 Aug"], px = 400 + s.seed * 3; s.trades = [];
+  for (var i = 0; i < Math.min(12, s.n + 3); i++) { var sell = i % 2 === 0, res = sell ? +(((r() < s.wins / s.n ? 1 : -1) * (0.4 + r() * 2.6))).toFixed(1) : null; px += (r() - 0.5) * 14;
+    s.trades.push({ day: days[i], act: sell ? "Sell" : "Buy", price: px.toFixed(2), size: 38 + Math.round(r() * 6), res: res, safe: i === 3 && s.id === "ma" ? "Blocked" : "Allowed" }); }
+  s.tests = [
+    { t: "Live vs backtest", d: "10 Nov", r: s.match[0] === s.match[1] ? ["good", "All " + s.match[1] + " days match"] : ["warn", s.match[0] + " of " + s.match[1] + " days match"] },
+    { t: "Backtest", d: "08 Nov", r: ["", "Score " + s.expect.toFixed(2)] },
+    { t: "Luck test", d: "04 Nov", r: s.id === "mr" ? ["bad", "Beat 81 of 100"] : ["good", "Beat " + (s.id === "ma" ? 97 : 96) + " of 100"] },
+    { t: "Final exam", d: "06 Aug", r: s.id === "mr" ? ["", "Not taken"] : ["good", "Passed"] } ];
+});
+var FAST = [5, 10, 15, 20, 25, 30], SLOW = [40, 60, 80, 100, 120];
+var VIR = [[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]];
+function ramp(p) { p = Math.max(0, Math.min(1, p)) * 9; var i = Math.min(8, Math.floor(p)), f = p - i, a = VIR[i], b = VIR[i + 1]; return "rgb(" + [0, 1, 2].map(function (k) { return Math.round(a[k] + (b[k] - a[k]) * f); }).join(",") + ")"; }
+var cells = [], rg = rng(7); SLOW.forEach(function (sl, si) { FAST.forEach(function (f, fi) { cells.push({ fast: f, slow: sl, fi: fi, si: si, score: +(0.72 - Math.pow(fi - 2.6, 2) * 0.035 - Math.pow(si - 2, 2) * 0.05 + (rg() - 0.5) * 0.06).toFixed(2) }); }); });
+function cat(fi, si) { return cells[si * 6 + fi]; } var LIVE = cat(2, 2), BEST = cat(3, 2); LIVE.score = 0.71; BEST.score = 0.76;
+var S = { sid: "ma", range: 90, tf: "All", sel: BEST, bt: "10 years", cmp: ["ma", "mom"], tab: { trades: "orders", improve: "grid" }, trend: 1, kill: false, confirmed: false, tested: false };
+var TREND = [100, 150, 200];
+function sc(x) { return +(x.score + [-0.07, 0, -0.05][S.trend]).toFixed(2); }
+function tabs(key, list) { return '<div class="tabs" role="tablist">' + list.map(function (t) { return '<button type="button" role="tab" data-tab="' + key + ":" + t[0] + '" aria-selected="' + (S.tab[key] === t[0]) + '">' + t[1] + "</button>"; }).join("") + "</div>"; }
+function cur() { return STR.filter(function (s) { return s.id === S.sid; })[0]; }
+
+/* ---------- helpers ---------- */
+function T(w, d) { return '<span class="term" tabindex="0" data-def="' + d + '">' + w + "</span>"; }
+var G = { sharpe: T("Sharpe", "Return earned for the risk taken, per year. Above 1 is good, below 0 is losing."), win: T("Win rate", "Share of finished trades that made money."),
+  fall: T("Worst fall", "Largest drop from a high point to a later low. Also called max drawdown."),
+  luck: T("Luck test", "Runs the same search on 100 scrambled price histories. The strategy must beat 95 of them to count as more than luck."),
+  lock: T("Loss lock", "If loss today reaches 3%, buying is blocked until tomorrow, even if the account recovers."), exam: T("Final exam", "One test on years the strategy never saw. Each look is counted and permanent."), match: T("Live vs backtest", "Checks each live day against what the backtest says it would have done.") };
+function pct(v) { return '<span class="' + (v >= 0 ? "up" : "down") + '">' + (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "%</span>"; }
+function pill(c, t) { return '<span class="pill ' + c + '">' + t + "</span>"; }
+var CH = {}, chn = 0;
+function money(v) { return Math.round(v).toLocaleString("en-GB"); }
+function chart(a, b, h, lab, names) { names = names || ["This strategy", ""]; b = null; var id = "c" + (chn++), all = a.concat(b || []), mn = Math.min.apply(null, all), mx = Math.max.apply(null, all), pad = (mx - mn) * 0.1 || 1; mn -= pad; mx += pad;
+  var W = 900, L = 58, R = 12, T = 8, B = 24, pw = W - L - R, ph = h - T - B, n = a.length;
+  function X(i) { return L + i / (n - 1) * pw; } function Y(v) { return T + ph - (v - mn) / (mx - mn) * ph; }
+  function P(v) { return v.map(function (y, i) { return (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(y).toFixed(1); }).join(" "); }
+  CH[id] = { a: a, b: b, lab: lab, names: names, mn: mn, mx: mx, L: L, R: R, T: T, ph: ph, pw: pw, W: W, h: h };
+  var grid = "", raw = (mx - mn) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), st = [1, 2, 2.5, 5, 10].map(function (m) { return m * mag; }).filter(function (v) { return v >= raw; })[0];
+  for (var gv = Math.ceil(mn / st) * st; gv <= mx; gv += st) { var gy = Y(gv).toFixed(1); grid += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + gy + '" y2="' + gy + '" stroke="var(--rule)"/><text x="' + (L - 8) + '" y="' + (+gy + 4) + '" text-anchor="end">' + money(gv) + "</text>"; }
+  return '<div class="chartbox"><div class="legend"><span><i></i>' + names[0] + "<b>" + money(a[n - 1]) + "</b></span>" + (b ? '<span><i class="dash"></i>' + names[1] + "<b>" + money(b[n - 1]) + "</b></span>" : "") + "</div>" +
+    '<svg viewBox="0 0 ' + W + " " + h + '" role="img" aria-label="' + lab[2] + '" data-chart="' + id + '">' + grid + '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + (T + ph) + '" y2="' + (T + ph) + '" stroke="var(--ink-soft)" opacity=".5"/>' +
+    '<text x="' + L + '" y="' + (h - 5) + '">' + lab[0] + '</text><text x="' + (W - R) + '" y="' + (h - 5) + '" text-anchor="end">' + lab[1] + "</text>" +
+    (b ? '<path d="' + P(b) + '" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" stroke-dasharray="5 4" stroke-linejoin="round"/>' : "") +
+    '<path d="' + P(a) + '" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>' +
+    (b ? '<circle cx="' + X(n - 1) + '" cy="' + Y(b[n - 1]) + '" r="4" fill="var(--ink-soft)" stroke="var(--panel)" stroke-width="2"/>' : "") + '<circle cx="' + X(n - 1) + '" cy="' + Y(a[n - 1]) + '" r="5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/>' +
+    '<g class="hov" style="display:none"><line y1="' + T + '" y2="' + (T + ph) + '" stroke="var(--ink-soft)" stroke-width="1"/><circle class="hb" r="4" fill="var(--ink-soft)" stroke="var(--panel)" stroke-width="2"/><circle class="ha" r="5" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"/></g>' +
+    '<rect x="' + L + '" y="' + T + '" width="' + pw + '" height="' + ph + '" fill="transparent"/></svg><div class="tipbox"></div></div>'; }
+function chartHover(e) { var svg = e.target.closest ? e.target.closest("svg[data-chart]") : null; document.querySelectorAll(".chartbox .hov").forEach(function (g) { if (!svg || g.parentNode !== svg) { g.style.display = "none"; g.parentNode.parentNode.querySelector(".tipbox").style.display = "none"; } });
+  if (!svg) return; var c = CH[svg.dataset.chart]; if (!c) return; var box = svg.getBoundingClientRect(), sx = box.width / c.W, f = ((e.clientX - box.left) / sx - c.L) / c.pw; if (f < 0 || f > 1) f = Math.max(0, Math.min(1, f));
+  var n = c.a.length, i = Math.round(f * (n - 1)), x = c.L + i / (n - 1) * c.pw, Y = function (v) { return c.T + c.ph - (v - c.mn) / (c.mx - c.mn) * c.ph; }, g = svg.querySelector(".hov"), tip = svg.parentNode.querySelector(".tipbox");
+  g.style.display = ""; g.querySelector("line").setAttribute("x1", x); g.querySelector("line").setAttribute("x2", x); g.querySelector(".ha").setAttribute("cx", x); g.querySelector(".ha").setAttribute("cy", Y(c.a[i]));
+  var hb = g.querySelector(".hb"); if (c.b) { hb.setAttribute("cx", x); hb.setAttribute("cy", Y(c.b[i])); } else hb.style.display = "none";
+  var when = c.lab[3] ? c.lab[3](i, n) : "", diff = c.b ? c.a[i] - c.b[i] : 0;
+  tip.innerHTML = (when ? '<div class="d">' + when + "</div>" : "") + "<div><i></i>" + c.names[0] + "<b>" + money(c.a[i]) + "</b></div>" + (c.b ? '<div><i class="g"></i>' + c.names[1] + "<b>" + money(c.b[i]) + '</b></div><div class="d">' + (diff >= 0 ? "Ahead by " : "Behind by ") + money(Math.abs(diff)) + "</div>" : "");
+  tip.style.display = "block"; var px = x * sx, tw = tip.offsetWidth; tip.style.left = (px + 14 + tw > box.width ? px - tw - 14 : px + 14) + "px"; tip.style.top = (svg.offsetTop + 8) + "px"; }
+function dayLabel(i, n) { var d = new Date(2026, 10, 10 - (n - 1 - i)); return d.getDate() + " " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()] + " " + d.getFullYear(); }
+function monthLabel(i, n) { var d = new Date(2024, 11 - (n - 1 - i), 1); return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()] + " " + d.getFullYear(); }
+function tradeRows(list) { return list.map(function (t) { return "<tr><td>" + t.day + "</td><td>" + pill(t.act === "Buy" ? "good" : "warn", t.act) + '</td><td class="n">' + t.price + '</td><td class="n">' + t.size + '</td><td class="n">' + (t.res === null ? '<span class="soft">open</span>' : pct(t.res)) + "</td></tr>"; }).join(""); }
+var TH = '<tr><th>Day</th><th>Action</th><th class="n">Price</th><th class="n">Shares</th><th class="n">Result</th></tr>';
+
+/* ---------- pages ---------- */
+function dashboard() { if (cur().draft) return draftView(cur()); var s = cur(), c = s.curve.slice(-S.range), h = s.holdCurve.slice(-S.range), gap = s.ret - s.hold;
+  return '<div class="head"><div><h1>' + s.name + " on " + s.on + "</h1><p>Deployed " + s.since + " on the practice account. Settings: " + s.settings + ".</p></div>" +
+    '<span>' + (s.status === "Running" ? '<button class="btn" data-act="pause">Pause strategy…</button>' : '<button class="btn go" data-act="pause">Resume strategy…</button>') + "</span></div>" +
+    '<div class="kpis" data-tour="kpis"><div class="card kpi"><span class="label">Return since deployed</span><span class="big">' + pct(s.ret) + "</span><small>since " + s.since + "</small></div>" +
+      '<div class="card kpi"><span class="label">' + G.sharpe + ' (live)</span><span class="big ' + (s.sharpe < 0 ? "down" : "") + '">' + s.sharpe.toFixed(2) + "</span><small>backtest expected " + s.expect.toFixed(2) + "</small></div>" +
+      '<div class="card kpi"><span class="label">' + G.win + '</span><span class="big">' + Math.round(s.wins / s.n * 100) + "%</span><small>" + s.wins + " of " + s.n + " trades</small></div>" +
+      '<div class="card kpi"><span class="label">' + G.fall + '</span><span class="big">−' + s.fall.toFixed(1) + "%</span><small>limit before review: 10%</small></div></div>" +
+    '<div class="grid2"><div class="card" data-tour="chart"><div class="between"><h2>Account value</h2><span class="seg" role="group" aria-label="Chart range">' + [[22, "1M"], [66, "3M"], [90, "All"]].map(function (x) { return '<button type="button" data-range="' + x[0] + '" aria-pressed="' + (S.range === x[0]) + '">' + x[1] + "</button>"; }).join("") + "</span></div>" +
+      chart(c, h, 270, [dayLabel(0, c.length), "Today", "Account value", dayLabel]) + "</div>" +
+      '<div class="card" data-tour="now"><div class="between"><h2>Right now</h2>' + pill(s.status === "Running" ? "good" : "warn", s.signal) + '</div><p class="soft">' + s.why + '</p><div class="rows"><div class="rowi"><span>Position</span><b>' + s.pos + '</b></div>' +
+      '<div class="rowi"><span>Next automatic check</span><b>' + (s.status === "Running" ? "Today, 16:35" : "Paused") + "</b></div>" +
+      '<div class="rowi"><span>' + G.lock + "</span>" + pill("good", "Clear") + '</div><div class="rowi"><span>Stop-all switch</span>' + pill(S.kill ? "bad" : "good", S.kill ? "On: no buying" : "Off") + "</div></div>" +
+      '<div class="gauge"><div class="top2"><span>Loss today</span><span class="mono">' + s.lossToday + '% of 3% limit</span></div><div class="track"><i style="width:' + (s.lossToday / 3 * 100) + '%"></i></div></div>' +
+      '<div class="gauge"><div class="top2"><span>Money in the market</span><span class="mono">' + (s.pos === "No position" ? 0 : 88) + '% of 95% limit</span></div><div class="track"><i style="width:' + (s.pos === "No position" ? 0 : 92.6) + '%"></i></div></div>' +
+      '<button class="btn small" data-act="job" data-title="Check today’s price now" data-mins="1"' + (s.status === "Running" ? "" : " disabled") + '>Check now</button></div></div>' +
+    '<div class="grid2"><div class="card" data-tour="trades"><div class="between"><h2>Recent trades</h2><a class="more" href="#trades">All trades →</a></div><div class="tablewrap"><table>' + TH + tradeRows(s.trades.slice(0, 4)) + "</table></div></div>" +
+      '<div class="card" data-tour="tests"><div class="between"><h2>Recent tests</h2><a class="more" href="#tests">All tests →</a></div><div class="rows">' + s.tests.map(function (t) { return '<div class="rowi"><span>' + t.t + "<small>" + t.d + "</small></span>" + pill(t.r[0], t.r[1]) + "</div>"; }).join("") + "</div></div></div>";
+}
+function draftEmpty(title, what) { return '<div class="head"><div><h1>' + title + '</h1></div></div><div class="empty"><b>Nothing yet</b>' + cur().name + " is a draft. " + what + "</div>"; }
+function draftView(s) { var c = S.confirmed, b = S.tested;
+  function step(n, done, here, title, note, action) { return '<div class="rowi"><span><span class="stepn ' + (done ? "done" : here ? "here" : "") + '">' + (done ? "✓" : n) + "</span><b>" + title + "</b><small style=\"margin-left:2.4rem\">" + note + "</small></span>" + (action || "") + "</div>"; }
+  return '<div class="head"><div><h1>' + s.name + " on " + s.on + ' <span class="pill warn" style="vertical-align:middle">Draft</span></h1><p>Read from a YouTube video on 11 Nov 2026 and written as a strategy file in the project folder. Not deployed. It trades nothing until it passes the steps below.</p></div></div>' +
+    '<div class="grid2"><div class="card" data-tour="draft"><h2>What the video says, as rules</h2><div class="rule"><span class="label">Buy when all of these are true</span>The 50-day average price is above the 200-day average.<br>The price closes back above its 20-day average.</div>' +
+      '<div class="rule"><span class="label">Sell when</span>The price closes below its 50-day average.</div><div class="rule"><span class="label">Settings to try</span>Short average 10 to 30 days. Long average 40 to 60 days. Trend average 150 to 250 days.</div>' +
+      '<div class="rule" style="border-color:var(--warn-rule);background:var(--warn-bg)"><span class="label" style="color:var(--warn)">From the video, but left out</span><b>Stop-loss 2% below the buy price.</b> Stop-losses are not supported yet.<br>' +
+      '<b>“Only when volume is strong.”</b> Too vague to turn into a rule.</div><p class="soft" style="font-size:var(--t-s)">File: <span class="mono">configs/trend_pullback.yaml</span> · Source link and the time in the video for each rule are saved in the file.</p></div>' +
+    '<div class="card"><h2>Path to deployment</h2><div class="rows">' +
+      step(1, true, false, "Read from video", "Done by Claude Code with /watch.") +
+      step(2, c, !c, "You confirm the rules", "Check them against the video. The reading can be wrong.", c ? "" : '<button class="btn small go" data-act="confirmRules">Rules are right</button>') +
+      step(3, b, c && !b, "Backtest", b ? "Score 0.58 on 10 years." : "Replay on old prices. About a minute.", c && !b ? '<button class="btn small go" data-act="draftTest">Run backtest</button>' : "") +
+      step(4, false, b, "Luck test", "Must beat 95 of 100 lucky scores. About 7 hours.", b ? '<button class="btn small go" data-act="job" data-title="Run the luck test" data-mins="404">Run luck test</button>' : "") +
+      step(5, false, false, "Deploy to practice account", "Unlocks only after the luck test passes.", '<button class="btn small" disabled>Deploy…</button>') + "</div>" +
+      '<p class="soft" style="font-size:var(--t-s)">Most strategies from videos fail step 4. Finding that out here costs nothing.</p></div></div>'; }
+function trades() { if (cur().draft) return draftEmpty("Trades", "It has placed no orders. Trades appear here once it is deployed."); var s = cur(), list = s.trades.filter(function (t) { return S.tf === "All" || t.act === S.tf; }), done = s.trades.filter(function (t) { return t.res !== null; }),
+    w = done.filter(function (t) { return t.res > 0; }), l = done.filter(function (t) { return t.res <= 0; }), avg = function (a) { return a.length ? a.reduce(function (x, t) { return x + t.res; }, 0) / a.length : 0; };
+  var tb = tabs("trades", [["orders", "Orders"], ["days", "Daily decisions"]]);
+  if (S.tab.trades === "days") { var days = [["10 Nov", "No trade", "Short average already above long. Nothing crossed.", "1 of 2", ""], ["09 Nov", "No trade", "Short average already above long. Nothing crossed.", "1 of 2", ""],
+      ["06 Nov", "No trade", "Price above trend, no cross.", "1 of 2", ""], ["05 Nov", "Wanted to buy", "Short average crossed above long.", "2 of 2", "Blocked: loss lock was set"], ["04 Nov", "No trade", "Short average below long.", "0 of 2", ""],
+      ["03 Nov", "Sell", "Short average crossed below long.", "exit rule", "Allowed"], ["30 Oct", "No trade", "Holding. No exit signal.", "0 of 1", ""], ["29 Oct", "No trade", "Holding. No exit signal.", "0 of 1", ""]];
+    return '<div class="head"><div><h1>Trades</h1><p>What ' + s.name + " decided each day, including days it did nothing, and why.</p></div></div>" + tb +
+      '<div class="card"><div class="tablewrap"><table><tr><th>Day</th><th>Decision</th><th>Why</th><th>Rules met</th><th>Safety check</th></tr>' + days.map(function (d) { return "<tr><td>" + d[0] + "</td><td>" + (d[1] === "No trade" ? '<span class="soft">No trade</span>' : "<b>" + d[1] + "</b>") +
+        '</td><td class="wrap soft">' + d[2] + '</td><td class="mono">' + d[3] + "</td><td>" + (d[4] ? pill(d[4] === "Allowed" ? "good" : "bad", d[4]) : "") + "</td></tr>"; }).join("") + "</table></div></div>"; }
+  return '<div class="head"><div><h1>Trades</h1><p>Every order ' + s.name + " has placed on the practice account.</p></div><span class=\"seg\" role=\"group\" aria-label=\"Filter trades\">" + ["All", "Buy", "Sell"].map(function (f) { return '<button type="button" data-tf="' + f + '" aria-pressed="' + (S.tf === f) + '">' + (f === "All" ? "All" : f + "s") + "</button>"; }).join("") + "</span></div>" +
+    tb + '<div class="kpis"><div class="card kpi"><span class="label">Orders placed</span><span class="big">' + s.trades.length + '</span></div><div class="card kpi"><span class="label">Average win</span><span class="big">' + pct(avg(w)) + '</span></div>' +
+    '<div class="card kpi"><span class="label">Average loss</span><span class="big">' + pct(avg(l)) + '</span></div><div class="card kpi"><span class="label">Blocked by safety limits</span><span class="big">' + s.trades.filter(function (t) { return t.safe === "Blocked"; }).length + "</span></div></div>" +
+    '<div class="card"><div class="tablewrap"><table><tr><th>Day</th><th>Action</th><th class="n">Price</th><th class="n">Shares</th><th class="n">Result</th><th style="padding-left:1rem">Safety check</th></tr>' +
+    list.map(function (t) { return "<tr><td>" + t.day + "</td><td>" + pill(t.act === "Buy" ? "good" : "warn", t.act) + '</td><td class="n">' + t.price + '</td><td class="n">' + t.size + '</td><td class="n">' + (t.res === null ? '<span class="soft">open</span>' : pct(t.res)) +
+      '</td><td style="padding-left:1rem">' + pill(t.safe === "Allowed" ? "good" : "bad", t.safe) + "</td></tr>"; }).join("") + "</table></div></div>";
+}
+function backtest() { var s = cur(), yrs = { "5 years": [60, 31, 0.66], "10 years": [120, 58, 0.71], "All history": [200, 93, 0.62] }[S.bt], c = walk(s.seed + 900, yrs[0], yrs[1], 0.02), h = walk(s.seed + 901, yrs[0], yrs[1] * 0.8, 0.018);
+  return '<div class="head"><div><h1>Backtest</h1><p>Replay ' + s.name + " on old prices to see what it would have done. Costs of trading are included.</p></div>" +
+    '<span class="between"><span class="seg" role="group" aria-label="Period">' + ["5 years", "10 years", "All history"].map(function (b) { return '<button type="button" data-bt="' + b + '" aria-pressed="' + (S.bt === b) + '">' + b + "</button>"; }).join("") +
+    '</span><button class="btn primary" data-act="job" data-title="Run backtest" data-mins="1">Run backtest</button></span></div>' +
+    '<div class="kpis"><div class="card kpi"><span class="label">Total return</span><span class="big">' + pct(yrs[1]) + '</span></div><div class="card kpi"><span class="label">' + G.sharpe + '</span><span class="big">' + yrs[2].toFixed(2) + "</span></div>" +
+    '<div class="card kpi"><span class="label">' + G.fall + '</span><span class="big">−13.4%</span></div><div class="card kpi"><span class="label">Trades</span><span class="big">' + Math.round(yrs[0] / 4) + "</span></div></div>" +
+    '<div class="card"><h2>Growth of 10,000 over ' + S.bt.toLowerCase() + "</h2>" + chart(c, h, 280, [monthLabel(0, c.length), "Dec 2024", "Backtest growth", monthLabel]) + '<p class="soft" style="font-size:var(--t-s)">A backtest is a replay, not a promise.</p></div>';
+}
+function improve() { var s = cur(), c = S.sel, isLive = S.sel === LIVE && S.trend === 1, isBest = S.sel === BEST && S.trend === 1, vals = cells.map(function (x) { return sc(x); }), lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  var heat = '<div class="heat"><span class="lab"></span>' + FAST.map(function (f) { return '<span class="lab">' + f + "</span>"; }).join("");
+  SLOW.forEach(function (sl, si) { heat += '<span class="lab">' + sl + "</span>"; FAST.forEach(function (f, fi) { var x = cat(fi, si), p = (sc(x) - lo) / (hi - lo);
+    heat += '<button type="button" class="cell' + (x === c ? " sel" : "") + ((x === LIVE && S.trend === 1) ? " live" : "") + ((x === BEST && S.trend === 1) ? " best" : "") + '" style="background:' + ramp(p) + ";color:" + (p > 0.62 ? "#16181d" : "#fff") + '" data-cell="' + fi + "," + si + '" aria-label="short ' + f + " long " + sl + " score " + sc(x).toFixed(2) + '">' + sc(x).toFixed(2) + "</button>"; }); });
+  var d = sc(c) - 0.71;
+  return '<div class="head"><div><h1>Improve</h1><p>Search for better settings for ' + s.name + ". Each square is one version, scored on old prices. Brighter is better.</p></div>" +
+    '<button class="btn primary" data-act="job" data-title="Search for better settings" data-mins="4">Search again</button></div>' +
+    tabs("improve", [["grid", "Settings"], ["ruled", "Ruled out"], ["past", "Past searches"]]) + (S.tab.improve === "ruled" ? ruledHtml() : S.tab.improve === "past" ? pastHtml() :
+    '<div class="grid2"><div class="card"><div class="between"><h2>Long average (rows) by short average (columns)</h2><span>Trend filter <span class="seg" role="group" aria-label="Trend filter">' +
+      TREND.map(function (v, i) { return '<button type="button" data-trend="' + i + '" aria-pressed="' + (i === S.trend) + '">' + v + "</button>"; }).join("") + "</span></span></div>" + heat + '</div><p class="soft" style="font-size:var(--t-s)">LIVE: what is deployed now. ★: best found. Click any square.</p></div>' +
+    '<div class="card"><div class="between"><h2>Short ' + c.fast + ", long " + c.slow + "</h2>" + (isLive ? pill("good", "Deployed now") : isBest ? pill("warn", "Best found") : "") + '</div>' + chart(walk(c.fi * 7 + c.si * 3 + S.trend + 50, 60, sc(c) * 40, 0.02), walk(951, 60, 21, 0.018), 170, ["2005", "2018", "Growth of this version"]) +
+      '<div class="rows"><div class="rowi"><span>' + G.sharpe + ' on old prices</span><b class="mono">' + sc(c).toFixed(2) + "</b></div>" +
+      '<div class="rowi"><span>Against deployed version</span><b class="mono">' + (isLive ? "same" : (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2)) + '</b></div><div class="rowi"><span>' + G.luck + "</span>" + (isLive ? pill("good", "Beat 97 of 100") : pill("", "Not run yet")) + "</div></div>" +
+      (isLive ? '<p class="soft">This is the version trading now.</p>' : '<button class="btn" data-act="job" data-title="Run the luck test" data-mins="404">Run the luck test on this version</button><button class="btn go" disabled>Deploy this version…</button><p class="soft" style="font-size:var(--t-s)">Deploying unlocks after it passes the luck test. A higher score on old prices alone is often just luck.</p>') + "</div></div>");
+}
+function ruledHtml() { var rows = [["5 / 40 / 100", "Fell too far", "Worst fall was 31.2%, above the 25% limit."], ["10 / 40 / 100", "Fell too far", "Worst fall was 27.9%, above the 25% limit."],
+    ["30 / 120 / 200", "On the edge", "Best score sat on the edge of the grid, so its neighbours could not be checked."], ["30 / 40 / 200", "Could not be tested", "The replay stopped early. No score exists."]];
+  return '<div class="card"><p class="soft">Versions already rejected, kept so the same dead end is not tried twice. Updated automatically after every search.</p><div class="tablewrap"><table><tr><th>Short / long / trend</th><th>Reason</th><th>Detail</th></tr>' +
+    rows.map(function (r) { return '<tr><td class="mono">' + r[0] + "</td><td>" + pill("bad", r[1]) + '</td><td class="wrap soft">' + r[2] + "</td></tr>"; }).join("") + "</table></div></div>"; }
+function pastHtml() { var rows = [["11 Nov, 02:14", "20 / 80 / 150", "0.76", "Not run yet", ""], ["04 Nov, 19:02", "15 / 80 / 150", "0.71", "Beat 97 of 100", "good"], ["29 Oct, 08:11", "20 / 80 / 150", "0.66", "No luck test", ""]];
+  return '<div class="card"><p class="soft">Every search run for this strategy. The newest found a version scoring 0.05 higher than the one deployed.</p><div class="tablewrap"><table><tr><th>When</th><th>Best version found</th><th class="n">Score</th><th style="padding-left:1rem">Luck test</th></tr>' +
+    rows.map(function (r) { return "<tr><td>" + r[0] + '</td><td class="mono">' + r[1] + '</td><td class="n">' + r[2] + '</td><td style="padding-left:1rem">' + pill(r[4], r[3]) + "</td></tr>"; }).join("") + "</table></div></div>"; }
+function compare() { var a = STR.filter(function (s) { return s.id === S.cmp[0]; })[0], b = STR.filter(function (s) { return s.id === S.cmp[1]; })[0];
+  function sel(i) { return '<select data-cmp="' + i + '" aria-label="Strategy ' + (i ? "B" : "A") + '">' + STR.filter(function (s) { return !s.draft; }).map(function (s) { return '<option value="' + s.id + '"' + (s.id === S.cmp[i] ? " selected" : "") + ">" + s.name + " on " + s.on + "</option>"; }).join("") + "</select>"; }
+  function row(name, x, y, f, hi) { var bx = hi ? x > y : x < y, by = hi ? y > x : y < x; return "<tr><td>" + name + '</td><td class="n">' + (bx ? "<b>" + f(x) + " ◀</b>" : f(x)) + '</td><td class="n">' + (by ? "<b>" + f(y) + " ◀</b>" : f(y)) + "</td></tr>"; }
+  var all = a.curve.concat(b.curve), mn = Math.min.apply(null, all), mx = Math.max.apply(null, all), P = function (v) { return v.map(function (y, i) { return (i ? "L" : "M") + (i / 89 * 900).toFixed(1) + " " + (228 - (y - mn) / (mx - mn) * 220).toFixed(1); }).join(" "); };
+  return '<div class="head"><div><h1>Compare</h1><p>Two strategies side by side, over the last 90 days on the practice account. ◀ marks the better one.</p></div><span class="between">' + sel(0) + '<span class="soft">against</span>' + sel(1) + "</span></div>" +
+    '<div class="grid2"><div class="card"><h2>Account value, last 90 days</h2><svg viewBox="0 0 900 250" role="img" aria-label="Two strategies compared"><path d="' + P(b.curve) + '" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="' + P(a.curve) + '" fill="none" stroke="var(--accent)" stroke-width="2.4"/>' +
+      '<text x="2" y="246">90 days ago</text><text x="898" y="246" text-anchor="end">Today</text></svg><p class="soft" style="font-size:var(--t-s)">Orange: ' + a.name + ". Dark: " + b.name + ".</p></div>" +
+    '<div class="card"><div class="tablewrap"><table><tr><th></th><th class="n">' + a.name + '</th><th class="n">' + b.name + "</th></tr>" + row("Return", a.ret, b.ret, function (v) { return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "%"; }, true) +
+      row("Sharpe (live)", a.sharpe, b.sharpe, function (v) { return v.toFixed(2); }, true) + row("Win rate", a.wins / a.n, b.wins / b.n, function (v) { return Math.round(v * 100) + "%"; }, true) +
+      row("Worst fall", a.fall, b.fall, function (v) { return "−" + v.toFixed(1) + "%"; }, false) + row("Trades", a.n, b.n, function (v) { return v; }, true) + "</table></div></div></div>";
+}
+function tests() { if (cur().draft) return draftEmpty("Tests", "No tests have been run. Start from its Dashboard: confirm the rules, then backtest."); var s = cur(), rows = s.tests.concat([{ t: "Backtest", d: "21 Oct", r: ["", "Score " + (s.expect - 0.03).toFixed(2)] }, { t: "Live vs backtest", d: "20 Oct", r: ["good", "All days match"] }, { t: "Luck test", d: "02 Aug", r: ["good", "Beat 96 of 100"] }]);
+  var what = { "Backtest": "Replayed on old prices.", "Luck test": "Compared against 100 scrambled histories.", "Final exam": "One-time test on unseen years.", "Live vs backtest": "Checked live decisions against the replay." };
+  return '<div class="head"><div><h1>Tests</h1><p>Every check run on ' + s.name + ", newest first.</p></div><span class=\"between\"><button class=\"btn\" data-act=\"job\" data-title=\"Check live against backtest\" data-mins=\"1\">Check live vs backtest</button>" +
+    '<button class="btn go" data-act="exam"' + (s.id === "mr" ? " disabled" : " disabled") + ">Take final exam…</button></span></div>" +
+    '<div class="kpis"><div class="card kpi"><span class="label">Looks at unseen years used</span><span class="big">' + (s.id === "mr" ? 0 : 1) + '</span><small>each look is permanent</small></div>' +
+    '<div class="card kpi"><span class="label">Live days matching backtest</span><span class="big">' + s.match[0] + " of " + s.match[1] + '</span><small>checked automatically each day</small></div>' +
+    '<div class="card kpi"><span class="label">Tests run</span><span class="big">' + rows.length + "</span><small>click a row for detail</small></div></div>" +
+    '<div class="card"><div class="tablewrap"><table><tr><th>Test</th><th>Date</th><th>What it did</th><th>Result</th></tr>' + rows.map(function (t) { return '<tr class="click" tabindex="0" data-test="' + t.t + '"><td><b>' + (G[{ "Luck test": "luck", "Final exam": "exam", "Live vs backtest": "match" }[t.t]] || t.t) + "</b></td><td>" + t.d + '</td><td class="soft">' + what[t.t] + "</td><td>" + pill(t.r[0], t.r[1]) + "</td></tr>"; }).join("") + "</table></div>" +
+    '<p class="soft" style="font-size:var(--t-s)">' + (s.id === "mr" ? "Final exam is locked: this strategy has not passed the luck test." : "Final exam already taken for this strategy. It can only be taken once.") + "</p></div>";
+}
+
+var NAV = [["dashboard", "Dashboard"], ["trades", "Trades"], ["tests", "Tests"], ["backtest", "Backtest"], ["improve", "Improve"], ["compare", "Compare"]];
+var VIEW = { dashboard: dashboard, trades: trades, tests: tests, backtest: backtest, improve: improve, compare: compare };
+function route() { var h = location.hash.replace("#", ""); return VIEW[h] ? h : "dashboard"; }
+function opts(draft) { return STR.filter(function (x) { return !!x.draft === draft; }).map(function (x) { return '<option value="' + x.id + '"' + (x.id === S.sid ? " selected" : "") + ">" + x.name + " · " + x.on + (x.status === "Paused" ? " (paused)" : "") + "</option>"; }).join(""); }
+function render() { var r = route(), s = cur();
+  document.getElementById("bar").innerHTML = '<div class="brand">STRATEGY<span>LAB</span></div><div class="pick" data-tour="pick"><label for="strat">Strategy</label><select id="strat">' +
+    '<optgroup label="Deployed">' + opts(false) + '</optgroup><optgroup label="Drafts, not deployed">' + opts(true) + "</optgroup></select>" +
+    '<span class="live' + (s.status === "Running" ? "" : " off") + '"><i></i>' + s.status + '</span></div><div class="right"><button class="btn small" data-act="prices" data-tour="prices"><span class="up">●</span> Prices up to date</button><span class="pill">Practice account</span>' +
+    '<button class="btn small" data-act="kill">' + (S.kill ? '<span class="down">■</span> All buying stopped' : "Stop all buying…") + '</button><button class="btn small" data-act="tour" data-tour="help">▶ Tour</button></div>';
+  document.getElementById("nav").innerHTML = '<div data-tour="live"><div class="grp">Live</div>' + NAV.slice(0, 3).map(link).join("") + '</div><div data-tour="lab"><div class="grp">Workshop</div>' + NAV.slice(3).map(link).join("") + "</div>";
+  function link(n) { return '<a href="#' + n[0] + '"' + (n[0] === r ? ' aria-current="page"' : "") + ' style="display:block">' + n[1] + "</a>"; }
+  CH = {}; chn = 0; document.getElementById("view").innerHTML = VIEW[r]();
+}
+
+/* ---------- dialogs ---------- */
+var modal = document.getElementById("modal"), dialog = document.getElementById("dialog"), timer = null;
+function closeDlg() { modal.classList.remove("open"); if (timer) { clearInterval(timer); timer = null; } }
+function confirmDlg(title, body, phrase, done) { dialog.innerHTML = '<h2 id="dlg-title" style="font-size:var(--t-l)">' + title + "</h2>" + body + '<p>Type <b class="mono">' + phrase + '</b> to confirm.</p><input type="text" id="phrase" autocomplete="off" aria-label="Confirmation phrase">' +
+    '<div class="between" style="justify-content:flex-end"><button class="btn" id="dlg-no">Cancel</button><button class="btn go" id="dlg-yes" disabled>Confirm</button></div>';
+  modal.classList.add("open"); var inp = document.getElementById("phrase"), yes = document.getElementById("dlg-yes"); inp.focus(); inp.oninput = function () { yes.disabled = inp.value.trim() !== phrase; };
+  document.getElementById("dlg-no").onclick = closeDlg; yes.onclick = function () { closeDlg(); done(); }; }
+function jobDlg(title, mins) { var h = Math.floor(mins / 60), t = (h ? h + " h " : "") + (mins % 60 ? mins % 60 + " min" : "");
+  dialog.innerHTML = '<h2 id="dlg-title" style="font-size:var(--t-l)">' + title + '</h2><p class="soft">Takes about ' + t + '. The bar is sped up for this prototype.</p><div class="progress"><i id="pbar"></i></div><p class="soft" id="ptxt">Ready.</p>' +
+    '<div class="between" style="justify-content:flex-end"><button class="btn" id="dlg-no">Close</button><button class="btn primary" id="dlg-go">Start</button></div>';
+  modal.classList.add("open"); document.getElementById("dlg-no").onclick = closeDlg;
+  document.getElementById("dlg-go").onclick = function () { var d = 0; this.disabled = true; timer = setInterval(function () { d = Math.min(100, d + 3); document.getElementById("pbar").style.width = d + "%";
+    document.getElementById("ptxt").textContent = d < 100 ? d + "% done, about " + Math.max(1, Math.round(mins * (100 - d) / 100)) + " min left" : "Finished. The real app adds the result to Tests."; if (d >= 100) { clearInterval(timer); timer = null; } }, 110); }; }
+
+function testDlg(kind) { var s = cur(), body, r = rng(s.seed + 3);
+  if (kind === "Luck test") { var X = function (v) { return 20 + v * 520; }, dots = ""; for (var i = 0; i < 100; i++) dots += '<circle cx="' + X(0.1 + Math.pow(r(), 1.5) * 0.78).toFixed(1) + '" cy="' + (30 + r() * 46).toFixed(1) + '" r="3" fill="var(--ink-soft)" opacity=".5"/>';
+    body = '<svg viewBox="0 0 560 130" role="img" aria-label="Score against 100 lucky scores"><rect x="' + X(0.8) + '" y="22" width="' + (540 - X(0.8)) + '" height="62" fill="var(--good-bg)"/><text x="' + (X(0.8) + 6) + '" y="16" style="fill:var(--good);font-weight:700">pass zone</text>' +
+      '<line x1="20" y1="84" x2="540" y2="84" stroke="var(--rule)"/>' + dots + '<polygon points="' + X(0.9) + ",84 " + (X(0.9) - 8) + ",100 " + (X(0.9) + 8) + ',100" fill="var(--accent)"/><text x="' + (X(0.9) - 40) + '" y="118" style="fill:var(--accent-ink);font-weight:700">this strategy</text></svg>' +
+      "<p>Each grey dot is the best score from one scrambled price history with no real pattern. The strategy must beat 95 of the 100 to count as more than luck.</p>"; }
+  else if (kind === "Final exam") body = '<div class="tablewrap"><table><tr><th>Year</th><th class="n">Score</th><th class="n">Trades</th><th style="padding-left:1rem">Result</th></tr>' + [[2019, 1.31, 12], [2020, 1.24, 14], [2021, 1.52, 11], [2022, 1.21, 13], [2023, 1.38, 12], [2024, 1.29, 11]].map(function (y) {
+      return "<tr><td>" + y[0] + '</td><td class="n">' + y[1].toFixed(2) + '</td><td class="n">' + y[2] + '</td><td style="padding-left:1rem">' + pill("good", "Pass") + "</td></tr>"; }).join("") + '</table></div><p class="soft">Pass marks, fixed in advance: score of at least 1.20 and at least 10 trades in every year.</p>';
+  else if (kind === "Live vs backtest") body = "<p><b>" + s.match[0] + " of " + s.match[1] + " days match.</b></p>" + (s.match[0] === s.match[1] ? '<p class="soft">Every live decision is the one the backtest would have made.</p>'
+      : '<div class="tablewrap"><table><tr><th>Day</th><th>What differed</th><th>Live</th><th>Backtest</th></tr><tr><td>03 Nov</td><td>Decision</td><td>' + pill("warn", "Sell") + "</td><td>" + pill("", "No trade") + '</td></tr><tr><td>03 Nov</td><td>Short average</td><td class="mono">89.95</td><td class="mono">89.97</td></tr></table></div>' +
+        '<p class="soft">The live price and the stored price differed by two pence, enough to flip the signal. That points at the price data, not the strategy.</p>');
+  else body = "<p>Replayed on 10 years of old prices. Score " + s.expect.toFixed(2) + ', worst fall −13.4%.</p><p class="soft">Open the Backtest section for the chart and other periods.</p>';
+  dialog.innerHTML = '<h2 id="dlg-title" style="font-size:var(--t-l)">' + kind + " · " + s.name + "</h2>" + body + '<div class="between" style="justify-content:flex-end"><button class="btn primary" id="dlg-no">Close</button></div>';
+  modal.classList.add("open"); document.getElementById("dlg-no").onclick = closeDlg; }
+function pricesDlg() { dialog.innerHTML = '<h2 id="dlg-title" style="font-size:var(--t-l)">Price data</h2><p>Prices are downloaded automatically every morning at 06:00 and again before any backtest or search. Nothing to upload.</p>' +
+    '<div class="rows"><div class="rowi"><span>Last update</span><b>Today, 06:00</b></div><div class="rowi"><span>Days stored</span><b>5,033 per instrument</b></div><div class="rowi"><span>Quality checks</span>' + pill("good", "All passed") + "</div></div>" +
+    '<div class="between" style="justify-content:flex-end"><button class="btn" data-act="job" data-title="Update prices now" data-mins="1">Update now</button><button class="btn primary" id="dlg-no">Close</button></div>';
+  modal.classList.add("open"); document.getElementById("dlg-no").onclick = closeDlg; }
+
+/* ---------- tour ---------- */
+var TOUR = [
+  { go: "dashboard", sel: "[data-tour=pick]", title: "Pick a strategy", text: "Everything on screen is about one deployed strategy. Use this dropdown to switch. The dot shows whether it is running or paused. Drafts, such as a strategy read from a video, are listed below the deployed ones." },
+  { go: "dashboard", sel: "[data-tour=prices]", title: "Prices update themselves", text: "Price data is downloaded automatically every morning. Green means up to date. Click it to see details." },
+  { go: "dashboard", sel: "[data-tour=kpis]", title: "How it is doing", text: "Four numbers: return, risk-adjusted score, win rate and worst fall. Green is gain, red is loss. Dotted words explain themselves when you point at them." },
+  { go: "dashboard", sel: "[data-tour=chart]", title: "Account value over time", text: "The value of the account, day by day. Move the mouse over it to read any day. Switch between 1 month, 3 months and all." },
+  { go: "dashboard", sel: "[data-tour=now]", title: "What it is doing right now", text: "Today's signal and the reason, the current position, and how close it is to the safety limits." },
+  { go: "dashboard", sel: "[data-tour=trades]", title: "Recent trades", text: "The latest orders and how each finished. The full history is one click away." },
+  { go: "dashboard", sel: "[data-tour=tests]", title: "Recent tests", text: "The latest checks on this strategy, including whether live trading still matches the backtest." },
+  { go: "dashboard", sel: "[data-tour=live]", title: "Live sections", text: "Dashboard, Trades and Tests are about what the deployed strategy has actually done." },
+  { go: "improve", sel: "[data-tour=lab]", title: "Workshop sections", text: "Backtest replays on old prices. Improve searches for better settings. Compare puts two strategies side by side. Nothing here touches the live strategy until you deploy." },
+  { go: "dashboard", pick: "draft1", sel: "[data-tour=draft]", title: "Strategies from a video", text: "Claude Code can watch a video and write its strategy as a file. It appears here as a draft, in plain words, with anything it could not turn into a rule listed in amber. It cannot trade until it passes every step on the right." },
+  { go: "dashboard", pick: "ma", sel: "[data-tour=help]", title: "Replay any time", text: "This button plays the tour again." }
+];
+var ti = -1, tip = document.getElementById("tip"), spot = document.getElementById("spot");
+function welcome() { closeDlg(); dialog.innerHTML = '<svg viewBox="0 0 480 150" role="img" aria-label="An account value line rising">' +
+    '<path class="draw b" pathLength="1" d="M10 126 C 60 130, 100 96, 150 104 S 230 60, 290 72 S 400 26, 470 18" fill="none" stroke="var(--accent)" stroke-width="4"/><text class="fadein" x="466" y="46" text-anchor="end" style="font-size:15px;font-weight:700;fill:var(--accent-ink)">your strategy</text>' +
+    '</svg><h2 id="dlg-title" style="font-size:var(--t-xl);line-height:1.15">Welcome to StrategyLab</h2>' +
+    '<p>Track how your deployed strategies are performing, see every trade and test, and work on better versions.</p><p class="soft">The tour takes under a minute.</p>' +
+    '<div class="between" style="justify-content:flex-end"><button class="btn" id="dlg-no">Skip</button><button class="btn go" id="dlg-go">Show me around</button></div>';
+  modal.classList.add("open"); document.getElementById("dlg-no").onclick = closeDlg; document.getElementById("dlg-go").onclick = function () { closeDlg(); tourGo(0); }; }
+function tourGo(i) { if (i < 0) i = 0; if (i >= TOUR.length) return tourEnd(true); ti = i; var t = TOUR[i]; if (t.pick) S.sid = t.pick; else if (cur().draft) S.sid = "ma"; if (route() !== t.go) location.hash = t.go; render(); document.body.classList.add("tour-on");
+  tip.innerHTML = '<div class="txt"><span class="eyebrow">' + (i + 1) + " of " + TOUR.length + "</span><h2>" + t.title + "</h2><p>" + t.text + '</p></div><div class="between"><div class="dots">' + TOUR.map(function (_, k) { return '<i class="' + (k === i ? "on" : "") + '"></i>'; }).join("") +
+    '</div><span><button class="btn small" id="t-skip">Skip</button> ' + (i ? '<button class="btn small" id="t-back">Back</button> ' : "") + '<button class="btn small go" id="t-next">' + (i === TOUR.length - 1 ? "Finish" : "Next") + "</button></span></div>";
+  document.getElementById("t-next").onclick = function () { tourGo(ti + 1); }; document.getElementById("t-skip").onclick = function () { tourEnd(false); }; if (i) document.getElementById("t-back").onclick = function () { tourGo(ti - 1); };
+  var el = document.querySelector(t.sel); if (el) el.scrollIntoView({ block: "nearest" }); requestAnimationFrame(function () { requestAnimationFrame(placeTour); }); document.getElementById("t-next").focus({ preventScroll: true }); }
+function placeTour() { if (ti < 0) return; var el = document.querySelector(TOUR[ti].sel), vw = innerWidth, vh = innerHeight, pad = 8, r = el ? el.getBoundingClientRect() : { left: vw / 2, top: vh / 2, width: 0, height: 0, right: vw / 2, bottom: vh / 2 };
+  spot.style.left = (r.left - pad) + "px"; spot.style.top = (r.top - pad) + "px"; spot.style.width = (r.width + pad * 2) + "px"; spot.style.height = (r.height + pad * 2) + "px";
+  var tw = tip.offsetWidth, th = tip.offsetHeight, gap = 22, x, y;
+  if (r.bottom + gap + th < vh) { x = r.left; y = r.bottom + gap; } else if (r.right + gap + tw < vw) { x = r.right + gap; y = r.top; } else if (r.left - gap - tw > 0) { x = r.left - gap - tw; y = r.top; } else if (r.top - gap - th > 0) { x = r.left; y = r.top - gap - th; } else { x = vw - tw - 16; y = vh - th - 16; }
+  tip.style.left = Math.max(16, Math.min(x, vw - tw - 16)) + "px"; tip.style.top = Math.max(16, Math.min(y, vh - th - 16)) + "px"; }
+function tourEnd(fin) { ti = -1; document.body.classList.remove("tour-on"); S.sid = "ma"; try { localStorage.setItem("sl-tour4", "1"); } catch (e) {} if (route() !== "dashboard") location.hash = "dashboard"; render(); if (fin) confetti(); }
+function confetti() { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; var c = document.getElementById("confetti"), x = c.getContext("2d"), W = c.width = innerWidth, H = c.height = innerHeight, r = rng(Date.now() & 65535), cols = ["#ff5f1f", "#35b779", "#fde725", "#31688e", "#e7e9ee"], ps = [], t0 = performance.now(); c.hidden = false;
+  for (var i = 0; i < 140; i++) ps.push({ x: W / 2, y: H * 0.38, vx: (r() - 0.5) * 22, vy: -r() * 17 - 4, s: 5 + r() * 7, c: cols[i % 5], a: r() * 6, va: (r() - 0.5) * 0.5 });
+  (function frame(now) { var dt = now - t0; x.clearRect(0, 0, W, H); ps.forEach(function (p) { p.vy += 0.45; p.x += p.vx; p.y += p.vy; p.vx *= 0.985; p.a += p.va; x.save(); x.translate(p.x, p.y); x.rotate(p.a); x.globalAlpha = Math.max(0, 1 - dt / 2200); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 3, p.s, p.s / 1.6); x.restore(); });
+    if (dt < 2200) requestAnimationFrame(frame); else { x.clearRect(0, 0, W, H); c.hidden = true; } })(t0); }
+
+/* ---------- events ---------- */
+document.addEventListener("click", function (e) { if (e.target === modal) closeDlg(); var t = e.target.closest("[data-range],[data-tf],[data-bt],[data-cell],[data-act],[data-tab],[data-test],[data-trend]"); if (!t) return;
+  if (t.dataset.tab) { var kv = t.dataset.tab.split(":"); S.tab[kv[0]] = kv[1]; render(); return; }
+  if (t.dataset.test) { testDlg(t.dataset.test); return; }
+  if (t.dataset.trend) { S.trend = +t.dataset.trend; render(); return; }
+  if (t.dataset.act === "prices") { pricesDlg(); return; }
+  if (t.dataset.act === "confirmRules") { S.confirmed = true; render(); return; }
+  if (t.dataset.act === "draftTest") { S.tested = true; render(); return; }
+  if (t.dataset.act === "kill") { confirmDlg(S.kill ? "Allow buying again" : "Stop all buying", "<p>" + (S.kill ? "Strategies may place buy orders again." : "No strategy may open a new position until you switch this off. Selling is still allowed.") + "</p>", S.kill ? "ALLOW" : "STOP", function () { S.kill = !S.kill; render(); }); return; }
+  if (t.dataset.range) { S.range = +t.dataset.range; render(); } else if (t.dataset.tf) { S.tf = t.dataset.tf; render(); } else if (t.dataset.bt) { S.bt = t.dataset.bt; render(); }
+  else if (t.dataset.cell) { var p = t.dataset.cell.split(","); S.sel = cat(+p[0], +p[1]); render(); }
+  else if (t.dataset.act === "job") jobDlg(t.dataset.title, +t.dataset.mins); else if (t.dataset.act === "tour") welcome();
+  else if (t.dataset.act === "pause") { var s = cur(), on = s.status === "Running"; confirmDlg((on ? "Pause " : "Resume ") + s.name, "<p>" + (on ? "It stops placing orders. Any open position stays as it is." : "It starts checking prices and placing practice orders again.") + "</p>", on ? "PAUSE" : "RESUME",
+    function () { s.status = on ? "Paused" : "Running"; s.signal = on ? "Paused" : "Hold"; s.why = on ? "You paused this strategy just now." : "Resumed. Waiting for the next check."; render(); }); } });
+document.addEventListener("change", function (e) { var t = e.target; if (t.id === "strat") { S.sid = t.value; render(); } else if (t.dataset.cmp) { S.cmp[+t.dataset.cmp] = t.value; render(); } });
+document.addEventListener("keydown", function (e) { if (ti >= 0) { if (e.key === "Escape") tourEnd(false); else if (e.key === "ArrowRight") tourGo(ti + 1); else if (e.key === "ArrowLeft") tourGo(ti - 1); } else if (e.key === "Escape") closeDlg(); });
+document.addEventListener("mousemove", chartHover); document.addEventListener("mouseleave", chartHover);
+window.addEventListener("hashchange", function () { if (ti < 0) render(); }); window.addEventListener("resize", placeTour); document.getElementById("scroll").addEventListener("scroll", placeTour);
+render(); var seen = false; try { seen = localStorage.getItem("sl-tour4") === "1"; } catch (e) {} if (!seen) welcome();
+</script>
+</body>
+</html>
