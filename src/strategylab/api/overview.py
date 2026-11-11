@@ -30,6 +30,7 @@ from strategylab.api.history import latest_search
 from strategylab.api.reading import missing, plain_reason
 from strategylab.api.registry import LIMITS_FILE, list_strategies
 from strategylab.api.rules import describe
+from strategylab.api.window_state import tour_seen
 from strategylab.data.source import DataQualityError, cache_read
 from strategylab.protocol import Protocol, load_protocol
 from strategylab.risk.limits import load_limits
@@ -102,7 +103,9 @@ def read_overview(root: Path, environ: Mapping[str, str]) -> dict[str, Any]:
         this project can deploy one yet. Each strategy carries its rules in
         words (:func:`~strategylab.api.rules.describe`), where it came from
         (:func:`~strategylab.api.drafts.read_source`) and whether its rules
-        are confirmed (:func:`~strategylab.api.drafts.confirmation`). The
+        are confirmed (:func:`~strategylab.api.drafts.confirmation`).
+        ``tour_seen`` says whether the window's tour has been seen
+        (:mod:`strategylab.api.window_state`). The
         venue block holds the value of
         ``T212_ENVIRONMENT`` (or ``None``) and whether ``T212_API_KEY`` is set;
         it never holds the key.
@@ -140,4 +143,5 @@ def read_overview(root: Path, environ: Mapping[str, str]) -> dict[str, Any]:
         },
         "strategies": strategies,
         "unreadable_configs": refused,
+        "tour_seen": tour_seen(root),
     }

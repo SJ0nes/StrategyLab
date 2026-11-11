@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Thirty-four modules have working bodies: `protocol.py`, `windows.py`,
+Thirty-five modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -15,7 +15,7 @@ Thirty-four modules have working bodies: `protocol.py`, `windows.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
 `execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
-`api/job_runner.py`, `api/rules.py`, `api/drafts.py`,
+`api/job_runner.py`, `api/rules.py`, `api/drafts.py`, `api/window_state.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
@@ -239,15 +239,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2304 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2317 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-seven
+server and what it reports, and the commit-time credential scan — twenty-eight
 areas, one per test file.
-520 of the 2304 are the risk layer's,
+520 of the 2317 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -976,14 +976,14 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and it can start one kind of work.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has ten
+for a desktop app (`docs/decisions/0014`). It has eleven
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
 each strategy config with its newest search, its rules in words, where it
 came from and whether its rules are confirmed. Three report a strategy's
 history: its searches, one search in full, and its reads of the held-back
-window. One reports the graveyard, and one the jobs it has started. Three change
-something: one records that the operator has read a strategy's rules, one
+window. One reports the graveyard, and one the jobs it has started. Four change
+something: one remembers that the window's tour has been seen, one records that the operator has read a strategy's rules, one
 starts a job and one asks a running job to stop. No job starts for a strategy
 whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the

@@ -51,6 +51,7 @@ from strategylab.api.jobs import JOB_KINDS, JobRefused, list_jobs, request_stop,
 from strategylab.api.overview import read_overview
 from strategylab.api.reading import plain_reason
 from strategylab.api.registry import find_strategy
+from strategylab.api.window_state import mark_tour_seen
 from strategylab.protocol import ProtocolError
 
 #: Shortest token accepted, in characters. The window's launcher sends 64
@@ -264,6 +265,15 @@ def create_app(
         except OSError:
             return JSONResponse(
                 {"detail": "the confirmation could not be recorded"}, status_code=500
+            )
+
+    @application.post("/api/tour/seen")
+    def tour_seen() -> Any:
+        try:
+            return {"tour_seen": mark_tour_seen(root, datetime.now(UTC))}
+        except OSError:
+            return JSONResponse(
+                {"detail": "the window's memory could not be written"}, status_code=500
             )
 
     @application.post("/api/jobs/{job_id}/stop")
