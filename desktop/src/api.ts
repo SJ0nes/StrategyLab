@@ -193,3 +193,53 @@ export const getSearch = (id: string, artifact: string): Promise<SearchDetail | 
 export const getExams = (id: string): Promise<Exam[]> => get<Exam[]>(`${strategyPath(id)}/exams`);
 
 export const getGraveyard = (): Promise<Graveyard | Missing> => get<Graveyard | Missing>("/api/graveyard");
+
+/** The kinds of work the window can start. The server's closed list. */
+export type JobKind = "search" | "luck_test";
+
+/** One piece of work started from the window, and where it has got to. */
+export interface Job {
+  id: string;
+  kind: JobKind;
+  strategy_id: string | null;
+  trials: number | null;
+  started_at: string | null;
+  status: "running" | "stopping" | "finished" | "stopped" | "failed" | "lost";
+  /** Scrambled histories finished so far; null when the job reports none. */
+  progress: { finished: number; total: number } | null;
+  last_line: string | null;
+}
+
+export interface Jobs {
+  /** The job that is running or stopping, if any. Only one runs at a time. */
+  current: Job | null;
+  recent: Job[];
+}
+
+/** Ask the server to do something. A refusal's own words become the error's message. */
+export async function post<T>(path: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method: "POST" });
+  } catch {
+    throw new ApiError("The StrategyLab server is not answering. Close the app and open it again.");
+  }
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const detail =
+      typeof body === "object" && body !== null && "detail" in body && typeof body.detail === "string"
+        ? body.detail
+        : null;
+    throw new ApiError(
+      detail === null ? `The server refused the request (${response.status}).` : `Refused: ${detail}.`,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+export const getJobs = (): Promise<Jobs> => get<Jobs>("/api/jobs");
+
+export const startJob = (id: string, kind: JobKind): Promise<Job> =>
+  post<Job>(`${strategyPath(id)}/jobs/${kind}`);
+
+export const stopJob = (jobId: string): Promise<Job> => post<Job>(`/api/jobs/${encodeURIComponent(jobId)}/stop`);

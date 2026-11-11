@@ -1073,18 +1073,24 @@ held-back bar. What is worth knowing about it:
   newest artifact naming the strategy is the one reported. It says whether the
   config has changed since, and that is the only link between the two.
 
-**The desktop window only reads, and the part that matters most is the part no
-test runs.** `desktop/` holds an Electron window that starts the server and
-shows four screens of real state - Dashboard, Improve, Tests and Backtest; two
-of its six sections say they are not built, and every button that would change
-something is disabled. Its Backtest screen shows a replay a search recorded and
-cannot run one (`docs/decisions/0016`). Its page is tested in a simulated browser and its helper for finding
+**The desktop window starts searches and nothing else, and the part that
+matters most is the part no test runs.** `desktop/` holds an Electron window
+that starts the server and shows four screens of real state - Dashboard,
+Improve, Tests and Backtest; two of its six sections say they are not built.
+Three buttons start a search or a luck test, in the project the window is
+serving: a real one, minutes or about an hour of this machine, behind a dialog
+and a Start button but no typed confirmation. Deploying, the final exam and the
+live check are disabled. Its Backtest screen shows the replay a search recorded
+and can start another search, not a single backtest (`docs/decisions/0016`,
+`0017`). Its page is tested in a simulated browser and its helper for finding
 `uv` is tested directly. The Electron main process is not: starting the server,
 attaching the token to requests, and refusing to navigate anywhere else were
 checked by launching the app twice on Windows and inspecting it. That check
 found the window showing real data, the page's script unable to see the token
 or Node, and no server process left after the window closed - and it is two
-launches on one machine, repeated by nobody else. CI does not build or test anything
+launches on one machine, repeated by nobody else. The window now allows one
+instance of itself and can be pointed at a copy of the project; both were used
+in the check of a job described above, and neither has a test. CI does not build or test anything
 under `desktop/`. The built screens were looked at in the real window at two
 sizes, by the assistant that built them, and differ from the approved mock where
 the mock shows something that does not exist: settings are named as the config

@@ -134,9 +134,12 @@ const ROUTES = {
   "/api/graveyard": GRAVEYARD,
 };
 
+const onStart = vi.fn();
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  onStart.mockReset();
 });
 
 describe("wording", () => {
@@ -199,7 +202,7 @@ describe("the chart", () => {
 describe("Improve", () => {
   it("draws the slice of the grid that holds the best version, and marks it", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     const best = await screen.findByRole("button", { name: "fast 10, slow 40, trend 150, score 0.64" });
     expect(best).toHaveClass("best", "sel");
@@ -214,7 +217,7 @@ describe("Improve", () => {
 
   it("shows another slice when its value is pressed", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
     await screen.findByText("Best found");
 
     fireEvent.click(within(screen.getByRole("group", { name: "trend" })).getByRole("button", { name: "100" }));
@@ -225,7 +228,7 @@ describe("Improve", () => {
 
   it("shows the pressed version's own figures, and says the luck test was not run on it", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "fast 5, slow 20, trend 150, score 0.55" }));
 
@@ -239,7 +242,7 @@ describe("Improve", () => {
 
   it("says a version whose replay failed has no score, not a zero", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "fast 10, slow 20, trend 150, no score" }));
 
@@ -247,18 +250,30 @@ describe("Improve", () => {
     expect(screen.getAllByText("none").length).toBe(3);
   });
 
-  it("cannot start a search or deploy anything", async () => {
+  it("asks for a search or a luck test when its buttons are pressed, and starts neither itself", async () => {
+    const asked = serve(ROUTES);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
+    await screen.findByText("Best found");
+    const before = asked.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Search again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the luck test" }));
+
+    expect(onStart.mock.calls).toEqual([["search"], ["luck_test"]]);
+    expect(asked.length).toBe(before);
+  });
+
+  it("cannot deploy anything", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
     await screen.findByText("Best found");
 
-    expect(screen.getByRole("button", { name: "Search again" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Deploy this version…" })).toBeDisabled();
   });
 
   it("lists what was ruled out across the project, once each, in plain words", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Ruled out" }));
 
     expect(await screen.findByText("Failed the luck test")).toBeInTheDocument();
@@ -270,7 +285,7 @@ describe("Improve", () => {
 
   it("lists past searches, including one it could not read", async () => {
     serve(ROUTES);
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Past searches" }));
 
     expect(screen.getByText("10 Nov 2026, 18:40")).toBeInTheDocument();
@@ -280,14 +295,14 @@ describe("Improve", () => {
 
   it("says so when no search has been run", async () => {
     serve({ ...ROUTES, "/api/strategies/ma_crossover/searches": [] });
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText("No search to show")).toBeInTheDocument();
   });
 
   it("says so when the only searches on record could not be read", async () => {
     const asked = serve({ ...ROUTES, "/api/strategies/ma_crossover/searches": [UNREAD] });
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText(/none could be read/)).toBeInTheDocument();
     expect(asked).toEqual(["/api/strategies/ma_crossover/searches"]);
@@ -298,14 +313,14 @@ describe("Improve", () => {
       ...ROUTES,
       "/api/strategies/ma_crossover/searches/search-b.json": { available: false, reason: "Damaged, says the server." },
     });
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText("Damaged, says the server.")).toBeInTheDocument();
   });
 
   it("reports a refused request and draws no grid", async () => {
     serve({});
-    render(<Improve strategy={STRATEGY} />);
+    render(<Improve strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("refused");
     expect(screen.queryByRole("tab")).toBeNull();
@@ -313,7 +328,7 @@ describe("Improve", () => {
 
   it("never mentions buying and holding", async () => {
     serve(ROUTES);
-    const { container } = render(<Improve strategy={STRATEGY} />);
+    const { container } = render(<Improve strategy={STRATEGY} onStart={onStart} />);
     await screen.findByText("Best found");
 
     expect(container.textContent?.toLowerCase()).not.toMatch(/buy.and.hold|benchmark/);
@@ -323,7 +338,7 @@ describe("Improve", () => {
 describe("Backtest", () => {
   it("shows the figures recorded for the version the search put forward", async () => {
     serve(ROUTES);
-    render(<Backtest strategy={STRATEGY} />);
+    render(<Backtest strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText("+89.3%")).toBeInTheDocument();
     expect(screen.getByText("0.64")).toBeInTheDocument();
@@ -335,18 +350,20 @@ describe("Backtest", () => {
     expect(screen.getByRole("img", { name: "This strategy, 4 Jan 2010 to 31 Dec 2018" })).toBeInTheDocument();
   });
 
-  it("cannot run anything", async () => {
+  it("asks for a search when Run backtest is pressed", async () => {
     serve(ROUTES);
-    render(<Backtest strategy={STRATEGY} />);
+    render(<Backtest strategy={STRATEGY} onStart={onStart} />);
     await screen.findByText("+89.3%");
 
-    expect(screen.getByRole("button", { name: "Run backtest" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Run backtest" }));
+
+    expect(onStart.mock.calls).toEqual([["search"]]);
   });
 
   it("shows no figure when the search put no version forward", async () => {
     const none = { ...DETAIL, candidate: null, cells: DETAIL.cells.map((each) => ({ ...each, mark: null })) };
     serve({ ...ROUTES, "/api/strategies/ma_crossover/searches/search-b.json": none });
-    render(<Backtest strategy={STRATEGY} />);
+    render(<Backtest strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText("The last search put no version forward")).toBeInTheDocument();
     expect(screen.queryByText("Total return")).toBeNull();
@@ -354,7 +371,7 @@ describe("Backtest", () => {
 
   it("shows no figure when there is no search", async () => {
     serve({ ...ROUTES, "/api/strategies/ma_crossover/searches": [] });
-    render(<Backtest strategy={STRATEGY} />);
+    render(<Backtest strategy={STRATEGY} onStart={onStart} />);
 
     expect(await screen.findByText("No replay on record")).toBeInTheDocument();
     expect(screen.queryByText("Total return")).toBeNull();

@@ -1,6 +1,14 @@
 import { useState } from "react";
 
-import { type Cell, type Graveyard, type Missing, type SearchDetail, type Strategy, getGraveyard } from "../api";
+import {
+  type Cell,
+  type Graveyard,
+  type JobKind,
+  type Missing,
+  type SearchDetail,
+  type Strategy,
+  getGraveyard,
+} from "../api";
 import { Chart } from "../components/Chart";
 import { Term, Waiting } from "../components/Term";
 import { type Searches, loadSearches, useLoad } from "../useLoad";
@@ -202,8 +210,9 @@ function Grid({ search }: { search: SearchDetail }) {
           Deploy this version…
         </button>
         <p className="soft" style={{ fontSize: "var(--t-s)" }}>
-          Deploying is not built yet, and unlocks only for a version that passes the luck test. The luck test is run
-          on the version a search puts forward. A higher score on old prices alone is often just luck.
+          Deploying is not built yet, and unlocks only for a version that passes the luck test. The luck test, at
+          the top of this page, is run on the version a search puts forward and not on a chosen square. A higher
+          score on old prices alone is often just luck.
         </p>
       </div>
     </div>
@@ -314,7 +323,7 @@ function Past({ searches }: { searches: Searches }) {
   );
 }
 
-export function Improve({ strategy }: { strategy: Strategy }) {
+export function Improve({ strategy, onStart }: { strategy: Strategy; onStart: (kind: JobKind) => void }) {
   const [tab, setTab] = useState<Tab>("grid");
   const load = useLoad<Searches>(strategy.id, () => loadSearches(strategy.id));
   if (load.state !== "ready") {
@@ -333,9 +342,14 @@ export function Improve({ strategy }: { strategy: Strategy }) {
             {newest?.available ? ` (${whenLabel(newest.generated_at)})` : ""}.
           </p>
         </div>
-        <button type="button" className="btn primary" disabled title="Starting a search from the app is not built yet">
-          Search again
-        </button>
+        <span className="between">
+          <button type="button" className="btn" onClick={() => onStart("luck_test")}>
+            Run the luck test
+          </button>
+          <button type="button" className="btn primary" onClick={() => onStart("search")}>
+            Search again
+          </button>
+        </span>
       </div>
       <div className="tabs" role="tablist">
         {TABS.map(([id, label]) => (

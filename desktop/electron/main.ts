@@ -23,6 +23,17 @@ import { findOnPath } from "./findOnPath";
 /** The repository root: this file runs from `desktop/dist-electron/`. */
 const REPOSITORY = path.resolve(__dirname, "..", "..");
 
+/**
+ * Names a directory to serve in place of the repository: a copy of the project
+ * made to try the window on, so that pressing a button there starts nothing
+ * here. It must hold its own `protocol.yaml`, `configs/` and `desktop/dist/`.
+ * The code that runs is this repository's: the server and every job it starts
+ * are told not to import from the directory they run in. The page is the
+ * workspace's own `desktop/dist/`, so a workspace is trusted as much as the
+ * person who made it.
+ */
+const WORKSPACE_VARIABLE = "STRATEGYLAB_WORKSPACE";
+
 /** The environment variable the server reads its token from. */
 const TOKEN_VARIABLE = "STRATEGYLAB_APP_TOKEN";
 
@@ -46,8 +57,10 @@ function startServer(launchToken: string): Promise<number> {
       reject(new Error("`uv` was not found on PATH; StrategyLab's server is started with it"));
       return;
     }
-    const child = spawn(uv, ["run", "--frozen", "strategylab", "serve", "--port", "0"], {
-      cwd: REPOSITORY,
+    const workspace = process.env[WORKSPACE_VARIABLE];
+    const served = workspace === undefined || workspace === "" ? REPOSITORY : path.resolve(workspace);
+    const child = spawn(uv, ["run", "--frozen", "--project", REPOSITORY, "strategylab", "serve", "--port", "0"], {
+      cwd: served,
       env: { ...process.env, [TOKEN_VARIABLE]: launchToken },
       stdio: ["pipe", "pipe", "inherit"],
       windowsHide: true,
@@ -132,6 +145,12 @@ async function openWindow(): Promise<void> {
   });
 
   await window.loadURL(`${origin}/`);
+}
+
+// One window at a time. Two would be two servers, and each would let a job
+// start without seeing the other's.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
 }
 
 app.whenReady().then(openWindow).catch((error: unknown) => {

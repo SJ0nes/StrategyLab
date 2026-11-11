@@ -1,4 +1,4 @@
-import type { Strategy } from "../api";
+import type { JobKind, Strategy } from "../api";
 import { Chart } from "../components/Chart";
 import { Term, Waiting } from "../components/Term";
 import { type Searches, loadSearches, useLoad } from "../useLoad";
@@ -12,7 +12,7 @@ import { dayLabel, money, signedPct, versionLabel, whenLabel } from "../words";
  * for drawing, and a score recomputed from a slice of it would be a second
  * formula on rounded data that disagrees with the recorded one.
  */
-export function Backtest({ strategy }: { strategy: Strategy }) {
+export function Backtest({ strategy, onStart }: { strategy: Strategy; onStart: (kind: JobKind) => void }) {
   const load = useLoad<Searches>(strategy.id, () => loadSearches(strategy.id));
   if (load.state !== "ready") {
     return <Waiting title="Backtest" message={load.state === "failed" ? load.message : null} />;
@@ -30,8 +30,8 @@ export function Backtest({ strategy }: { strategy: Strategy }) {
         <button
           type="button"
           className="btn primary"
-          disabled
-          title="Running a new backtest from the app is not built yet"
+          title="Replays every version on old prices; the same as Search again on Improve"
+          onClick={() => onStart("search")}
         >
           Run backtest
         </button>
@@ -40,7 +40,7 @@ export function Backtest({ strategy }: { strategy: Strategy }) {
       {newest === null ? (
         <div className="empty">
           <b>No replay on record</b>
-          No search that could be read has been run for this strategy, and a search is what records a replay today.
+          No search that could be read has been run for this strategy. Run backtest starts one.
         </div>
       ) : !newest.available ? (
         <div className="empty" role="alert">
@@ -59,7 +59,7 @@ export function Backtest({ strategy }: { strategy: Strategy }) {
             {whenLabel(newest.generated_at)}.{" "}
             <span className="soft">
               The best of many tries looks better than it is; the luck test on the Tests page says by how much.
-              Running a new backtest, or choosing another period, is not built yet.
+              Run backtest replays every version again, over the same period; another period cannot be chosen.
             </span>
           </div>
           <div className="kpis">

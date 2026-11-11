@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, type Overview, getOverview } from "./api";
+import { ApiError, type JobKind, type Jobs, type Overview, getJobs, getOverview } from "./api";
+import { JobDialog } from "./components/JobDialog";
 import { Nav, SECTIONS, type SectionId } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
 import { Backtest } from "./pages/Backtest";
@@ -8,6 +9,9 @@ import { Dashboard } from "./pages/Dashboard";
 import { Improve } from "./pages/Improve";
 import { NotBuilt } from "./pages/NotBuilt";
 import { Tests } from "./pages/Tests";
+
+/** How often the window asks what is running, in milliseconds. */
+export const JOB_POLL_MS = 3000;
 
 /** The section named in the address bar, or the dashboard. */
 function sectionFromHash(hash: string): SectionId {
@@ -24,6 +28,12 @@ export function App() {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [section, setSection] = useState<SectionId>(() => sectionFromHash(window.location.hash));
   const [chosen, setChosen] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Jobs | null>(null);
+  const [dialog, setDialog] = useState<JobKind | null>(null);
+  // Counts the jobs seen to end. Pages are keyed on it, so each reads the
+  // project again when a job has written something new.
+  const [ended, setEnded] = useState(0);
+  const wasRunning = useRef(false);
 
   useEffect(() => {
     getOverview()
@@ -34,7 +44,25 @@ export function App() {
           message: error instanceof ApiError ? error.message : "The app could not read the project.",
         }),
       );
+  }, [ended]);
+
+  const askJobs = useCallback(() => {
+    getJobs()
+      .then((answer) => {
+        if (wasRunning.current && answer.current === null) {
+          setEnded((count) => count + 1);
+        }
+        wasRunning.current = answer.current !== null;
+        setJobs(answer);
+      })
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    askJobs();
+    const timer = window.setInterval(askJobs, JOB_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [askJobs]);
 
   useEffect(() => {
     const onHashChange = () => setSection(sectionFromHash(window.location.hash));
@@ -42,7 +70,7 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  if (load.state === "loading") {
+  if (load.state === "loading" && ended === 0) {
     return <p className="soft" style={{ padding: "2rem" }}>Reading the project…</p>;
   }
   if (load.state === "failed") {
@@ -54,13 +82,22 @@ export function App() {
     );
   }
 
+  if (load.state !== "ready") {
+    return null;
+  }
   const { overview } = load;
   const strategy =
     overview.strategies.find((candidate) => candidate.id === chosen) ?? overview.strategies[0];
 
   return (
     <div className="app">
-      <TopBar overview={overview} strategy={strategy} onChoose={setChosen} />
+      <TopBar
+        overview={overview}
+        strategy={strategy}
+        onChoose={setChosen}
+        job={jobs?.current ?? null}
+        onOpenJob={setDialog}
+      />
       <Nav current={section} />
       <main id="scroll">
         <div className="wrap">
@@ -82,16 +119,25 @@ export function App() {
               ))}
             </>
           ) : section === "tests" ? (
-            <Tests overview={overview} strategy={strategy} key={strategy.id} />
+            <Tests overview={overview} strategy={strategy} key={`${strategy.id}-${ended}`} />
           ) : section === "backtest" ? (
-            <Backtest strategy={strategy} key={strategy.id} />
+            <Backtest strategy={strategy} key={`${strategy.id}-${ended}`} onStart={setDialog} />
           ) : section === "improve" ? (
-            <Improve strategy={strategy} key={strategy.id} />
+            <Improve strategy={strategy} key={`${strategy.id}-${ended}`} onStart={setDialog} />
           ) : (
             <NotBuilt section={section} />
           )}
         </div>
       </main>
+      {dialog !== null && strategy !== undefined && (
+        <JobDialog
+          strategyId={strategy.id}
+          kind={dialog}
+          jobs={jobs}
+          onChanged={askJobs}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </div>
   );
 }

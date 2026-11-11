@@ -25,10 +25,25 @@ A window that reads. It opens, starts the server, and shows:
   forward. One period only, the one the search covered; `docs/decisions/0016`
   says why.
 
-Trades and Compare say they are not built. Every button that would start a
-search, run a backtest, read the held-back window or deploy a strategy is drawn
-and disabled. Nothing in the window can change anything. The tour and every
-control in the mock that changes something are still to come.
+Trades and Compare say they are not built.
+
+Three buttons start work, and it is real work on the project the window is
+serving:
+
+- **Search again** (Improve) and **Run backtest** (Backtest) start
+  `strategylab search` with no trials. Minutes. It writes a result and appends
+  to the graveyard, as the command does.
+- **Run the luck test** (Improve) starts `strategylab search --trials 100`.
+  About an hour here, once, on fourteen processes.
+
+Each opens a dialog that says what it will do and how long it takes, and starts
+nothing until Start is pressed. One job runs at a time. A job is its own
+process: closing the window does not stop it, and the next launch shows where
+it has got to. A luck test can be asked to stop; it ends after the trials in
+hand, writing no result. `docs/decisions/0017` records the design.
+
+Deploying, the final exam and the live check are drawn and disabled. The tour
+is still to come.
 
 The window never shows the buy-and-hold comparison. The search records it and
 the server leaves it out (`docs/decisions/0014`).
@@ -48,8 +63,26 @@ are all places where the mock shows something the project does not have:
 | Improve | Three figures beside the chart | Five: total return, worst fall and trades are added | They are recorded for every version |
 | Improve, Ruled out | Three columns | Five: how many times recorded, and when last | The record repeats, and covers the whole project |
 | Backtest | 5 years, 10 years, All history | One period, the search's | `docs/decisions/0016` |
-| Backtest, Improve | "Search again", "Run backtest" work | Drawn and disabled | No job runner yet |
+| Backtest | "Run backtest" runs one backtest | It runs a search, the same as "Search again" | A search is the grid of backtests; the project has no single-backtest command (`docs/decisions/0017`) |
+| Improve | A sped-up progress bar | A bar that moves only for a luck test, one step per finished trial | A plain search reports nothing until it ends |
 | Tests | Rows for single backtests and live-against-backtest checks | Rows for searches and final exams only | Those are the tests the project keeps on record |
+
+## Trying it on a copy
+
+Pressing a button in the window starts a real search in this repository. To
+press buttons without doing that, serve a copy:
+
+```bash
+mkdir ../../strategylab-copy
+cp -r ../protocol.yaml ../configs ../data ../../strategylab-copy/
+mkdir -p ../../strategylab-copy/desktop && cp -r dist ../../strategylab-copy/desktop/
+STRATEGYLAB_WORKSPACE=../../strategylab-copy npm start
+```
+
+The window then reads and writes the copy. The code that runs is still this
+repository's, and a job is started so that Python imports nothing from the
+directory it runs in. The page shown is the copy's own `desktop/dist/`, so a
+copy is to be trusted as much as whoever made it.
 
 ## Running it
 
@@ -94,6 +127,10 @@ No test launches Electron. `electron/main.ts` - starting the server, adding the
 token, refusing to navigate away - was checked by running the app and looking,
 twice, on Windows. The component tests cover the page and `findOnPath`. CI runs
 none of this: the workflow is Python only.
+
+Starting a job, closing the server and finding the job still running was
+checked by hand, once, on Windows, on a copy of the project: see LIMITATIONS.
+No test starts a real search.
 
 The component tests check what a page says, not how it looks. A cell that
 ignored its column span, because a class name meant two things, passed every
