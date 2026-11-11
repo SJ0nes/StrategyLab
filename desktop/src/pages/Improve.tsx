@@ -210,9 +210,9 @@ function Grid({ search }: { search: SearchDetail }) {
           Deploy this version…
         </button>
         <p className="soft" style={{ fontSize: "var(--t-s)" }}>
-          Deploying is not built yet, and unlocks only for a version that passes the luck test. The luck test, at
-          the top of this page, is run on the version a search puts forward and not on a chosen square. A higher
-          score on old prices alone is often just luck.
+          Only the version a search puts forward is deployed, from the strategy's Dashboard. The luck test, at the
+          top of this page, is run on that version and not on a chosen square. A higher score on old prices alone is
+          often just luck.
         </p>
       </div>
     </div>

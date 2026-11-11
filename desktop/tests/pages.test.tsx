@@ -447,7 +447,7 @@ describe("Tests", () => {
     ]);
     const counters = screen.getAllByText(/^\d+$/).map((node) => node.textContent);
     expect(counters).toEqual(["1", "3"]);
-    expect(screen.getByText("nothing is deployed, so there are no live days")).toBeInTheDocument();
+    expect(screen.getByText("not in the app yet; strategylab diff checks them")).toBeInTheDocument();
   });
 
   it("opens a row's detail when it is pressed, and closes it again", async () => {

@@ -133,7 +133,7 @@ export function Tests({
           <p>Every check on record for {strategy.name}, newest first.</p>
         </div>
         <span className="between">
-          <button type="button" className="btn" disabled title="Nothing is deployed, so there are no live days to check">
+          <button type="button" className="btn" disabled title="Not in the app yet: strategylab diff checks live decisions against the backtest">
             Check live vs backtest
           </button>
           <button
@@ -157,7 +157,7 @@ export function Tests({
         <div className="card kpi">
           <span className="label">Live days matching backtest</span>
           <span className="big">none</span>
-          <small>nothing is deployed, so there are no live days</small>
+          <small>not in the app yet; strategylab diff checks them</small>
         </div>
         <div className="card kpi">
           <span className="label">Tests on record</span>

@@ -38,7 +38,7 @@ export const STOPS: Stop[] = [
     go: "dashboard",
     target: "path",
     title: "The path to deployment",
-    text: "Confirm the rules, run a backtest, then the luck test. The button is on the step you have reached. Deploying unlocks only after the luck test passes.",
+    text: "Confirm the rules, run a backtest, then the luck test. The button is on the step you have reached. A strategy that fails the luck test may still run on the practice account, marked unproven.",
   },
   {
     go: "dashboard",
