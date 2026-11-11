@@ -3,8 +3,11 @@ import { useEffect, useState } from "react";
 import { ApiError, type Overview, getOverview } from "./api";
 import { Nav, SECTIONS, type SectionId } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
+import { Backtest } from "./pages/Backtest";
 import { Dashboard } from "./pages/Dashboard";
+import { Improve } from "./pages/Improve";
 import { NotBuilt } from "./pages/NotBuilt";
+import { Tests } from "./pages/Tests";
 
 /** The section named in the address bar, or the dashboard. */
 function sectionFromHash(hash: string): SectionId {
@@ -78,6 +81,12 @@ export function App() {
                 </div>
               ))}
             </>
+          ) : section === "tests" ? (
+            <Tests overview={overview} strategy={strategy} key={strategy.id} />
+          ) : section === "backtest" ? (
+            <Backtest strategy={strategy} key={strategy.id} />
+          ) : section === "improve" ? (
+            <Improve strategy={strategy} key={strategy.id} />
           ) : (
             <NotBuilt section={section} />
           )}

@@ -4,3 +4,8 @@
    inside #root, which has to pass the window's height down. */
 #root { height: 100%; }
 .app { grid-template-rows: auto minmax(0, 1fr); }
+
+/* The prototype's `.wrap` is the page's column, a flex container, and its tables
+   reuse the name for a cell whose text may wrap. A cell that is both stops being
+   a table cell, so it ignores the columns it was told to span. */
+td.wrap { display: table-cell; }

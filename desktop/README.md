@@ -8,19 +8,30 @@ finished app has to match.
 
 ## What is here today
 
-A shell. The window opens, starts the server, and shows:
+A window that reads. It opens, starts the server, and shows:
 
 - the top bar: a strategy dropdown, whether price data is stored and up to which
   bar, and whether a venue key is set;
 - the six sections of the mock in the menu;
-- a Dashboard that reports the chosen strategy's real state - its newest
-  search, the candidate, whether it passed the noise gate, and how many times
-  the held-back window has been read.
+- **Dashboard** - the chosen strategy's real state: its newest search, the
+  candidate, whether it passed the noise gate, and how many times the held-back
+  window has been read;
+- **Improve** - the newest search as a grid, one square per version tried, with
+  each version's growth line and figures; the versions ruled out across the
+  project; and every search on record, including any that could not be read;
+- **Tests** - every search and every read of the held-back window on record,
+  newest first, each opening to a sentence about what it found;
+- **Backtest** - the replay the newest search recorded for the version it put
+  forward. One period only, the one the search covered; `docs/decisions/0016`
+  says why.
 
-Trades, Tests, Backtest, Improve and Compare each say they are not built.
-Nothing in the window can start a search, read the held-back window, deploy a
-strategy or place an order. The tour, the charts and every control in the mock
-that changes something are still to come.
+Trades and Compare say they are not built. Every button that would start a
+search, run a backtest, read the held-back window or deploy a strategy is drawn
+and disabled. Nothing in the window can change anything. The tour and every
+control in the mock that changes something are still to come.
+
+The window never shows the buy-and-hold comparison. The search records it and
+the server leaves it out (`docs/decisions/0014`).
 
 ## Running it
 
@@ -50,9 +61,11 @@ npm run typecheck
 - `electron/findOnPath.ts` finds `uv` without ever looking in the current
   directory, so a file of that name placed in the repository cannot be run in
   its stead.
-- `src/` is the React page. `src/api.ts` describes what the server returns.
+- `src/` is the React page. `src/api.ts` describes what the server returns,
+  `src/words.ts` is how the window words it, and `src/components/Chart.tsx`
+  draws a growth line as plain SVG, with no charting library.
 - `src/app.css` is the mock's stylesheet, copied. Change the mock first.
-  `src/shell.css` holds the two places the real window differs from it.
+  `src/shell.css` holds the three places the real window differs from it.
 
 The built page is served by the Python server, from the same origin as its API,
 so no request crosses an origin and there is no CORS configuration to get wrong.
@@ -63,3 +76,9 @@ No test launches Electron. `electron/main.ts` - starting the server, adding the
 token, refusing to navigate away - was checked by running the app and looking,
 twice, on Windows. The component tests cover the page and `findOnPath`. CI runs
 none of this: the workflow is Python only.
+
+The component tests check what a page says, not how it looks. A cell that
+ignored its column span, because a class name meant two things, passed every
+test and was found in a screenshot. Each screen was looked at in the real
+window at 2560x1440 and at 1366x768; nothing compares a screen with the mock
+automatically.

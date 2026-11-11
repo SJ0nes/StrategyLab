@@ -1,15 +1,14 @@
 import { SECTIONS, type SectionId } from "../components/Nav";
 
 /** What each unbuilt section will hold, so its empty page says more than "soon". */
-const WILL_HOLD: Record<Exclude<SectionId, "dashboard">, string> = {
+type Unbuilt = Extract<SectionId, "trades" | "compare">;
+
+const WILL_HOLD: Record<Unbuilt, string> = {
   trades: "Every order a deployed strategy has placed, and what it decided on each day.",
-  tests: "Every check run on a strategy: backtests, luck tests, the final exam, live against backtest.",
-  backtest: "A replay of the strategy on old prices, with its growth chart and figures.",
-  improve: "The grid of other settings, the versions already ruled out, and past searches.",
   compare: "Two strategies side by side.",
 };
 
-export function NotBuilt({ section }: { section: Exclude<SectionId, "dashboard"> }) {
+export function NotBuilt({ section }: { section: Unbuilt }) {
   const label = SECTIONS.find((item) => item.id === section)?.label ?? section;
   return (
     <>

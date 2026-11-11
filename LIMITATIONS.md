@@ -975,7 +975,7 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and all it can do is read.** `strategylab serve` exists
-for a desktop app that is otherwise a shell (`docs/decisions/0014`). It has six
+for a desktop app that so far only reads (`docs/decisions/0014`). It has six
 routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
 each strategy config with its newest search. Three report a strategy's
@@ -1033,18 +1033,25 @@ nothing. What is worth knowing about it:
   newest artifact naming the strategy is the one reported. It says whether the
   config has changed since, and that is the only link between the two.
 
-**The desktop window is a shell, and the part that matters most is the part no
+**The desktop window only reads, and the part that matters most is the part no
 test runs.** `desktop/` holds an Electron window that starts the server and
-shows one screen of real state; five of its six sections say they are not
-built. Its page is tested in a simulated browser and its helper for finding
+shows four screens of real state - Dashboard, Improve, Tests and Backtest; two
+of its six sections say they are not built, and every button that would change
+something is disabled. Its Backtest screen shows a replay a search recorded and
+cannot run one (`docs/decisions/0016`). Its page is tested in a simulated browser and its helper for finding
 `uv` is tested directly. The Electron main process is not: starting the server,
 attaching the token to requests, and refusing to navigate anywhere else were
 checked by launching the app twice on Windows and inspecting it. That check
 found the window showing real data, the page's script unable to see the token
 or Node, and no server process left after the window closed - and it is two
 launches on one machine, repeated by nobody else. CI does not build or test anything
-under `desktop/`. The window has not been compared with the approved mock, and
-cannot yet be: almost none of what the mock shows exists.
+under `desktop/`. The built screens were looked at in the real window at two
+sizes, by the assistant that built them, and differ from the approved mock where
+the mock shows something that does not exist: settings are named as the config
+names them, the luck test is shown only for the version a search put forward,
+and nothing is marked as deployed. The operator has not yet compared them with
+the mock. The simulated-browser tests check words and not layout; one layout
+fault got past them and was found by eye.
 
 **The risk layer is built, and its one caller has never run.** All three parts
 `CLAUDE.md` demands exist: its own module, its own config file
