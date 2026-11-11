@@ -43,7 +43,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from strategylab.api.overview import plain_reason, read_overview
+from strategylab.api.history import list_exams, list_searches, read_graveyard, search_detail
+from strategylab.api.overview import read_overview
+from strategylab.api.reading import plain_reason
+from strategylab.api.registry import find_strategy
 from strategylab.protocol import ProtocolError
 
 #: Shortest token accepted, in characters. The window's launcher sends 64
@@ -195,6 +198,32 @@ def create_app(
         except ProtocolError as exc:
             detail = f"protocol.yaml cannot be used: {plain_reason(root, exc)}"
             return JSONResponse({"detail": detail}, status_code=500)
+
+    no_strategy = JSONResponse({"detail": "no such strategy"}, status_code=404)
+
+    @application.get("/api/strategies/{strategy_id}/searches")
+    def searches(strategy_id: str) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        return no_strategy if strategy is None else list_searches(root, strategy)
+
+    @application.get("/api/strategies/{strategy_id}/searches/{artifact}")
+    def search(strategy_id: str, artifact: str) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        detail = search_detail(root, strategy, artifact)
+        if detail is None:
+            return JSONResponse({"detail": "no such search"}, status_code=404)
+        return detail
+
+    @application.get("/api/strategies/{strategy_id}/exams")
+    def exams(strategy_id: str) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        return no_strategy if strategy is None else list_exams(root, strategy)
+
+    @application.get("/api/graveyard")
+    def graveyard() -> Any:
+        return read_graveyard(root)
 
     if window_files is not None and window_files.is_dir():
         application.mount("/", StaticFiles(directory=window_files, html=True), name="window")

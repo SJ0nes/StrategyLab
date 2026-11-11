@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 
 from strategylab.api.overview import read_overview
+from strategylab.api.reading import plain_reason
 from strategylab.core.config import config_content_hash
 from strategylab.data.source import cache_write
 from strategylab.protocol import ProtocolError
@@ -226,6 +227,7 @@ def test_the_newest_search_for_the_strategy_is_reported_as_recorded(project: Pat
 
     assert search == {
         "artifact": newest.name,
+        "readable": True,
         "generated_at": "2026-01-02T00:00:00+00:00",
         "cells": 90,
         "candidate": {"fast": 10, "slow": 80},
@@ -351,7 +353,7 @@ def test_an_artifact_too_large_to_be_one_is_not_opened(
 ) -> None:
     older = _artifact(project, "01")
     newer = _artifact(project, "02", padding="x" * 4000)
-    monkeypatch.setattr("strategylab.api.overview.MAX_ARTIFACT_BYTES", newer.stat().st_size - 1)
+    monkeypatch.setattr("strategylab.api.history.MAX_ARTIFACT_BYTES", newer.stat().st_size - 1)
     assert older.stat().st_size < newer.stat().st_size - 1
 
     search = read_overview(project, {})["strategies"][0]["latest_search"]
@@ -363,10 +365,59 @@ def test_a_config_too_large_to_be_one_is_refused_with_its_size(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     size = (project / "configs" / "ma_crossover.yaml").stat().st_size
-    monkeypatch.setattr("strategylab.api.overview.MAX_CONFIG_BYTES", size - 1)
+    monkeypatch.setattr("strategylab.api.registry.MAX_CONFIG_BYTES", size - 1)
 
     overview = read_overview(project, {})
 
     assert overview["strategies"] == []
     (refused,) = overview["unreadable_configs"]
     assert f"{size} bytes" in refused["reason"]
+
+
+@pytest.mark.parametrize("name", ["zz.yaml", "risk_limits.yaml"])
+def test_an_operating_system_error_does_not_name_the_directory_either(
+    project: Path, name: str
+) -> None:
+    # A directory where a file should be. The operating system's error prints
+    # the path as Python source would spell it - on Windows, with each backslash
+    # doubled - which is not any spelling of the root as a path object gives it.
+    target = project / "configs" / name
+    target.unlink(missing_ok=True)
+    target.mkdir()
+
+    text = json.dumps(read_overview(project, {}))
+
+    assert project.name in str(project)
+    assert project.name.upper() not in text.upper()
+
+
+def test_a_strategy_whose_description_cannot_be_sent_is_refused_with_a_reason(
+    project: Path,
+) -> None:
+    path = project / "configs" / "ma_crossover.yaml"
+    text = path.read_text(encoding="utf-8")
+    start = text.index("description: >")
+    end = text.index("entry:")
+    path.write_text(text[:start] + 'description: "\\uD800"\n\n' + text[end:], encoding="utf-8")
+
+    overview = read_overview(project, {})
+
+    assert overview["strategies"] == []
+    (refused,) = overview["unreadable_configs"]
+    assert refused["config"] == "configs/ma_crossover.yaml"
+    json.dumps(overview).encode("utf-8")
+
+
+def test_the_directory_is_removed_from_a_reason_however_it_is_spelled(project: Path) -> None:
+    # As given, in the other case, with forward slashes, and with each backslash
+    # doubled the way an OSError prints a Windows file name.
+    spellings = [
+        str(project),
+        str(project).upper(),
+        project.as_posix(),
+        str(project).replace("\\", "\\\\"),
+    ]
+
+    for spelling in spellings:
+        reason = plain_reason(project, OSError(f"cannot read '{spelling}/configs/a.yaml'"))
+        assert reason == "cannot read './configs/a.yaml'"

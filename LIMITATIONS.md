@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Twenty-seven modules have working bodies: `protocol.py`, `windows.py`,
+Thirty modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -14,8 +14,8 @@ Twenty-seven modules have working bodies: `protocol.py`, `windows.py`,
 `report/surface.py`, `report/palette.py`, `report/verdict.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, `live/worker.py`, `api/overview.py`, `api/app.py`,
-`api/server.py`, and all eight commands in `cli.py`. No
+`execution/t212.py`, `live/worker.py`, `api/reading.py`, `api/registry.py`, `api/history.py`,
+`api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
 `NotImplementedError` body remains. Two further modules are types rather than
 behaviour: `core/types.py` holds the shared value types, and `execution/venue.py`
 the venue interface and its data classes, exercised through the adapter's and the
@@ -238,15 +238,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2014 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2115 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — twenty-four
+server and what it reports, and the commit-time credential scan — twenty-five
 areas, one per test file.
-520 of the 2014 are the risk layer's,
+520 of the 2115 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -967,7 +967,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in ten
+  `tests/mutation/` now holds a harness and a list of named mutants in twelve
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
@@ -975,11 +975,13 @@ decision record until it has been read beside the venue's own account page.
   only as good as the mutants someone thought of.
 
 **There is a server now, and all it can do is read.** `strategylab serve` exists
-for a desktop app that is otherwise a shell (`docs/decisions/0014`). It has two
-routes: one says it is alive, one reports the protocol version, the access
+for a desktop app that is otherwise a shell (`docs/decisions/0014`). It has six
+routes. One says it is alive. One reports the protocol version, the access
 counter, the cached prices, the kill switch, whether a venue key is set, and
-each strategy config with its newest search. It starts nothing, writes nothing
-and places nothing. What is worth knowing about it:
+each strategy config with its newest search. Three report a strategy's
+history: its searches, one search in full, and its reads of the held-back
+window. One reports the graveyard. It starts nothing, writes nothing and places
+nothing. What is worth knowing about it:
 
 - **Its guard was reviewed, not attacked.** Every request must name this machine
   in its Host header, carry no foreign Origin, and present a token made for that
@@ -1000,6 +1002,33 @@ and places nothing. What is worth knowing about it:
   held-back years beside the in-sample ones, and checking its hash means loading
   the file. No held-back bar is used for anything, and the access counter is not
   moved, which is the same thing `status` has always done.
+- **It reads files it did not write, and was hardened by review, not by
+  attack.** Everything under `state/` and `configs/` is treated as possibly
+  damaged: a file that is not text, is nested absurdly deep, or holds a number
+  or a string a response cannot carry is listed as not read, and a field of
+  the wrong kind comes back as missing. A review found five ways such a file
+  took a route down and one way a Windows error message carried the project's
+  full path to the window; each is fixed and pinned by a test. The review was
+  done by an assistant reading the code and probing it, and the list of
+  damaged files is the ones it thought of.
+- **One figure the app shows is worked out by the server, not recorded by a
+  search.** A version's total return is its last recorded equity against its
+  starting equity. The artifact's curves are rounded to two decimal places and
+  always keep the final bar, so the figure is exact to far below what is
+  shown; but it is a second place a number is made, and every other number
+  the app shows is one a command wrote down.
+- **The graveyard cannot say which strategy a rejection was for.** Its records
+  hold a parameter combination and a reason. The app shows them for the
+  project as a whole and says so; with two strategies that share parameter
+  names the list will read as one.
+- **A search in an older format is listed and not read.** The app reads schema
+  version 8 and nothing else. An older artifact appears in the history by date
+  with that reason, and none of its figures are shown.
+- **The buy-and-hold comparison is recorded and withheld.** The search still
+  writes it; the server leaves it out of every answer, because the operator
+  chose not to see it (`docs/decisions/0014`). The app therefore shows a
+  strategy's return with nothing beside it to say whether doing nothing would
+  have done better.
 - **A search for another strategy with the same name is not told apart.** The
   newest artifact naming the strategy is the one reported. It says whether the
   config has changed since, and that is the only link between the two.
