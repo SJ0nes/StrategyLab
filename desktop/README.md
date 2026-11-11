@@ -33,6 +33,24 @@ control in the mock that changes something are still to come.
 The window never shows the buy-and-hold comparison. The search records it and
 the server leaves it out (`docs/decisions/0014`).
 
+## Where the built screens differ from the mock
+
+Compared side by side with `docs/prototype/index.html` at 2560x1440 and
+1366x768. The layout, type, colours and chart are the mock's. The differences
+are all places where the mock shows something the project does not have:
+
+| Screen | The mock | The window | Why |
+| --- | --- | --- | --- |
+| Top bar | Running light, "Stop all buying", Tour | Draft, prices, venue key | Nothing is deployed; those controls are later work |
+| Improve | "Short" and "long" averages, "Trend filter" | `fast`, `slow`, `trend` | The names are the config's, so another strategy needs no new wording |
+| Improve | A LIVE square and "Against deployed version" | Neither | Nothing is deployed |
+| Improve | "Run the luck test on this version" for any square | No such button; the luck test shows for the starred square only | The luck test runs on the version a search puts forward, not on a chosen one |
+| Improve | Three figures beside the chart | Five: total return, worst fall and trades are added | They are recorded for every version |
+| Improve, Ruled out | Three columns | Five: how many times recorded, and when last | The record repeats, and covers the whole project |
+| Backtest | 5 years, 10 years, All history | One period, the search's | `docs/decisions/0016` |
+| Backtest, Improve | "Search again", "Run backtest" work | Drawn and disabled | No job runner yet |
+| Tests | Rows for single backtests and live-against-backtest checks | Rows for searches and final exams only | Those are the tests the project keeps on record |
+
 ## Running it
 
 Needs Node 22 or later, and the Python side set up as the top-level README

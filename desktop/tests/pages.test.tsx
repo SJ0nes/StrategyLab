@@ -332,7 +332,7 @@ describe("Backtest", () => {
     expect(screen.getByText("fast 10, slow 40, trend 150")).toBeInTheDocument();
     expect(screen.getByText(/the best of 8 versions tried/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Growth of 10,000 on SPY, 1 Jan 2005 to 31 Dec 2018/ })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Backtest growth, 4 Jan 2010 to 31 Dec 2018" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "This strategy, 4 Jan 2010 to 31 Dec 2018" })).toBeInTheDocument();
   });
 
   it("cannot run anything", async () => {

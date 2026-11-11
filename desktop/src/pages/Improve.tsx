@@ -156,7 +156,7 @@ function Grid({ search }: { search: SearchDetail }) {
         {selected.curve === null ? (
           <p className="soft">The replay of this version stopped early, so it has no growth line and no score.</p>
         ) : (
-          <Chart dates={search.dates} values={selected.curve} height={170} name="Growth of this version" />
+          <Chart dates={search.dates} values={selected.curve} height={170} name="This strategy" />
         )}
         <div className="rows">
           <div className="rowi">

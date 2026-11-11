@@ -96,7 +96,7 @@ export function Backtest({ strategy }: { strategy: Strategy }) {
             {best.curve === null ? (
               <p className="soft">No growth line was recorded for this version.</p>
             ) : (
-              <Chart dates={newest.dates} values={best.curve} height={280} name="Backtest growth" />
+              <Chart dates={newest.dates} values={best.curve} height={280} name="This strategy" />
             )}
             <p className="soft" style={{ fontSize: "var(--t-s)" }}>
               A backtest is a replay, not a promise.
