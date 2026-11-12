@@ -504,6 +504,48 @@ def test_run_refuses_to_start_without_a_key(
     assert not Path("state/decisions-live.jsonl").exists()
 
 
+class _CachedSource:
+    """A price source that answers with the recorded fixture's bars, and no network."""
+
+    name = "fixture"
+
+    def fetch(self, ticker: str, start: object, end: object) -> pd.DataFrame:
+        """Return the recorded bars, whatever instrument is asked for."""
+        return pd.read_parquet(FIXTURE_BARS)
+
+
+@pytest.mark.parametrize(
+    ("secret", "sent"),
+    [("a-secret-that-must-never-be-sent", "a-secret-that-must-never-be-sent"), ("", None)],
+    ids=["set", "blank"],
+)
+def test_run_hands_the_venue_the_secret_when_one_is_set(
+    searched: Path, monkeypatch: pytest.MonkeyPatch, secret: str, sent: str | None
+) -> None:
+    from strategylab.execution.t212 import T212Error
+
+    seen: dict[str, Any] = {}
+
+    def venue(key: str, environment: str, **kwargs: Any) -> Any:
+        seen.update(kwargs, key=key, environment=environment)
+        raise T212Error("stopped by the test before any request")
+
+    monkeypatch.setenv("T212_ENVIRONMENT", "demo")
+    monkeypatch.setenv("T212_API_KEY", "a-key-that-must-never-be-sent")
+    monkeypatch.setenv("T212_API_SECRET", secret)
+    monkeypatch.setattr("strategylab.cli.YFinanceSource", _CachedSource)
+    monkeypatch.setattr("strategylab.cli.T212Venue", venue)
+
+    code, output = invoke("run", searched.as_posix())
+
+    assert code == 1, output
+    assert "stopped by the test" in output
+    assert seen["key"] == "a-key-that-must-never-be-sent"
+    assert seen["environment"] == "demo"
+    assert seen["api_secret"] == sent
+    assert "must-never-be-sent" not in output
+
+
 def test_diff_with_no_live_log_is_refused(searched: Path) -> None:
     code, _ = invoke("diff", searched.as_posix())
 

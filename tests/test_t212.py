@@ -10,6 +10,7 @@ run establishes, and ``LIMITATIONS.md`` says so.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,72 @@ def test_a_buy_is_posted_as_a_positive_quantity_with_the_key_in_the_header(tmp_p
     (request,) = rec.requests
     assert request.headers["Authorization"] == KEY
     assert json.loads(request.content) == {"ticker": "VUAG.L", "quantity": 3.5}
+
+
+def test_a_key_with_a_secret_is_sent_as_basic_authentication(tmp_path: Path) -> None:
+    # Worked by hand: "k:s" in base64 is "azpz".
+    rec = Recorder({("GET", "/api/v0/equity/portfolio"): (200, [])})
+    venue = T212Venue(
+        "k", "demo", api_secret="s", transport=rec.transport(), positions_path=tmp_path / "p.json"
+    )
+    venue.get_positions()
+    (request,) = rec.requests
+    assert request.headers["Authorization"] == "Basic azpz"
+
+
+@pytest.mark.parametrize("bad", ["", "   "])
+def test_an_empty_secret_is_refused(bad: str) -> None:
+    with pytest.raises(ValueError, match="api_secret is empty"):
+        T212Venue(KEY, "demo", api_secret=bad)
+
+
+#: A made-up second half of the pair, as KEY is a made-up key.
+PAIRED = "second-half-of-the-pair"
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        KEY,
+        PAIRED,
+        "Basic " + base64.b64encode(f"{KEY}:{PAIRED}".encode()).decode("ascii"),
+        base64.b64encode(f"{KEY}:{PAIRED}".encode()).decode("ascii"),
+    ],
+    ids=["key", "secret", "header", "bare-token"],
+)
+def test_the_key_the_secret_and_the_header_are_all_masked(tmp_path: Path, leak: str) -> None:
+    rec = Recorder({("POST", "/api/v0/equity/orders/market"): (401, {"echo": leak})})
+    venue = T212Venue(
+        KEY,
+        "demo",
+        api_secret=PAIRED,
+        transport=rec.transport(),
+        positions_path=tmp_path / "p.json",
+    )
+    with pytest.raises(T212Error) as info:
+        venue.place_order(_order())
+    message = str(info.value)
+    assert KEY not in message
+    assert PAIRED not in message
+    assert base64.b64encode(f"{KEY}:{PAIRED}".encode()).decode("ascii") not in message
+    assert MASK in message
+
+
+def test_a_secret_that_contains_the_key_is_masked_whole(tmp_path: Path) -> None:
+    # Masked shortest first, the key inside the secret would be replaced and the
+    # rest of the secret printed.
+    secret = KEY + "-and-the-rest"
+    rec = Recorder({("POST", "/api/v0/equity/orders/market"): (401, {"echo": secret})})
+    venue = T212Venue(
+        KEY,
+        "demo",
+        api_secret=secret,
+        transport=rec.transport(),
+        positions_path=tmp_path / "p.json",
+    )
+    with pytest.raises(T212Error) as info:
+        venue.place_order(_order())
+    assert "-and-the-rest" not in str(info.value)
 
 
 def test_a_sell_is_posted_as_a_negative_quantity(tmp_path: Path) -> None:

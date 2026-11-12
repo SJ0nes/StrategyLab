@@ -240,7 +240,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2463 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2473 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
@@ -248,7 +248,7 @@ walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the command-line wiring, the app's
 server and what it reports, and the commit-time credential scan — thirty-one
 areas, one per test file.
-520 of the 2463 are the risk layer's,
+520 of the 2473 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -908,6 +908,12 @@ decision record until it has been read beside the venue's own account page.
   the documentation, and whether `market_value` derived as quantity times current
   price matches the venue's own figure - none of that is established. The first
   real run establishes it, and nothing in the suite can.
+- **The login is built from the documentation, not from a reply.** With
+  `T212_API_SECRET` set, the adapter sends HTTP Basic authentication of
+  `key:secret`, as T212's API documentation describes; without it, the key
+  alone, the older form. `tests/test_t212.py` asserts the header for a worked
+  example and that the key, the secret and the header are masked in errors.
+  Which form a given key is accepted in is learned from the first request.
 - **The account log records what the venue said, not what was filled.** Each
   check appends the account's equity and cash, the position, and whether its
   order was sent, to `state/account-live.jsonl`. "Sent" is the venue
@@ -1042,8 +1048,9 @@ While the server runs, a thread starts the daily check once a weekday after
 - **The app trades only while it is open.** The scheduler is a thread in the
   server. A weekday with the app closed is shown as missed and never made up.
 - **The app finds the practice account in its own environment.** It does not
-  read `.env`. `T212_ENVIRONMENT=demo` and `T212_API_KEY` must be set where the
-  app is started; only the daily check's process is given them.
+  read `.env`. `T212_ENVIRONMENT=demo`, `T212_API_KEY` and, for a newer key,
+  `T212_API_SECRET` must be set where the app is started; only the daily
+  check's process is given them.
 - **Stop all is the app's switch, not the risk layer's.** It stops the daily
   check, asked when a check is started and again when its process starts the
   command. A check already inside `strategylab run` is not stopped, and

@@ -59,7 +59,7 @@ top bar stops the daily check; a dialog asks before trading is allowed again.
 Rules: `docs/decisions/0019`.
 
 The app trades only with the practice account set in the environment it is
-started from - `T212_ENVIRONMENT=demo` and `T212_API_KEY` - and only while it
+started from - `T212_ENVIRONMENT=demo`, `T212_API_KEY` and, for a newer key, `T212_API_SECRET` - and only while it
 is open. It does not read `.env`.
 
 **Take final exam…** on Tests unlocks once the newest search on the file as

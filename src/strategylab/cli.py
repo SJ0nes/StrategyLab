@@ -1075,7 +1075,8 @@ def run(
     Refuses to start unless T212_ENVIRONMENT is `demo`. Nothing can tell a
     demo KEY from a live one - the guard is on the environment string, and that
     same string selects the base URL. A live key is a separate, later decision,
-    and this command does not take it. Optional: T212_TICKER, the venue's own
+    and this command does not take it. Optional: T212_API_SECRET, the secret
+    a newer key comes with, sent with the key when set; and T212_TICKER, the venue's own
     spelling of the execution instrument, applied on the way out and translated
     back on the way in; unset, the protocol's symbol is sent as written.
     """
@@ -1087,6 +1088,9 @@ def run(
     # exemption tried so far also hid a real key. This line reads the
     # environment and holds no secret, so it is named not to look like one.
     key = os.environ.get("T212_API_KEY", "")
+    # Optional: a newer key comes with a secret, and the two are sent together.
+    # Unset or blank, the key is sent alone.
+    pair = os.environ.get("T212_API_SECRET", "").strip() or None
     if environment != "demo":
         err_console.print(
             f"[bold red]refusing to run[/bold red] T212_ENVIRONMENT is {environment!r}; this "
@@ -1145,7 +1149,7 @@ def run(
     venue_ticker = os.environ.get("T212_TICKER", "").strip()
     symbol_map = {ticker: venue_ticker} if venue_ticker else None
     try:
-        venue = T212Venue(key, environment, symbol_map=symbol_map)
+        venue = T212Venue(key, environment, api_secret=pair, symbol_map=symbol_map)
         reconciled = venue.reconcile()
         balance = venue.get_balance()
         positions = list(reconciled.venue_positions)

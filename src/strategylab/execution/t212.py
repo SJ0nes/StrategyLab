@@ -24,6 +24,7 @@ simply wrong and is overwritten.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from collections.abc import Callable
@@ -99,6 +100,7 @@ class T212Venue:
         api_key: str,
         environment: str = "demo",
         *,
+        api_secret: str | None = None,
         transport: httpx.BaseTransport | None = None,
         positions_path: Path = DEFAULT_POSITIONS_PATH,
         symbol_map: dict[str, str] | None = None,
@@ -113,6 +115,11 @@ class T212Venue:
                 and never logged.
             environment: Either ``demo`` or ``live``. No default to ``live``
                 exists anywhere in this system.
+            api_secret: The secret T212 issues alongside a newer key, read
+                from the environment like the key. Given, the request carries
+                HTTP Basic authentication of ``key:secret``, as T212's
+                documentation describes; ``None``, it carries the key alone,
+                the older form. Masked like the key.
             transport: HTTP transport, injected by tests as an
                 ``httpx.MockTransport``. ``None`` uses a real one.
             positions_path: The local positions cache, the one file this module
@@ -124,8 +131,8 @@ class T212Venue:
             timeout_s: Seconds before an HTTP call is a timeout.
 
         Raises:
-            ValueError: If ``environment`` is not ``demo`` or ``live``, or
-                ``api_key`` is empty.
+            ValueError: If ``environment`` is not ``demo`` or ``live``,
+                ``api_key`` is empty, or ``api_secret`` is given and empty.
         """
         if environment not in _ENVIRONMENTS:
             raise ValueError(
@@ -134,7 +141,20 @@ class T212Venue:
             )
         if not api_key or not api_key.strip():
             raise ValueError("T212 api_key is empty; set T212_API_KEY in the environment")
-        self._key = api_key
+        if api_secret is not None and not api_secret.strip():
+            raise ValueError("T212 api_secret is empty; set T212_API_SECRET or leave it unset")
+        encoded: str | None = None
+        if api_secret is None:
+            authorization = api_key
+        else:
+            encoded = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode("ascii")
+            authorization = f"Basic {encoded}"
+        # Every form the credential takes is masked: the key, the secret, and the
+        # encoded pair, which decodes straight back to both. Longest first, so
+        # that a shorter one inside a longer one cannot leave the rest showing.
+        self._secrets = sorted(
+            {s for s in (api_key, api_secret, encoded) if s}, key=len, reverse=True
+        )
         self.environment = environment
         self.base_url = _ENVIRONMENTS[environment]
         self._positions_path = positions_path
@@ -146,13 +166,15 @@ class T212Venue:
         self._currency: str | None = None
         self._client = httpx.Client(
             base_url=self.base_url,
-            headers={"Authorization": api_key, "Accept": "application/json"},
+            headers={"Authorization": authorization, "Accept": "application/json"},
             timeout=timeout_s,
             transport=transport,
         )
 
     def _mask(self, text: str) -> str:
-        """Return ``text`` with every occurrence of the key replaced by :data:`MASK`.
+        """Return ``text`` with the key, the secret and the header built from them masked.
+
+        Each is replaced by :data:`MASK` wherever it occurs.
 
         Args:
             text: Any string that might carry the credential.
@@ -160,7 +182,9 @@ class T212Venue:
         Returns:
             The masked string.
         """
-        return text.replace(self._key, MASK)
+        for secret in self._secrets:
+            text = text.replace(secret, MASK)
+        return text
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         """Make one request and return its decoded JSON, or raise :class:`T212Error`.
