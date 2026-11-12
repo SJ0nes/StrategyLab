@@ -783,8 +783,13 @@ def test_deploying_pausing_and_undeploying_over_the_routes(
 
 
 def test_the_daily_check_can_be_started_over_the_route_only_when_deployed(
-    project: Path, client: TestClient
+    project: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The route reads the real clock, and before 17:30 UTC on a weekday, or at a
+    # weekend, the window refuses the check whatever is deployed. The window has
+    # tests of its own; here it is held open so the result does not depend on
+    # when the suite runs.
+    monkeypatch.setattr("strategylab.api.jobs.window_refusal", lambda now: None)
     _confirmed(project)
     refused = client.post("/api/strategies/ma_crossover/jobs/daily_check", headers=AUTH)
     client.post("/api/strategies/ma_crossover/deploy", json={"typed": "ma_crossover"}, headers=AUTH)
