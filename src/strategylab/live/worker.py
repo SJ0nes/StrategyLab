@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
@@ -67,6 +68,13 @@ DEFAULT_SESSION_PATH = Path("state/session.json")
 
 #: The two logs `diff` compares. The live one is what `run` appends to.
 DEFAULT_LIVE_LOG_PATH = Path("state/decisions-live.jsonl")
+
+#: Where each deployed strategy's own live log goes: ``<id>/decisions-live.jsonl``.
+STRATEGY_LIVE_LOG_DIR = Path("state/live")
+
+#: A strategy id this module will build a path from: a config file's name
+#: without its extension, in letters, digits, ``_`` and ``-`` only.
+STRATEGY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 DEFAULT_REPLAY_LOG_PATH = Path("state/decisions-replay.jsonl")
 
 #: What the replay writes into the risk fields it does not compute: this
@@ -247,6 +255,31 @@ def trip_if_reached(session: Session, state: PortfolioState, limits: RiskLimits)
     if session.daily_loss_tripped or not daily_loss_reached(state, limits):
         return session
     return replace(session, daily_loss_tripped=True)
+
+
+def live_log_path(strategy_id: str | None) -> Path:
+    """Say which live decision log a check writes to.
+
+    Args:
+        strategy_id: The deployed strategy's id, or ``None`` for a check run
+            by hand without one.
+
+    Returns:
+        :data:`DEFAULT_LIVE_LOG_PATH` for ``None``; otherwise
+        ``state/live/<id>/decisions-live.jsonl``, so that one strategy's
+        decision on a bar never reads as another's.
+
+    Raises:
+        ValueError: If the id is not one :data:`STRATEGY_ID` accepts, so no id
+            can name a path outside ``state/live/``.
+    """
+    if strategy_id is None:
+        return DEFAULT_LIVE_LOG_PATH
+    if STRATEGY_ID.fullmatch(strategy_id) is None:
+        raise ValueError(
+            f"strategy id {strategy_id!r} is not a config file's name in letters, digits, _ and -"
+        )
+    return STRATEGY_LIVE_LOG_DIR / strategy_id / "decisions-live.jsonl"
 
 
 def decide(

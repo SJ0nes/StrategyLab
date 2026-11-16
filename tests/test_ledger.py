@@ -15,6 +15,7 @@ from strategylab.live.fills import fill_record, write_fill
 from strategylab.live.ledger import (
     AGREEMENT_TOLERANCE_UNITS,
     Ledger,
+    deployed_holdings,
     disagreement,
     read_ledger,
 )
@@ -213,3 +214,30 @@ def test_an_id_on_a_line_that_was_not_sent_owns_nothing(logs: tuple[Path, Path])
     ledger = read_ledger(account, fills)
 
     assert (ledger.units, ledger.waiting) == ({}, frozenset())
+
+
+def test_a_strategy_left_below_zero_is_a_disagreement_even_when_the_total_agrees() -> None:
+    # A check run by hand sold alpha's 2.5 and beta's 4: the total is 0, as the venue's.
+    ledger = Ledger(units={"alpha": 2.5, "beta": 4.0, None: -6.5})
+
+    said = disagreement(ledger, [], "VUAG.L")
+
+    assert said is not None
+    assert "None" in said and "fewer than zero" in said
+
+
+def test_a_holding_below_zero_within_the_tolerance_is_not_a_disagreement() -> None:
+    ledger = Ledger(units={"alpha": -AGREEMENT_TOLERANCE_UNITS / 2})
+
+    assert disagreement(ledger, [], "VUAG.L") is None
+
+
+def test_units_held_or_awaited_by_deployed_strategies_are_named() -> None:
+    assert deployed_holdings(Ledger()) is None
+    assert deployed_holdings(Ledger(units={None: 3.0, "alpha": 0.0})) is None
+
+    holding = deployed_holdings(Ledger(units={"beta": 1.0, "alpha": 2.0}))
+    waiting = deployed_holdings(Ledger(waiting=frozenset({"gamma", None})))
+
+    assert holding is not None and "alpha, beta" in holding
+    assert waiting is not None and "gamma" in waiting and "None" not in waiting

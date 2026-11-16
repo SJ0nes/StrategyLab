@@ -694,6 +694,272 @@ def test_diff_with_no_live_log_is_refused(searched: Path) -> None:
     assert not Path("state/decisions-replay.jsonl").exists()
 
 
+# ---------------------------------------------------------------------------
+# several strategies (docs/decisions/0022)
+# ---------------------------------------------------------------------------
+
+
+class _HoldingVenue(_FlatVenue):
+    """A venue that reports a holding of the execution instrument."""
+
+    def __init__(self, units: float) -> None:
+        """Report ``units`` of VUAG.L held, and no fills."""
+        super().__init__([])
+        self.units = units
+
+    def reconcile(self) -> Any:
+        """Report the holding."""
+        from strategylab.execution.venue import Position, ReconcileReport
+
+        held = Position(
+            ticker="VUAG.L", quantity=self.units, average_price=1.0, market_value=self.units
+        )
+        return ReconcileReport(datetime.now(UTC), (held,), (), (), False)
+
+
+def _forced(monkeypatch: pytest.MonkeyPatch, action: str) -> list[int]:
+    """Make every decision ``action``, allowed at whatever share was asked; note the count."""
+    from strategylab.core.types import Action, Intent
+    from strategylab.risk.limits import RiskVerdict, Verdict
+
+    seen: list[int] = []
+
+    def decide(
+        definition: Any, params: Any, bars: Any, state: Any, limits: Any, strategies: int = 1
+    ) -> Any:
+        seen.append(strategies)
+        intent = Intent(action=Action(action), size_pct=95.0)
+        return intent, RiskVerdict(Verdict.ALLOW, "test", 95.0 / strategies)
+
+    monkeypatch.setattr("strategylab.cli.decide", decide)
+    return seen
+
+
+def _run_as(
+    venue: _FlatVenue,
+    searched: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *options: str,
+) -> tuple[int, str]:
+    monkeypatch.setenv("T212_ENVIRONMENT", "demo")
+    monkeypatch.setenv("T212_API_KEY", "a-key-that-must-never-be-sent")
+    monkeypatch.setattr("strategylab.cli.YFinanceSource", _CachedSource)
+    monkeypatch.setattr("strategylab.cli.T212Venue", lambda *args, **kwargs: venue)
+    return invoke("run", searched.as_posix(), *options)
+
+
+def _accounts() -> list[dict[str, Any]]:
+    path = Path("state/account-live.jsonl")
+    return [json.loads(t) for t in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _sent_and_filled(strategy_id: str, order_id: str, side: str, units: float) -> None:
+    Path("state").mkdir(exist_ok=True)
+    with Path("state/account-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {"order_outcome": "sent", "venue_order_id": order_id, "strategy_id": strategy_id}
+            )
+            + "\n"
+        )
+    with Path("state/fills-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps({"venue_order_id": order_id, "side": side, "quantity": units}) + "\n"
+        )
+
+
+def test_a_strategys_check_decides_in_its_own_log_within_its_share(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shares = _forced(monkeypatch, "enter_long")
+    venue = _FlatVenue([])
+
+    code, output = _run_as(
+        venue, searched, monkeypatch, "--strategy-id", "alpha", "--strategies", "2"
+    )
+
+    assert code == 0, output
+    assert shares == [2]
+    assert Path("state/live/alpha/decisions-live.jsonl").exists()
+    assert not Path("state/decisions-live.jsonl").exists()
+    (order,) = venue.orders
+    close = float(pd.read_parquet(FIXTURE_BARS)["close"].iloc[-1])
+    # 47.5% of 1,000 equity at the last close.
+    assert order.quantity == pytest.approx(1000.0 * 0.475 / close, rel=1e-12)
+    (line,) = _accounts()
+    assert (line["strategy_id"], line["strategies"], line["order_outcome"]) == ("alpha", 2, "sent")
+
+
+def test_one_strategys_decision_on_a_bar_does_not_stop_anothers(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "hold")
+
+    first, output = _run_as(_FlatVenue([]), searched, monkeypatch, "--strategy-id", "alpha")
+    assert first == 0, output
+    second, output = _run_as(_FlatVenue([]), searched, monkeypatch, "--strategy-id", "beta")
+
+    assert second == 0, output
+    assert "No new bar" not in output
+    assert Path("state/live/beta/decisions-live.jsonl").exists()
+    again, output = _run_as(_FlatVenue([]), searched, monkeypatch, "--strategy-id", "beta")
+    assert "No new bar" in output
+
+
+def test_an_exit_sells_only_the_strategys_own_units(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "exit_long")
+    _sent_and_filled("alpha", "1", "buy", 2.5)
+    _sent_and_filled("beta", "2", "buy", 4.0)
+    venue = _HoldingVenue(6.5)
+
+    code, output = _run_as(
+        venue, searched, monkeypatch, "--strategy-id", "beta", "--strategies", "2"
+    )
+
+    assert code == 0, output
+    (order,) = venue.orders
+    assert (order.side.value, order.quantity) == ("sell", 4.0)
+
+
+def test_an_entry_goes_ahead_while_another_strategy_holds_the_instrument(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "enter_long")
+    _sent_and_filled("alpha", "1", "buy", 2.5)
+    venue = _HoldingVenue(2.5)
+
+    code, output = _run_as(
+        venue, searched, monkeypatch, "--strategy-id", "beta", "--strategies", "2"
+    )
+
+    assert code == 0, output
+    assert [o.side.value for o in venue.orders] == ["buy"]
+
+
+def test_a_strategy_waiting_for_a_fill_decides_and_sends_nothing(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "enter_long")
+    Path("state").mkdir(exist_ok=True)
+    Path("state/account-live.jsonl").write_text(
+        json.dumps({"order_outcome": "sent", "venue_order_id": "7", "strategy_id": "alpha"}) + "\n",
+        encoding="utf-8",
+    )
+    venue = _FlatVenue([])
+
+    code, output = _run_as(venue, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert venue.orders == []
+    assert "no recorded fill" in output
+    assert Path("state/live/alpha/decisions-live.jsonl").exists()
+    assert _accounts()[-1]["order_outcome"] == "none"
+
+
+def test_units_the_ledgers_cannot_account_for_stop_every_order(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bought by hand in the venue's own app: the venue holds 3, the ledgers nothing.
+    _forced(monkeypatch, "enter_long")
+    venue = _HoldingVenue(3.0)
+
+    code, output = _run_as(venue, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert venue.orders == []
+    assert "No order sent" in output
+    assert "holds 3 units" in output
+
+
+def test_a_damaged_ledger_stops_the_check(searched: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _forced(monkeypatch, "enter_long")
+    _sent_and_filled("alpha", "1", "short", 2.0)
+    venue = _FlatVenue([])
+
+    code, output = _run_as(venue, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 1
+    assert "ledger" in output
+    assert venue.orders == []
+    assert not Path("state/live/alpha/decisions-live.jsonl").exists()
+
+
+def test_a_check_run_by_hand_still_uses_the_venues_position(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shares = _forced(monkeypatch, "exit_long")
+    venue = _HoldingVenue(3.0)
+
+    code, output = _run_as(venue, searched, monkeypatch)
+
+    assert code == 0, output
+    assert shares == [1]
+    (order,) = venue.orders
+    assert order.quantity == 3.0
+    assert Path("state/decisions-live.jsonl").exists()
+    (line,) = _accounts()
+    assert (line["strategy_id"], line["strategies"]) == (None, 1)
+
+
+def test_a_check_run_by_hand_sends_nothing_while_deployed_strategies_hold_units(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "exit_long")
+    _sent_and_filled("alpha", "1", "buy", 2.5)
+    _sent_and_filled("beta", "2", "buy", 4.0)
+    venue = _HoldingVenue(6.5)
+
+    code, output = _run_as(venue, searched, monkeypatch)
+
+    assert code == 0, output
+    assert venue.orders == []
+    assert "alpha, beta hold or await units" in output
+    assert Path("state/decisions-live.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    ("options", "said"),
+    [
+        (("--strategies", "2"), "needs --strategy-id"),
+        (("--strategy-id", "../escape"), "not a config file's name"),
+        (("--strategy-id", "alpha", "--strategies", "0"), "0"),
+    ],
+    ids=["count-without-id", "id-with-a-path", "no-strategies"],
+)
+def test_run_refuses_a_strategy_it_cannot_name_safely(
+    searched: Path, monkeypatch: pytest.MonkeyPatch, options: tuple[str, ...], said: str
+) -> None:
+    venue = _FlatVenue([])
+
+    code, output = _run_as(venue, searched, monkeypatch, *options)
+
+    assert code != 0
+    assert said in output
+    assert venue.orders == []
+    assert not Path("state/live").exists()
+
+
+def test_diff_compares_a_strategys_own_log(searched: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, output = _run_as(_FlatVenue([]), searched, monkeypatch, "--strategy-id", "alpha")
+    assert code == 0, output
+
+    plain, _ = invoke("diff", searched.as_posix())
+    own, output = invoke("diff", searched.as_posix(), "--strategy-id", "alpha")
+
+    assert plain == 1
+    assert own == 0, output
+    assert "Compared 1 bar(s): 0 diverge" in output
+
+
+def test_diff_refuses_an_id_that_names_a_path(searched: Path) -> None:
+    code, output = invoke("diff", searched.as_posix(), "--strategy-id", "../x")
+
+    assert code == 1
+    assert "not a config file's name" in output
+
+
 def test_every_command_the_readme_names_exists() -> None:
     code, output = invoke("--help")
 

@@ -32,13 +32,14 @@ from strategylab.data.source import (
 from strategylab.execution.t212 import T212Error, T212Venue
 from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH, account_record, write_account
 from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH, record_fills
+from strategylab.live.ledger import deployed_holdings, disagreement, read_ledger
 from strategylab.live.worker import (
-    DEFAULT_LIVE_LOG_PATH,
     DEFAULT_REPLAY_LOG_PATH,
     DEFAULT_SESSION_PATH,
     already_decided,
     compare,
     decide,
+    live_log_path,
     load_session,
     order_for,
     portfolio_state,
@@ -1049,6 +1050,25 @@ def run(
             "nothing here checks for one: what to run is the operator's decision."
         ),
     ],
+    strategy_id: Annotated[
+        str | None,
+        typer.Option(
+            "--strategy-id",
+            help="The deployed strategy this check is for, as the app names it. With it, the "
+            "decision goes to state/live/<id>/decisions-live.jsonl and the strategy buys and "
+            "sells only its own units. Without it, the check runs as one strategy on the "
+            "venue's whole position.",
+        ),
+    ] = None,
+    strategies: Annotated[
+        int,
+        typer.Option(
+            "--strategies",
+            min=1,
+            help="How many strategies are deployed. Each asks for at most the exposure "
+            "ceiling divided by this. Needs --strategy-id when above 1.",
+        ),
+    ] = 1,
 ) -> None:
     """Run the paper-trading worker for ONE bar against the demo venue, then exit.
 
@@ -1086,8 +1106,25 @@ def run(
     a newer key comes with, sent with the key when set; and T212_TICKER, the venue's own
     spelling of the execution instrument, applied on the way out and translated
     back on the way in; unset, the protocol's symbol is sent as written.
+
+    SEVERAL STRATEGIES (docs/decisions/0022). Given --strategy-id, the check
+    decides in that strategy's own log, asks the risk layer for at most its
+    equal share of the exposure ceiling (--strategies), and trades only the
+    units its own filled orders add up to. It sends nothing, and says why, when
+    the strategy has an order whose fill is not yet recorded, or when the
+    strategies' units together differ from what the venue holds.
     """
     protocol = _load_or_exit()
+    if strategies > 1 and strategy_id is None:
+        err_console.print(
+            "[bold red]refusing to run[/bold red] --strategies above 1 needs --strategy-id"
+        )
+        raise typer.Exit(code=1)
+    try:
+        live_log = live_log_path(strategy_id)
+    except ValueError as exc:
+        err_console.print(f"[bold red]refusing to run[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
     environment = os.environ.get("T212_ENVIRONMENT", "")
     # NAMED `key`, NOT `api_key`, on purpose. The pre-push audit reports any line
@@ -1185,7 +1222,7 @@ def run(
     # would trade on nothing new. Checked after the fills, so a holiday still
     # learns what earlier orders filled at.
     try:
-        decided_at = already_decided(DEFAULT_LIVE_LOG_PATH, bar_stamp)
+        decided_at = already_decided(live_log, bar_stamp)
     except (ValueError, OSError) as exc:
         err_console.print(f"[bold red]decision log[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -1196,6 +1233,26 @@ def run(
             "Nothing decided, nothing sent."
         )
         return
+
+    # WHOSE UNITS ARE WHOSE, when several strategies share the instrument. Read
+    # after the fills, so an order filled since the last check counts. A ledger
+    # that cannot be read stops the check: a guess here could sell another
+    # strategy's units.
+    # A check run by hand trades the venue's whole position, so it sends
+    # nothing while deployed strategies hold or await units of their own.
+    held_units: float | None = None
+    try:
+        ledger = read_ledger(DEFAULT_ACCOUNT_LOG_PATH, DEFAULT_FILLS_LOG_PATH)
+    except (ValueError, OSError) as exc:
+        err_console.print(f"[bold red]ledger[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    blocked = deployed_holdings(ledger)
+    if strategy_id is not None:
+        held_units = ledger.held(strategy_id)
+        if strategy_id in ledger.waiting:
+            blocked = "an earlier order of this strategy has no recorded fill yet"
+        else:
+            blocked = disagreement(ledger, positions, ticker)
 
     session = load_session(DEFAULT_SESSION_PATH, today, balance.equity)
     try:
@@ -1222,7 +1279,9 @@ def run(
         raise typer.Exit(code=1) from exc
 
     try:
-        intent, verdict = decide(definition, candidate.params, bars, state, limits)
+        intent, verdict = decide(
+            definition, candidate.params, bars, state, limits, strategies=strategies
+        )
         entry_record = record(
             intent,
             verdict,
@@ -1233,7 +1292,7 @@ def run(
             params=candidate.params,
             protocol_version=protocol.protocol_version,
         )
-        write_decision(entry_record, DEFAULT_LIVE_LOG_PATH)
+        write_decision(entry_record, live_log)
         order = order_for(
             intent,
             verdict,
@@ -1244,6 +1303,7 @@ def run(
             # Unique per intended order, as the interface asks: the bar alone
             # repeats when the worker is invoked twice after one close.
             client_ref=f"{ticker}-{bar_stamp:%Y%m%d}-{now:%Y%m%dT%H%M%S}",
+            held_units=held_units,
         )
     except (ValueError, OSError) as exc:
         err_console.print(f"[bold red]decision[/bold red] {exc}")
@@ -1258,7 +1318,11 @@ def run(
     )
     table.add_row("intent", f"{intent.action.value}  requested {intent.size_pct:g}%")
     table.add_row("risk", f"{verdict.verdict.value}  {verdict.reason}")
-    table.add_row("log", DEFAULT_LIVE_LOG_PATH.as_posix())
+    if strategy_id is not None:
+        table.add_row(
+            "strategy", f"{strategy_id}, one of {strategies}, holds {held_units:g} unit(s)"
+        )
+    table.add_row("log", live_log.as_posix())
     console.print(table)
 
     def log_account(outcome: str, venue_order_id: str | None) -> None:
@@ -1278,12 +1342,19 @@ def run(
                     order=order,
                     outcome=outcome,
                     venue_order_id=venue_order_id,
+                    strategy_id=strategy_id,
+                    strategies=strategies,
                 ),
                 DEFAULT_ACCOUNT_LOG_PATH,
             )
         except (ValueError, OSError) as exc:
             err_console.print(f"[bold red]account log[/bold red] {exc}")
 
+    if order is not None and blocked is not None:
+        order = None
+        log_account("none", None)
+        console.print(f"\n[yellow]No order sent[/yellow]: {blocked}.")
+        return
     if order is None:
         log_account("none", None)
         console.print("\nNo order to send.")
@@ -1308,6 +1379,13 @@ def diff(
         Path,
         typer.Argument(help="The search artifact the worker was run with."),
     ],
+    strategy_id: Annotated[
+        str | None,
+        typer.Option(
+            "--strategy-id",
+            help="Compare that deployed strategy's own log, state/live/<id>/decisions-live.jsonl.",
+        ),
+    ] = None,
 ) -> None:
     """Compare the live decision log against a replay of the same bars.
 
@@ -1321,11 +1399,12 @@ def diff(
     construction because the replay does not run the gate. A `params`
     divergence on every bar means this command was given a different search
     artifact than `run` was. A divergence is a finding about
-    the simulator, not a failure; the exit code is zero either way.
+    the simulator, not a failure; the exit code is zero either way. With
+    --strategy-id, the log compared is that strategy's own.
     """
     protocol = _load_or_exit()
     try:
-        live = read_decisions(DEFAULT_LIVE_LOG_PATH)
+        live = read_decisions(live_log_path(strategy_id))
     except (OSError, ValueError) as exc:
         err_console.print(f"[bold red]live log[/bold red] {exc}")
         raise typer.Exit(code=1) from exc

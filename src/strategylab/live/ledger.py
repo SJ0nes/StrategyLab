@@ -125,6 +125,32 @@ def read_ledger(account_log: Path, fills_log: Path) -> Ledger:
     return Ledger(units=units, waiting=waiting)
 
 
+def deployed_holdings(ledger: Ledger) -> str | None:
+    """Say whether deployed strategies hold or await units a check run by hand must not trade.
+
+    Args:
+        ledger: The ledger.
+
+    Returns:
+        ``None`` when no strategy with an id holds units or waits for a fill;
+        otherwise a sentence naming them.
+    """
+    named = sorted(
+        {
+            str(key)
+            for key, units in ledger.units.items()
+            if key is not None and abs(units) > AGREEMENT_TOLERANCE_UNITS
+        }
+        | {str(key) for key in ledger.waiting if key is not None}
+    )
+    if not named:
+        return None
+    return (
+        f"{', '.join(named)} hold or await units of the instrument, and a check run "
+        "without --strategy-id would trade them; run it for one strategy instead"
+    )
+
+
 def disagreement(ledger: Ledger, positions: list[Position], ticker: str) -> str | None:
     """Say how the ledgers and the venue disagree about the instrument, if they do.
 
@@ -134,10 +160,21 @@ def disagreement(ledger: Ledger, positions: list[Position], ticker: str) -> str 
         ticker: The instrument, as the protocol names it.
 
     Returns:
-        ``None`` when the ledgers' total and the venue's position in ``ticker``
-        differ by no more than :data:`AGREEMENT_TOLERANCE_UNITS`; otherwise a
-        sentence giving both figures.
+        ``None`` when no strategy holds fewer than zero units and the ledgers'
+        total and the venue's position in ``ticker`` differ by no more than
+        :data:`AGREEMENT_TOLERANCE_UNITS`; otherwise a sentence saying which.
+        A negative holding is checked on its own because it would cancel
+        another strategy's units in the total: a check run by hand that sold
+        every strategy's units leaves the total agreeing with an empty venue.
     """
+    short = sorted(
+        str(key) for key, units in ledger.units.items() if units < -AGREEMENT_TOLERANCE_UNITS
+    )
+    if short:
+        return (
+            f"the recorded fills leave {', '.join(short)} holding fewer than zero units of "
+            f"{ticker}, which only a sale of another strategy's units explains"
+        )
     venue = math.fsum(p.quantity for p in positions if p.ticker == ticker)
     recorded = ledger.total()
     if abs(venue - recorded) <= AGREEMENT_TOLERANCE_UNITS:
