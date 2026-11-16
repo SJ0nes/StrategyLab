@@ -81,9 +81,14 @@ the server leaves it out (`docs/decisions/0014`).
 ## Where the built screens differ from the mock
 
 Compared side by side with `docs/prototype/index.html` at 2560x1440 and
-1366x768, every screen, last on 2026-11-16 on a copy of the project with two
-strategies deployed, one of them paused, and one draft, and with no practice
-account set. The window opens on a deployed strategy, not on whichever strategy
+1366x768, last on 2026-11-16, on a copy of the project with two strategies
+deployed, one of them paused, and one draft, and with no practice account set:
+every section, the Trades, Improve and Tests tabs and an opened test, the
+running, paused and draft Dashboards, the luck-test, search and allow-trading
+dialogs, stop-all switched on, and the seven tour stops. Nothing that starts
+work was pressed: no Start in a job dialog, no Allow trading, no Rules are
+right, no Pause, Resume, Undeploy or Check now; Deploy and the final exam were
+locked. The window opens on a deployed strategy, not on whichever strategy
 sorts first. The layout, type, colours and chart are the mock's. The differences
 are all places where the mock shows something the project does not have:
 
@@ -193,7 +198,5 @@ test and was found in a screenshot. So were, on 2026-11-16, Compare's figures
 running into each other at laptop width, a table scrollbar with nothing to
 scroll, and a worst fall of "−0.0%". Each screen was looked at in the real
 window at 2560x1440 and at 1366x768, captured through the window's debugging
-port by a script that is not part of the repository; nothing compares a screen
-with the mock automatically. The tour's spotlight could not be checked that
-way: a window that is not on screen does not lay out its animation frames, so
-where each stop lands was checked by its tests only.
+port by a script that is not part of the repository, and looked at by eye;
+nothing compares a screen with the mock automatically.
