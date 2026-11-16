@@ -354,28 +354,45 @@ export interface Live {
   /** False when the fills log could not be read, so no fill is shown. */
   fills_readable: boolean;
   figures: LiveFigures;
+  /** True when several strategies are deployed, so the figures are the whole account's, not this strategy's alone. */
+  figures_are_the_accounts: boolean;
   decisions: Decision[];
   /** True when the daily loss limit has locked buying today; null when unknown. */
   loss_lock: boolean | null;
 }
 
+/** One deployed strategy, in the list of all of them. */
+export interface DeployedItem {
+  strategy_id: string;
+  paused: boolean;
+  proven: boolean;
+}
+
+/** The deployments as the server reports them for one chosen strategy. */
 export interface DeploymentStatus {
+  /** The chosen strategy's deployment; null when it is not deployed; Missing when the record is damaged. */
   deployment: Deployed | Missing | null;
+  /** Every deployed strategy, in the order their daily checks run. Empty when the record is damaged. */
+  deployed: DeployedItem[];
   stop_all: { stopped: boolean; stopped_at: string | null; damaged: boolean };
   /** Why the practice account is not set, or null when it is. */
   venue_unready: string | null;
-  schedule: { next_check: string | null; why_not: string | null; missed: string[]; checked_today: boolean };
+  /** The chosen strategy's schedule; null when no strategy was named. */
+  schedule: { next_check: string | null; why_not: string | null; missed: string[]; checked_today: boolean } | null;
   live: Live | Missing | null;
 }
 
-export const getDeployment = (): Promise<DeploymentStatus> => get<DeploymentStatus>("/api/deployment");
+export const getDeployment = (strategyId: string | null): Promise<DeploymentStatus> =>
+  get<DeploymentStatus>(
+    strategyId === null ? "/api/deployment" : `/api/deployment?strategy_id=${encodeURIComponent(strategyId)}`,
+  );
 
 /** Deploy a strategy's newest searched version. `typed` is the name as the operator typed it. */
 export const deployStrategy = (id: string, typed: string): Promise<Deployed> =>
   post<Deployed>(`${strategyPath(id)}/deploy`, { typed });
 
-export const changeDeployment = (action: "pause" | "resume" | "undeploy"): Promise<unknown> =>
-  post<unknown>(`/api/deployment/${action}`);
+export const changeDeployment = (strategyId: string, action: "pause" | "resume" | "undeploy"): Promise<unknown> =>
+  post<unknown>(`${strategyPath(strategyId)}/deployment/${action}`);
 
 export const setStopAll = (stopped: boolean): Promise<DeploymentStatus["stop_all"]> =>
   post<DeploymentStatus["stop_all"]>("/api/stop-all", { stopped });

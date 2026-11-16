@@ -49,7 +49,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
 
   function change(action: "pause" | "resume" | "undeploy") {
     setProblem(null);
-    changeDeployment(action)
+    changeDeployment(strategy.id, action)
       .then(() => onChanged())
       .catch((error: unknown) => setProblem(error instanceof ApiError ? error.message : "The change could not be made."));
   }
@@ -111,6 +111,12 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
         </div>
       )}
 
+      {live?.figures_are_the_accounts === true && (
+        <p className="soft" role="note">
+          Several strategies are deployed and share the practice account, each with an equal share. These figures, and
+          the position below, are the whole account's, not {strategy.name}'s alone.
+        </p>
+      )}
       <div className="kpis" data-tour="kpis">
         <div className="card kpi">
           <span className="label">Return since deployed</span>
@@ -134,7 +140,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
         <div className="card kpi">
           <span className="label">Orders sent</span>
           <span className="big">{figures?.sent ?? 0}</span>
-          <small>{figures !== undefined && figures.failed > 0 ? `${figures.failed} refused by the venue` : "fill prices are not recorded"}</small>
+          <small>{figures !== undefined && figures.failed > 0 ? `${figures.failed} refused by the venue` : "fill prices on the Trades page"}</small>
         </div>
       </div>
 
@@ -173,7 +179,13 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
             </div>
             <div className="rowi">
               <span>Next automatic check</span>
-              <b>{status.schedule.next_check === null ? (status.schedule.why_not ?? "none") : whenLabel(status.schedule.next_check)}</b>
+              <b>
+                {status.schedule === null
+                  ? "none"
+                  : status.schedule.next_check === null
+                    ? (status.schedule.why_not ?? "none")
+                    : whenLabel(status.schedule.next_check)}
+              </b>
             </div>
             <div className="rowi">
               <span>Loss lock</span>
@@ -185,7 +197,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
               <span>Stop all</span>
               <span className={`pill ${stopped ? "bad" : "good"}`}>{stopped ? "On: no checks run" : "Off"}</span>
             </div>
-            {status.schedule.missed.length > 0 && (
+            {status.schedule !== null && status.schedule.missed.length > 0 && (
               <div className="rowi">
                 <span>Checks missed</span>
                 <span className="pill warn">{status.schedule.missed.length} weekday{status.schedule.missed.length === 1 ? "" : "s"}</span>

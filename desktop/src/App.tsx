@@ -28,7 +28,7 @@ import { Trades } from "./pages/Trades";
 /** How often the window asks what is running, in milliseconds. */
 export const JOB_POLL_MS = 3000;
 
-/** How often the window asks for the deployed strategy's state, in milliseconds. */
+/** How often the window asks for the chosen strategy's deployment, in milliseconds. */
 export const DEPLOYMENT_POLL_MS = 30000;
 
 /** Why a strategy cannot be deployed now, from what the server says; null when it can. */
@@ -39,11 +39,11 @@ export function deployBlocker(status: DeploymentStatus | null, strategyId: strin
   const { deployment } = status;
   if (deployment !== null) {
     if (!deployment.available) {
-      return "the deployment record is damaged; undeploy it from the deployed strategy's page";
+      return "the deployment record is damaged and cannot be read";
     }
-    return deployment.strategy_id === strategyId
-      ? "it is already deployed"
-      : `${deployment.strategy_id} is deployed, and only one is deployed at a time`;
+    if (deployment.strategy_id === strategyId) {
+      return "it is already deployed";
+    }
   }
   return status.venue_unready;
 }
@@ -90,13 +90,25 @@ export function App() {
       );
   }, [ended, changed]);
 
+  // The strategy whose deployment is asked for: the one chosen, or the first.
+  const shownId =
+    load.state === "ready"
+      ? ((load.overview.strategies.find((candidate) => candidate.id === chosen) ?? load.overview.strategies[0])?.id ?? null)
+      : null;
+
   const askDeployment = useCallback(() => {
-    getDeployment()
+    getDeployment(shownId)
       // Shown only if it is what the server sends for this route; anything else
       // reads as "could not be read", which keeps every control off.
-      .then((status) => setDeployment(typeof status === "object" && status !== null && "stop_all" in status ? status : null))
+      .then((status) =>
+        setDeployment(
+          typeof status === "object" && status !== null && "stop_all" in status && Array.isArray(status.deployed)
+            ? status
+            : null,
+        ),
+      )
       .catch(() => setDeployment(null));
-  }, []);
+  }, [shownId]);
 
   useEffect(() => {
     askDeployment();

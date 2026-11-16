@@ -61,6 +61,7 @@ const LIVE: Live = {
     checks: 3,
     why_missing: { sharpe: "needs 20 checks; 3 so far" },
   },
+  figures_are_the_accounts: false,
   decisions: [
     { bar_date: "2026-11-04", recorded_at: "2026-11-04T17:45:00+00:00", action: "exit_long", risk_verdict: "allow", risk_reason: "within limits", conditions_met: ["sma cross"], conditions_failed: [] },
     { bar_date: "2026-11-03", recorded_at: "2026-11-03T17:45:00+00:00", action: "enter_long", risk_verdict: "reject", risk_reason: "daily loss lock", conditions_met: ["a", "b"], conditions_failed: [] },
@@ -71,6 +72,7 @@ const LIVE: Live = {
 
 const STATUS: DeploymentStatus = {
   deployment: DEPLOYED,
+  deployed: [{ strategy_id: "ma_crossover", paused: false, proven: false }],
   stop_all: { stopped: false, stopped_at: null, damaged: false },
   venue_unready: null,
   schedule: { next_check: "2026-11-12T17:30:00+00:00", why_not: null, missed: ["2026-11-05"], checked_today: false },
@@ -89,7 +91,10 @@ describe("what may be deployed", () => {
     expect(deployBlocker({ ...STATUS, deployment: null, venue_unready: "the practice account is not set" }, "x")).toBe(
       "the practice account is not set",
     );
-    expect(deployBlocker(STATUS, "other")).toContain("only one is deployed at a time");
+    // Another strategy deployed is no bar: several share the account.
+    expect(deployBlocker({ ...STATUS, deployment: null }, "other")).toBeNull();
+    // An answer still naming the strategy shown before does not block this one.
+    expect(deployBlocker(STATUS, "other")).toBeNull();
     expect(deployBlocker(STATUS, "ma_crossover")).toBe("it is already deployed");
     expect(deployBlocker({ ...STATUS, deployment: { available: false, reason: "damaged" } }, "x")).toContain("damaged");
   });
@@ -189,7 +194,31 @@ describe("the deployed strategy's Dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Undeploy" }));
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(2));
-    expect(asked).toEqual(["POST /api/deployment/pause", "POST /api/deployment/undeploy"]);
+    expect(asked).toEqual([
+      "POST /api/strategies/ma_crossover/deployment/pause",
+      "POST /api/strategies/ma_crossover/deployment/undeploy",
+    ]);
+  });
+
+  it("says the figures are the whole account's when several strategies share it", () => {
+    const { rerender } = render(
+      <Deployed strategy={STRATEGY} deployed={DEPLOYED} status={STATUS} onStart={onStart} onChanged={onChanged} />,
+    );
+    expect(screen.queryByRole("note")).toBeNull();
+
+    const shared = { ...STATUS, live: { ...LIVE, figures_are_the_accounts: true } };
+    rerender(<Deployed strategy={STRATEGY} deployed={DEPLOYED} status={shared} onStart={onStart} onChanged={onChanged} />);
+
+    expect(screen.getByRole("note")).toHaveTextContent("whole account's");
+  });
+
+  it("says why no check is due when the server gives no schedule", () => {
+    render(
+      <Deployed strategy={STRATEGY} deployed={DEPLOYED} status={{ ...STATUS, schedule: null }} onStart={onStart} onChanged={onChanged} />,
+    );
+
+    const row = screen.getByText("Next automatic check").parentElement as HTMLElement;
+    expect(row).toHaveTextContent("none");
   });
 
   it("says how it decided recently, in words", () => {

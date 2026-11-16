@@ -28,7 +28,9 @@ export function accountLabel(venue: Overview["venue"]): string {
 }
 
 export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour, deployment, onStopAll }: Props) {
-  const deployed = deployment?.deployment != null && deployment.deployment.available ? deployment.deployment : null;
+  const deployed = deployment?.deployed ?? [];
+  const isDeployed = (id: string) => deployed.some((item) => item.strategy_id === id);
+  const shown = strategy === undefined ? undefined : deployed.find((item) => item.strategy_id === strategy.id);
   const stopped = deployment?.stop_all.stopped ?? false;
   const { prices } = overview;
   return (
@@ -44,10 +46,10 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour, d
           onChange={(event) => onChoose(event.target.value)}
           disabled={overview.strategies.length === 0}
         >
-          {deployed !== null && (
+          {deployed.length > 0 && (
             <optgroup label="Deployed">
               {overview.strategies
-                .filter((item) => item.id === deployed.strategy_id)
+                .filter((item) => isDeployed(item.id))
                 .map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -57,7 +59,7 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour, d
           )}
           <optgroup label="Drafts, not deployed">
             {overview.strategies
-              .filter((item) => item.id !== deployed?.strategy_id)
+              .filter((item) => !isDeployed(item.id))
               .map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name}
@@ -66,10 +68,10 @@ export function TopBar({ overview, strategy, onChoose, job, onOpenJob, onTour, d
           </optgroup>
         </select>
         {strategy !== undefined &&
-          (deployed !== null && deployed.strategy_id === strategy.id ? (
-            <span className={`live${deployed.paused || stopped ? " off" : ""}`}>
+          (shown !== undefined ? (
+            <span className={`live${shown.paused || stopped ? " off" : ""}`}>
               <i />
-              {deployed.paused ? "Paused" : stopped ? "Stopped" : "Running"}
+              {shown.paused ? "Paused" : stopped ? "Stopped" : "Running"}
             </span>
           ) : (
             <span className="live off">
