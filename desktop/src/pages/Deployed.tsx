@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   ApiError,
   type Deployed as DeployedRecord,
+  type Decision,
   type DeploymentStatus,
   type JobKind,
   type Live,
@@ -23,6 +24,28 @@ export function decisionWords(action: string | null, verdict: string | null): st
 }
 
 /** A live figure, or the reason there is none. */
+/**
+ * The newest decision in one line: its day, then the conditions met, or failed
+ * when none were met, then the risk layer's reason. The day stands alone when
+ * nothing else was recorded.
+ */
+export function decisionLine(decision: Decision): string {
+  const said = [
+    decision.conditions_met.length > 0
+      ? `met ${decision.conditions_met.join("; ")}.`
+      : decision.conditions_failed.length > 0
+        ? `not met: ${decision.conditions_failed.join("; ")}.`
+        : "",
+    decision.risk_reason ?? "",
+  ]
+    .filter((part) => part !== "")
+    .join(" ");
+  if (decision.bar_date === null) {
+    return said;
+  }
+  return said === "" ? decision.bar_date : `${decision.bar_date}: ${said}`;
+}
+
 function figure(value: number | null, render: (value: number) => string, why: string | undefined): [string, string] {
   return value === null ? ["none", why ?? "not enough checks yet"] : [render(value), ""];
 }
@@ -58,7 +81,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
   const [sharpeText, sharpeWhy] = figure(figures?.sharpe ?? null, (value) => value.toFixed(2), figures?.why_missing.sharpe);
   const [fall, fallWhy] = figure(
     figures?.max_drawdown_pct ?? null,
-    (value) => `−${value.toFixed(1)}%`,
+    (value) => (value.toFixed(1) === "0.0" ? "0.0%" : `−${value.toFixed(1)}%`),
     figures?.why_missing.max_drawdown_pct,
   );
   const expected = strategy.latest_search?.sharpe;
@@ -167,9 +190,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
           </div>
           {decision !== undefined && (
             <p className="soft">
-              {decision.bar_date === null ? "" : `${decision.bar_date}: `}
-              {decision.conditions_met.length > 0 ? `met ${decision.conditions_met.join("; ")}. ` : ""}
-              {decision.risk_reason ?? ""}
+              {decisionLine(decision)}
             </p>
           )}
           <div className="rows">

@@ -2,9 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deployBlocker } from "../src/App";
-import type { Check, Deployed as DeployedRecord, DeploymentStatus, Live, Strategy } from "../src/api";
+import type { Check, Decision, Deployed as DeployedRecord, DeploymentStatus, Live, Strategy } from "../src/api";
 import { DeployDialog } from "../src/components/DeployDialog";
-import { Deployed, decisionWords } from "../src/pages/Deployed";
+import { Deployed, decisionLine, decisionWords } from "../src/pages/Deployed";
 import { Trades } from "../src/pages/Trades";
 
 const STRATEGY: Strategy = {
@@ -99,6 +99,16 @@ describe("what may be deployed", () => {
     expect(deployBlocker({ ...STATUS, deployment: { available: false, reason: "damaged" } }, "x")).toContain("damaged");
   });
 
+  it("puts the newest decision in one line, and never leaves its day hanging", () => {
+    const [sell, blocked, hold] = LIVE.decisions as [Decision, Decision, Decision];
+    expect(decisionLine(sell)).toBe("2026-11-04: met sma cross. within limits");
+    expect(decisionLine(blocked)).toBe("2026-11-03: met a; b. daily loss lock");
+    expect(decisionLine(hold)).toBe("2026-11-02: not met: a.");
+    expect(decisionLine({ ...hold, conditions_failed: [] })).toBe("2026-11-02");
+    expect(decisionLine({ ...hold, conditions_failed: [], risk_reason: null })).toBe("2026-11-02");
+    expect(decisionLine({ ...sell, bar_date: null })).toBe("met sma cross. within limits");
+  });
+
   it("words each decision", () => {
     expect(decisionWords("enter_long", "allow")).toBe("Buy");
     expect(decisionWords("enter_long", "reject")).toBe("Buy, blocked");
@@ -127,6 +137,20 @@ describe("the deployed strategy's Dashboard", () => {
     const sharpeCard = screen.getByText("needs 20 checks; 3 so far").closest(".kpi") as HTMLElement;
     expect(within(sharpeCard).getByText("none")).toBeInTheDocument();
     expect(screen.getByText("−2.9%")).toBeInTheDocument();
+    cleanup();
+
+    // No fall at all reads as none, not as a fall of minus nothing.
+    const flat = (fall: number): DeploymentStatus => ({
+      ...STATUS,
+      live: { ...LIVE, figures: { ...LIVE.figures!, max_drawdown_pct: fall } },
+    });
+    for (const [fall, shown] of [[0, "0.0%"], [0.04, "0.0%"], [0.3, "−0.3%"]] as const) {
+      render(<Deployed strategy={STRATEGY} deployed={DEPLOYED} status={flat(fall)} onStart={onStart} onChanged={onChanged} />);
+      const card = screen.getByText("on the practice account").closest(".kpi") as HTMLElement;
+      expect(within(card).getByText(shown)).toBeInTheDocument();
+      cleanup();
+    }
+    render(<Deployed strategy={STRATEGY} deployed={DEPLOYED} status={STATUS} onStart={onStart} onChanged={onChanged} />);
     expect(screen.getByText("1 refused by the venue")).toBeInTheDocument();
     expect(screen.getByText("98.5000 units")).toBeInTheDocument();
     expect(screen.getByText("1 weekday")).toBeInTheDocument();
