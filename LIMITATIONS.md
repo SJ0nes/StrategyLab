@@ -1005,6 +1005,14 @@ decision record until it has been read beside the venue's own account page.
   mutant survives. It covers the work done since it was written, not the whole
   codebase, and it is run by hand - CI does not run it. A mutant list is also
   only as good as the mutants someone thought of.
+  Two ways it has gone wrong, both found on 2026-11-16. Python reused a saved
+  compiled copy of a module when a mutant had the same length as the original
+  and was written and restored within one second, so a later run could import
+  the mutant; the harness now deletes the saved copies first and runs the tests
+  without writing new ones. And ten mutants no longer matched code that had
+  changed for several deployed strategies; the harness reported them as not
+  applied and failed, as it should, and they were rewritten. A mutant whose
+  pattern goes stale is reported, never counted as caught.
 
 **There is a server now, and it can trade on the practice account.** `strategylab serve` exists
 for a desktop app (`docs/decisions/0014`). It has seventeen
