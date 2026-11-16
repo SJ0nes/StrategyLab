@@ -635,6 +635,58 @@ def test_run_goes_on_when_the_fills_cannot_be_read(
     assert Path("state/decisions-live.jsonl").exists()
 
 
+def test_a_second_check_on_the_same_bar_decides_nothing_and_still_reads_fills(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As on a bank holiday: the newest bar is the one the last check decided.
+    from strategylab.core.types import Side
+    from strategylab.execution.venue import Fill, OrderId
+
+    first, output = _run_against(_FlatVenue([]), searched, monkeypatch)
+    assert first == 0, output
+    decided = Path("state/decisions-live.jsonl").read_text(encoding="utf-8")
+    # An order an earlier check sent, whose fill the venue now reports.
+    with Path("state/account-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"order_outcome": "sent", "venue_order_id": "41"}) + "\n")
+    accounts = Path("state/account-live.jsonl").read_text(encoding="utf-8")
+    fill = Fill(
+        order_id=OrderId("41"),
+        ticker="VUAG.L",
+        side=Side.BUY,
+        quantity=1.0,
+        price=99.5,
+        currency="GBP",
+        filled_at=datetime(2026, 11, 17, 8, 0, tzinfo=UTC),
+        charges=(),
+    )
+
+    again = _FlatVenue([fill])
+    second, output = _run_against(again, searched, monkeypatch)
+
+    assert second == 0, output
+    assert "No new bar" in output
+    assert "Nothing decided, nothing sent." in output
+    assert Path("state/decisions-live.jsonl").read_text(encoding="utf-8") == decided
+    assert Path("state/account-live.jsonl").read_text(encoding="utf-8") == accounts
+    assert again.orders == []
+    (line,) = Path("state/fills-live.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["venue_order_id"] == "41"
+
+
+def test_a_damaged_live_log_stops_the_check_before_it_decides(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Path("state/decisions-live.jsonl").write_text("not json\n", encoding="utf-8")
+    venue = _FlatVenue([])
+
+    code, output = _run_against(venue, searched, monkeypatch)
+
+    assert code == 1
+    assert "decision log" in output
+    assert venue.orders == []
+    assert Path("state/decisions-live.jsonl").read_text(encoding="utf-8") == "not json\n"
+
+
 def test_diff_with_no_live_log_is_refused(searched: Path) -> None:
     code, _ = invoke("diff", searched.as_posix())
 

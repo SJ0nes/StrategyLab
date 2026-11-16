@@ -16,8 +16,8 @@ the next bar anyway. The app shows a failed check as failed.
 
 A MISSED DAY is a weekday since the deployment, after its check time, on which
 no check was started. Bank holidays are counted as weekdays: the project has no
-exchange calendar, and on such a day the check decides on the last bar it has,
-which the one-position rule keeps from ordering twice.
+exchange calendar. On such a day the check starts, finds that its newest bar is
+one already decided, and decides nothing (``docs/decisions/0021``).
 """
 
 from __future__ import annotations

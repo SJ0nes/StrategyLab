@@ -36,6 +36,7 @@ from strategylab.live.worker import (
     DEFAULT_LIVE_LOG_PATH,
     DEFAULT_REPLAY_LOG_PATH,
     DEFAULT_SESSION_PATH,
+    already_decided,
     compare,
     decide,
     load_session,
@@ -1069,7 +1070,9 @@ def run(
     venue reported them, and whether an order was sent. Before deciding, it
     appends to state/fills-live.jsonl what any earlier sent order filled at,
     once the venue reports the fill; a failure there is reported and the check
-    goes on.
+    goes on. A bar already in the live log is not decided again: on a bank
+    holiday, or before the day's prices are out, the check says so and ends
+    with nothing decided or sent.
 
     THE RECORD IS WRITTEN BEFORE THE ORDER IS SENT, so a venue failure never
     costs the log the decision that preceded it; the record says what the gate
@@ -1149,6 +1152,7 @@ def run(
         )
         raise typer.Exit(code=1)
     console.print(f"  cached {entry.rows} bars to {entry.path.as_posix()}")
+    bar_stamp = bars.index[-1].to_pydatetime()
 
     venue_ticker = os.environ.get("T212_TICKER", "").strip()
     symbol_map = {ticker: venue_ticker} if venue_ticker else None
@@ -1176,6 +1180,23 @@ def run(
     except (T212Error, ValueError, OSError) as exc:
         err_console.print(f"[yellow]fills[/yellow] {exc}; the check goes on without them")
 
+    # ONE DECISION PER BAR. On a bank holiday, or before the day's prices are
+    # out, the newest bar is one an earlier check decided; deciding it again
+    # would trade on nothing new. Checked after the fills, so a holiday still
+    # learns what earlier orders filled at.
+    try:
+        decided_at = already_decided(DEFAULT_LIVE_LOG_PATH, bar_stamp)
+    except (ValueError, OSError) as exc:
+        err_console.print(f"[bold red]decision log[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if decided_at is not None:
+        console.print(
+            f"\nNo new bar: {bar_stamp:%Y-%m-%d} was decided at {decided_at:%Y-%m-%d %H:%M %Z}. "
+            "The market may have been shut, or today's prices are not out yet. "
+            "Nothing decided, nothing sent."
+        )
+        return
+
     session = load_session(DEFAULT_SESSION_PATH, today, balance.equity)
     try:
         save_session(session, DEFAULT_SESSION_PATH)
@@ -1200,7 +1221,6 @@ def run(
         err_console.print(f"[bold red]session[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    bar_stamp = bars.index[-1].to_pydatetime()
     try:
         intent, verdict = decide(definition, candidate.params, bars, state, limits)
         entry_record = record(

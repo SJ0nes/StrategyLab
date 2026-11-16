@@ -1060,9 +1060,12 @@ While the server runs, a thread starts the daily check once a weekday after
   been set since 2026-11-16, and nothing has been deployed with it. Its tests start no
   process. The first real daily check is the first time this path runs, and
   everything under "The live half has never run" applies to it.
-- **Bank holidays are weekdays to the scheduler.** It has no exchange
-  calendar, so on a London holiday the daily check still runs and decides
-  on the last bar it has; the one-position rule keeps it from ordering twice.
+- **Bank holidays are weekdays to the scheduler, and the bar is what stops a
+  second decision.** There is no exchange calendar, so on a London holiday the
+  daily check still starts. `run` finds that the newest bar is one already
+  decided, says so, and decides and sends nothing (`docs/decisions/0021`). The
+  same happens when the day's prices are late, and a bar published after such a
+  check is never decided on its own day.
 - **The app trades only while it is open.** The scheduler is a thread in the
   server. A weekday with the app closed is shown as missed and never made up.
 - **The app finds the practice account in its own environment.** It does not

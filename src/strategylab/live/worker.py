@@ -43,7 +43,7 @@ import pandas as pd
 from strategylab.core.strategy import evaluate
 from strategylab.core.types import Action, Intent, Side, StrategyDef
 from strategylab.execution.venue import Balance, Order, OrderType, Position
-from strategylab.logging.decisions import SCHEMA_VERSION, DecisionRecord
+from strategylab.logging.decisions import SCHEMA_VERSION, DecisionRecord, read_decisions
 from strategylab.risk.limits import (
     PortfolioState,
     RiskLimits,
@@ -491,6 +491,40 @@ def _values_differ(a: dict[str, float], b: dict[str, float]) -> bool:
     return any(not math.isclose(a[k], b[k], rel_tol=VALUE_REL_TOL, abs_tol=0.0) for k in a)
 
 
+def already_decided(log: Path, bar_timestamp: datetime) -> datetime | None:
+    """Say when the live log last decided on a bar, if it ever did.
+
+    ``run`` decides on the newest bar it has. On a day the market was shut - a
+    bank holiday - or before the day's prices are published, that is the bar
+    an earlier check already decided on, and deciding it again would trade on
+    nothing new. The project has no exchange calendar; the bar itself is the
+    evidence that no session has happened since.
+
+    Args:
+        log: The live decision log, ``state/decisions-live.jsonl``. Absent
+            means nothing has been decided.
+        bar_timestamp: The bar about to be decided, timezone-naive as the
+            decision log keeps it.
+
+    Returns:
+        When the last ``live`` record for that bar was written, or ``None``
+        when there is none.
+
+    Raises:
+        ValueError: If the log holds a malformed line, as
+            :func:`~strategylab.logging.decisions.read_decisions` refuses it.
+        OSError: If the log exists and cannot be read.
+    """
+    if not log.exists():
+        return None
+    times = [
+        entry.recorded_at
+        for entry in read_decisions(log)
+        if entry.source == "live" and entry.bar_timestamp == bar_timestamp
+    ]
+    return times[-1] if times else None
+
+
 def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffReport:
     """Diff the live log against its replay, bar by bar.
 
@@ -501,9 +535,10 @@ def compare(live: list[DecisionRecord], replayed: list[DecisionRecord]) -> DiffR
     ``schema_version`` comes from the same constant on both sides; and the
     three risk fields differ because the replay does not run the gate.
 
-    ONE RECORD PER BAR ON EACH SIDE, THE LAST ONE WINNING. A worker invoked twice
-    after one close appends two live records for the same bar; the later one is
-    the one compared, and ``compared`` counts BARS, as documented. An earlier
+    ONE RECORD PER BAR ON EACH SIDE, THE LAST ONE WINNING. ``run`` now refuses a
+    bar already decided (:func:`already_decided`), but a log written before it
+    did can hold two live records for one bar; the later one is the one
+    compared, and ``compared`` counts BARS, as documented. An earlier
     version counted records.
 
     Args:

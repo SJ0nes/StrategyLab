@@ -23,6 +23,7 @@ from strategylab.live.worker import (
     COMPARED_FIELDS,
     REPLAY_REASON,
     Session,
+    already_decided,
     compare,
     decide,
     load_session,
@@ -598,3 +599,41 @@ def test_the_backtesters_own_log_agrees_with_the_replay_on_every_compared_field(
     assert report.divergences == ()
     assert report.compared == len(engine_log)
     assert report.missing_in_replay == ()
+
+
+# ---------------------------------------------------------------------------
+# already_decided - one live decision per bar
+# ---------------------------------------------------------------------------
+
+
+def test_nothing_is_decided_when_there_is_no_log(tmp_path: Path) -> None:
+    assert already_decided(tmp_path / "absent.jsonl", datetime(2026, 11, 17)) is None
+
+
+def test_a_bar_in_the_live_log_is_already_decided_at_its_last_record(tmp_path: Path) -> None:
+    live = _live_log(_bars(RISING_LATE))
+    later = dataclasses.replace(live[-1], recorded_at=datetime(2026, 11, 18, 17, 40, tzinfo=UTC))
+    path = tmp_path / "live.jsonl"
+    write_decisions([*live, later], path)
+
+    assert already_decided(path, live[-1].bar_timestamp) == later.recorded_at
+    assert already_decided(path, live[0].bar_timestamp) == NOW
+
+
+def test_a_bar_not_in_the_log_or_only_in_a_backtest_record_is_not_decided(
+    tmp_path: Path,
+) -> None:
+    live = _live_log(_bars(RISING_LATE))
+    path = tmp_path / "live.jsonl"
+    newest = live[-1]
+    write_decisions([*live[:-1], dataclasses.replace(newest, source="backtest")], path)
+
+    assert already_decided(path, newest.bar_timestamp) is None
+
+
+def test_a_damaged_log_is_refused_rather_than_read_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "live.jsonl"
+    path.write_text("not json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        already_decided(path, datetime(2026, 11, 17))
