@@ -4,9 +4,10 @@ WARNING: the T212 order endpoint is NOT idempotent in beta - a repeated request
 can create a duplicate order. NEVER blind-retry. On timeout, query order state
 before any resend.
 
-Rate limits: account summary 1 request per 5 seconds, historical 6 requests per
-minute. The API key is masked in every error trace; an exception that escapes
-with a credential in it is a credential in a log file.
+Rate limits: account summary 1 request per 5 seconds, order history 20 requests
+per minute; this adapter reads the history once per call to ``get_fills``, and
+a daily check calls it once. The API key is masked in every error trace; an
+exception that escapes with a credential in it is a credential in a log file.
 
 TRANSPORT IS INJECTABLE AND THAT IS HOW IT IS TESTED. ``tests/test_t212.py``
 drives every method through an ``httpx.MockTransport`` that records what was
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -37,6 +39,8 @@ import httpx
 from strategylab.core.types import Side
 from strategylab.execution.venue import (
     Balance,
+    Charge,
+    Fill,
     Order,
     OrderId,
     Position,
@@ -47,10 +51,11 @@ DEMO_BASE_URL = "https://demo.trading212.com/api/v0"
 LIVE_BASE_URL = "https://live.trading212.com/api/v0"
 
 ACCOUNT_SUMMARY_MIN_INTERVAL_S: float = 5.0
-#: A fact about the venue with no reader here: nothing in this adapter calls a
-#: historical endpoint. Kept because the module docstring states the limit and a
-#: reader looking for the number should find it.
-HISTORICAL_MAX_REQUESTS_PER_MIN: int = 6
+
+#: How many orders one read of the order history asks for: the most the venue
+#: gives in one page. A daily check sends at most one order a day, so this is
+#: some fifty checks of history, read in one request.
+FILLS_PAGE_SIZE: int = 50
 
 #: Where the local positions cache lives, relative to the working directory.
 DEFAULT_POSITIONS_PATH = Path("state/positions.json")
@@ -386,6 +391,81 @@ class T212Venue:
             raise T212Error(
                 self._mask(f"account cash payload is missing or mistypes a field: {exc}")
             ) from None
+
+    def get_fills(self, ticker: str) -> list[Fill]:
+        """Return the fills in the newest page of the venue's order history for one instrument.
+
+        One request, of :data:`FILLS_PAGE_SIZE` orders, with the venue's ticker
+        as the filter; no further page is read. An entry whose ``fill`` is
+        absent, or whose fill is not of type ``TRADE`` (a stock split, say), or
+        whose order is for another instrument than the one asked for, is not a
+        fill of an order this system sent and is passed over. The shape
+        read is the one T212's documentation gives; on 2026-11-16 the practice
+        account's history was empty, so no real fill has been parsed.
+
+        Args:
+            ticker: The symbol as the protocol names it, translated on the way
+                out and back on the way in, as :meth:`get_positions` does.
+
+        Returns:
+            The fills, in the order the venue lists them, newest first.
+
+        Raises:
+            T212Error: On any API failure, with the key masked, or on an entry
+                with a fill that is missing or mistypes a field this module
+                reads, or whose quantity or price is not a finite number.
+        """
+        body = self._request(
+            "GET",
+            "/equity/history/orders",
+            params={"ticker": self._ticker(ticker), "limit": FILLS_PAGE_SIZE},
+        )
+        if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+            raise T212Error("order history did not return a list of items")
+        fills = []
+        for item in body["items"]:
+            fill = item.get("fill") if isinstance(item, dict) else None
+            if not isinstance(fill, dict) or fill.get("type") != "TRADE":
+                continue
+            try:
+                order = item["order"]
+                side = {"BUY": Side.BUY, "SELL": Side.SELL}[order["side"]]
+                filled_at = datetime.fromisoformat(str(fill["filledAt"]).replace("Z", "+00:00"))
+                if filled_at.tzinfo is None:
+                    raise ValueError(f"fill time {fill['filledAt']!r} has no zone")
+                impact = fill.get("walletImpact") or {}
+                charges = tuple(
+                    Charge(
+                        name=str(tax["name"]),
+                        amount=float(tax["quantity"]),
+                        currency=str(tax["currency"]),
+                    )
+                    for tax in impact.get("taxes") or []
+                )
+                venue_ticker = str(order["ticker"])
+                if venue_ticker != self._ticker(ticker):
+                    continue
+                quantity = abs(float(fill["quantity"]))
+                price = float(fill["price"])
+                if not (math.isfinite(quantity) and math.isfinite(price)):
+                    raise ValueError(f"fill quantity {quantity} or price {price} is not a number")
+                fills.append(
+                    Fill(
+                        order_id=OrderId(str(order["id"])),
+                        ticker=self._reverse_map.get(venue_ticker, venue_ticker),
+                        side=side,
+                        quantity=quantity,
+                        price=price,
+                        currency=str(order["currency"]),
+                        filled_at=filled_at,
+                        charges=charges,
+                    )
+                )
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise T212Error(
+                    self._mask(f"order history entry is missing or mistypes a field: {exc!r}")
+                ) from None
+        return fills
 
     def _read_local(self) -> tuple[tuple[Position, ...], bool]:
         """Read the local positions cache.

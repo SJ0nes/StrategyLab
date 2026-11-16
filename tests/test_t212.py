@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from strategylab.core.types import Side
 from strategylab.execution.t212 import (
     ACCOUNT_SUMMARY_MIN_INTERVAL_S,
     DEMO_BASE_URL,
+    FILLS_PAGE_SIZE,
     LIVE_BASE_URL,
     MASK,
     T212Error,
@@ -446,10 +448,152 @@ def test_the_key_is_masked_in_a_mistyped_payload(tmp_path: Path) -> None:
     with pytest.raises(T212Error) as info:
         _venue(rec, tmp_path).get_positions()
     assert KEY not in str(info.value)
-    assert info.value.__cause__ is None
+    assert info.value.__suppress_context__ is True
 
 
 def test_reconcile_stamps_utc(tmp_path: Path) -> None:
     report = _venue(Recorder(_portfolio()), tmp_path).reconcile()
     assert report.checked_at.utcoffset() is not None
     assert report.checked_at.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# get_fills - the order history, in the shape T212's documentation gives
+# ---------------------------------------------------------------------------
+
+HISTORY = "/api/v0/equity/history/orders"
+
+
+def _history_item(
+    order_id: int = 501,
+    side: str = "BUY",
+    ticker: str = "VUAGl_EQ",
+    fill: dict[str, Any] | None | str = "default",
+) -> dict[str, Any]:
+    """One entry of the order history, with every field this module reads."""
+    if fill == "default":
+        fill = {
+            "id": 9,
+            "filledAt": "2026-11-17T08:00:03Z",
+            "price": 101.25,
+            "quantity": 2.5,
+            "type": "TRADE",
+            "walletImpact": {
+                "currency": "GBP",
+                "taxes": [{"name": "TRANSACTION_FEE", "quantity": -0.1, "currency": "GBP"}],
+            },
+        }
+    return {
+        "order": {
+            "id": order_id,
+            "ticker": ticker,
+            "side": side,
+            "currency": "GBP",
+            "status": "FILLED",
+        },
+        "fill": fill,
+    }
+
+
+def _history(*items: dict[str, Any]) -> Recorder:
+    return Recorder({("GET", HISTORY): (200, {"items": list(items), "nextPagePath": None})})
+
+
+def test_a_fill_is_read_with_its_price_time_and_charges(tmp_path: Path) -> None:
+    rec = _history(_history_item())
+    (fill,) = _venue(rec, tmp_path, symbol_map={"VUAG.L": "VUAGl_EQ"}).get_fills("VUAG.L")
+
+    assert fill.order_id == OrderId("501")
+    assert fill.ticker == "VUAG.L"
+    assert fill.side is Side.BUY
+    assert fill.quantity == 2.5
+    assert fill.price == 101.25
+    assert fill.currency == "GBP"
+    assert fill.filled_at == datetime(2026, 11, 17, 8, 0, 3, tzinfo=UTC)
+    assert [(c.name, c.amount, c.currency) for c in fill.charges] == [
+        ("TRANSACTION_FEE", -0.1, "GBP")
+    ]
+
+
+def test_the_history_is_asked_for_by_the_venue_ticker_one_full_page(tmp_path: Path) -> None:
+    rec = _history()
+    _venue(rec, tmp_path, symbol_map={"VUAG.L": "VUAGl_EQ"}).get_fills("VUAG.L")
+
+    (request,) = rec.requests
+    assert request.url.params["ticker"] == "VUAGl_EQ"
+    assert request.url.params["limit"] == str(FILLS_PAGE_SIZE)
+    assert FILLS_PAGE_SIZE == 50
+
+
+def test_a_sell_reported_with_a_negative_quantity_is_still_a_positive_one(tmp_path: Path) -> None:
+    item = _history_item(side="SELL")
+    item["fill"]["quantity"] = -2.5
+    (fill,) = _venue(_history(item), tmp_path).get_fills("VUAGl_EQ")
+
+    assert fill.side is Side.SELL
+    assert fill.quantity == 2.5
+
+
+@pytest.mark.parametrize(
+    "fill",
+    [None, {}, "TRADE", ["TRADE"], {**_history_item()["fill"], "type": "STOCK_SPLIT"}],
+    ids=["no-fill", "empty-fill", "fill-str", "fill-list", "not-a-trade"],
+)
+def test_an_entry_that_is_not_a_trade_fill_is_passed_over(tmp_path: Path, fill: Any) -> None:
+    rec = _history(_history_item(order_id=1, fill=fill), _history_item(order_id=2))
+    fills = _venue(rec, tmp_path).get_fills("VUAGl_EQ")
+
+    assert [f.order_id for f in fills] == [OrderId("2")]
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        lambda item: item["fill"].pop("price"),
+        lambda item: item["fill"].update(price="a lot"),
+        lambda item: item["order"].update(side="SHORT"),
+        lambda item: item["fill"].update(filledAt="yesterday"),
+        lambda item: item["fill"].update(filledAt="2026-11-17T08:00:03"),
+        lambda item: item.pop("order"),
+        lambda item: item["fill"].update(price="nan"),
+        lambda item: item["fill"].update(quantity="inf"),
+    ],
+    ids=[
+        "no-price",
+        "word-price",
+        "unknown-side",
+        "word-time",
+        "zoneless-time",
+        "no-order",
+        "nan-price",
+        "inf-quantity",
+    ],
+)
+def test_a_fill_missing_or_mistyping_a_field_is_refused(tmp_path: Path, spoil: Any) -> None:
+    item = _history_item()
+    spoil(item)
+    with pytest.raises(T212Error, match="order history entry"):
+        _venue(_history(item), tmp_path).get_fills("VUAGl_EQ")
+
+
+@pytest.mark.parametrize("body", [[], {"items": None}, {"nothing": []}])
+def test_a_history_that_is_not_a_page_of_items_is_refused(tmp_path: Path, body: Any) -> None:
+    rec = Recorder({("GET", HISTORY): (200, body)})
+    with pytest.raises(T212Error, match="list of items"):
+        _venue(rec, tmp_path).get_fills("VUAGl_EQ")
+
+
+def test_the_key_is_masked_in_a_mistyped_history_entry(tmp_path: Path) -> None:
+    item = _history_item()
+    item["order"]["side"] = KEY
+    with pytest.raises(T212Error) as info:
+        _venue(_history(item), tmp_path).get_fills("VUAGl_EQ")
+    assert KEY not in str(info.value)
+    assert info.value.__suppress_context__ is True
+
+
+def test_an_entry_for_another_instrument_is_passed_over(tmp_path: Path) -> None:
+    rec = _history(_history_item(order_id=1, ticker="OTHER_EQ"), _history_item(order_id=2))
+    fills = _venue(rec, tmp_path, symbol_map={"VUAG.L": "VUAGl_EQ"}).get_fills("VUAG.L")
+
+    assert [f.order_id for f in fills] == [OrderId("2")]

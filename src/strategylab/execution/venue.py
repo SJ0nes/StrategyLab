@@ -97,6 +97,51 @@ class Balance:
 
 
 @dataclass(frozen=True)
+class Charge:
+    """One fee or tax the venue reports against a fill, as it reports it.
+
+    Attributes:
+        name: The venue's name for it, such as ``STAMP_DUTY_RESERVE_TAX``.
+        amount: The amount, in ``currency`` units, with the venue's sign. The
+            sign convention is not documented and has not been seen in a real
+            reply, so nothing here adds charges up or nets them off a price.
+        currency: ISO-4217 code of ``amount``.
+    """
+
+    name: str
+    amount: float
+    currency: str
+
+
+@dataclass(frozen=True)
+class Fill:
+    """An order the venue reports as filled, wholly or in part.
+
+    Attributes:
+        order_id: The venue's identifier of the order, as ``place_order``
+            returned it.
+        ticker: The symbol, translated back to the protocol's spelling by the
+            adapter where it knows the mapping.
+        side: Direction of the order.
+        quantity: Units filled. Positive; direction is carried by ``side``.
+        price: Price per unit filled at, in ``currency`` units.
+        currency: ISO-4217 code of the instrument's currency, which is
+            ``price``'s.
+        filled_at: When the fill happened, timezone-aware.
+        charges: Fees and taxes as the venue reports them, uninterpreted.
+    """
+
+    order_id: OrderId
+    ticker: str
+    side: Side
+    quantity: float
+    price: float
+    currency: str
+    filled_at: datetime
+    charges: tuple[Charge, ...]
+
+
+@dataclass(frozen=True)
 class ReconcileReport:
     """The difference between what this system believed and what the venue holds.
 
@@ -161,6 +206,18 @@ class Venue(Protocol):
 
         Returns:
             The current balance.
+        """
+        ...
+
+    def get_fills(self, ticker: str) -> list[Fill]:
+        """Return the newest fills the venue reports for one instrument.
+
+        Args:
+            ticker: The symbol as the protocol names it.
+
+        Returns:
+            The fills the venue's most recent page of order history holds for
+            ``ticker``, newest first; an order that has not filled has none.
         """
         ...
 
