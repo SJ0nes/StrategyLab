@@ -321,6 +321,9 @@ export interface Check {
   position_quantity: number | null;
   order_side: string | null;
   order_outcome: "none" | "sent" | "failed" | null;
+  venue_order_id: string | null;
+  /** What the order filled at, learned at a later check; null until then. Price is per unit, in `currency`. */
+  fill: { price: number; quantity: number; currency: string | null; filled_at: string } | null;
 }
 
 /** One live decision and the risk layer's answer. */
@@ -348,6 +351,8 @@ export interface LiveFigures {
 export interface Live {
   available: true;
   checks: Check[];
+  /** False when the fills log could not be read, so no fill is shown. */
+  fills_readable: boolean;
   figures: LiveFigures;
   decisions: Decision[];
   /** True when the daily loss limit has locked buying today; null when unknown. */

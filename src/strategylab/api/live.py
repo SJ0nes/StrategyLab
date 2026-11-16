@@ -1,9 +1,11 @@
 """How the deployed strategy is doing on the practice account, read from its checks' logs.
 
-Three files, all written by ``strategylab run``:
+Four files, all written by ``strategylab run``:
 
 - ``state/account-live.jsonl`` - the account at each check
   (:mod:`strategylab.live.account`);
+- ``state/fills-live.jsonl`` - what each sent order filled at, learned at a
+  later check (:mod:`strategylab.live.fills`);
 - ``state/decisions-live.jsonl`` - each decision and the risk layer's answer;
 - ``state/session.json`` - the day's opening equity and the loss lock.
 
@@ -42,8 +44,9 @@ from strategylab.api.reading import (
 )
 from strategylab.backtest.metrics import max_drawdown, sharpe
 
-#: The three files, relative to the project root.
+#: The four files, relative to the project root.
 ACCOUNT_LOG = Path("state") / "account-live.jsonl"
+FILLS_LOG = Path("state") / "fills-live.jsonl"
 DECISION_LOG = Path("state") / "decisions-live.jsonl"
 SESSION_FILE = Path("state") / "session.json"
 
@@ -122,7 +125,7 @@ def _checks(root: Path, strategy: str, since: datetime) -> list[dict[str, Any]] 
         One entry per check, in the order recorded, each with ``bar_date``,
         ``recorded_at``, ``equity`` and ``cash`` in account currency,
         ``currency``, ``position_quantity`` in units, ``order_side``,
-        ``order_outcome``. A line is kept only if it is of schema version 1,
+        ``order_outcome``, and ``venue_order_id``. A line is kept only if it is of schema version 1,
         names ``strategy``, was recorded at or after ``since``, and has a
         finite equity. ``None`` when the log cannot be read.
     """
@@ -151,9 +154,53 @@ def _checks(root: Path, strategy: str, since: datetime) -> list[dict[str, Any]] 
                 "position_quantity": figure_or_none(line.get("position_quantity")),
                 "order_side": text_or_none(line.get("order_side")),
                 "order_outcome": text_or_none(line.get("order_outcome")),
+                "venue_order_id": text_or_none(line.get("venue_order_id")),
             }
         )
     return kept
+
+
+def _fills(root: Path) -> dict[str, dict[str, Any]] | None:
+    """Read what each sent order filled at.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        Venue order id to ``price`` per unit and ``quantity`` in units, both in
+        the instrument's ``currency``, and ``filled_at``. The first line for an
+        id wins, as the log is written once per order. A line is kept only if
+        it is of schema version 1 with an id, a finite positive price and
+        quantity, and a fill time with an offset. ``None`` when the log cannot
+        be read.
+    """
+    lines = _lines(root / FILLS_LOG)
+    if lines is None:
+        return None
+    fills: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        order_id = text_or_none(line.get("venue_order_id"))
+        price = figure_or_none(line.get("price"))
+        quantity = figure_or_none(line.get("quantity"))
+        filled = _instant(line.get("filled_at"))
+        if (
+            line.get("schema_version") != 1
+            or order_id is None
+            or order_id in fills
+            or price is None
+            or price <= 0
+            or quantity is None
+            or quantity <= 0
+            or filled is None
+        ):
+            continue
+        fills[order_id] = {
+            "price": float(price),
+            "quantity": float(quantity),
+            "currency": text_or_none(line.get("currency")),
+            "filled_at": filled.isoformat(),
+        }
+    return fills
 
 
 def _decisions(root: Path, since: datetime) -> list[dict[str, Any]] | None:
@@ -276,7 +323,10 @@ def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime
     Returns:
         The missing shape when the deployment has no readable time or a log
         cannot be read. Otherwise ``available`` true; ``checks``, the account
-        at each check since deploying, oldest first; ``figures``
+        at each check since deploying, oldest first, each with ``fill``, what
+        its order filled at (:func:`_fills`) or ``None`` while none is
+        recorded; ``fills_readable``, false when the fills log could not be
+        read, in which case every ``fill`` is ``None``; ``figures``
         (:func:`_figures`); ``decisions``, newest first; and ``loss_lock``.
     """
     since = _instant(deployed.get("deployed_at"))
@@ -288,9 +338,14 @@ def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime
     decisions = _decisions(root, since)
     if decisions is None:
         return missing("The decision log could not be read.")
+    fills = _fills(root)
+    for check in checks:
+        order_id = check["venue_order_id"]
+        check["fill"] = None if fills is None or order_id is None else fills.get(order_id)
     return {
         "available": True,
         "checks": checks,
+        "fills_readable": fills is not None,
         "figures": _figures(checks),
         "decisions": decisions,
         "loss_lock": _loss_lock(root, now.astimezone(UTC).date()),

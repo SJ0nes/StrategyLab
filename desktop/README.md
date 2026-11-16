@@ -54,7 +54,8 @@ its name is typed; an unproven strategy says so. The deployed strategy's
 Dashboard shows its return, largest fall and live Sharpe as the venue
 reported its account at each daily check, what it decided and why, its
 position, the next check and any missed, with Pause, Undeploy and Check now.
-Trades lists its orders and every day's decision. **Stop all trading** in the
+Trades lists its orders, what each filled at once a later check has read it,
+and every day's decision. **Stop all trading** in the
 top bar stops the daily check; a dialog asks before trading is allowed again.
 Rules: `docs/decisions/0019`.
 
@@ -93,7 +94,7 @@ are all places where the mock shows something the project does not have:
 | Backtest | "Run backtest" runs one backtest | It runs a search, the same as "Search again" | A search is the grid of backtests; the project has no single-backtest command (`docs/decisions/0017`) |
 | Improve | A sped-up progress bar | A bar that moves only for a luck test, one step per finished trial | A plain search reports nothing until it ends |
 | Tests | Rows for single backtests and live-against-backtest checks | Rows for searches and final exams only | Those are the tests the project keeps on record |
-| Dashboard, deployed | Win rate; price and result per trade | Orders sent, and no result per trade | Fill prices are not recorded |
+| Dashboard, deployed | Win rate; price and result per trade | Orders sent and, on Trades, what each filled at once the next check has read it; no result per trade | The check runs after the close, so a fill is learned a check later, and the venue's fees have an undocumented sign, so nothing nets them off |
 | Dashboard, deployed | Loss today and money in the market as gauges against the limits | The loss lock and the stop-all state | The account log holds equity, not the day's loss or exposure as the risk layer worked them |
 | Dashboard, deployed | 1M / 3M / All on the account chart; a Recent tests card | One range; Recent decisions instead | A few weeks of checks need no range; tests are on Tests |
 | Top bar | "Stop all buying… selling still allowed" | "Stop all trading" | The risk layer cannot block buying alone, and the app may not add that to it (`docs/decisions/0019`) |

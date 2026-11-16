@@ -1,10 +1,21 @@
 import { useState } from "react";
 
-import type { DeploymentStatus, Strategy } from "../api";
+import type { Check, DeploymentStatus, Strategy } from "../api";
 import { whenLabel } from "../words";
 import { decisionWords } from "./Deployed";
 
 type Tab = "orders" | "days";
+
+/** What an order filled at, or why there is no price to show. */
+export function filledWords(check: Check): string {
+  if (check.order_outcome !== "sent") return "";
+  if (check.fill === null) return "Not yet";
+  const { price, quantity, currency, filled_at } = check.fill;
+  return `${quantity.toLocaleString("en-GB", { maximumFractionDigits: 6 })} at ${price.toLocaleString("en-GB", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })}${currency ? ` ${currency}` : ""}, ${whenLabel(filled_at)}`;
+}
 
 /** Every order the deployed strategy sent, and every day it decided, from its daily checks. */
 export function Trades({ strategy, status }: { strategy: Strategy; status: DeploymentStatus | null }) {
@@ -66,6 +77,7 @@ export function Trades({ strategy, status }: { strategy: Strategy; status: Deplo
                     <th>Day</th>
                     <th>Action</th>
                     <th>Venue</th>
+                    <th>Filled</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -85,15 +97,20 @@ export function Trades({ strategy, status }: { strategy: Strategy; status: Deplo
                             {check.order_outcome === "sent" ? "Sent" : "Refused"}
                           </span>
                         </td>
+                        <td className="soft">{filledWords(check)}</td>
                       </tr>
                     ))}
                 </tbody>
               </table>
             </div>
           )}
+          {live !== null && !live.fills_readable && (
+            <p className="soft">The fills log could not be read, so no fill price is shown.</p>
+          )}
           <p className="soft" style={{ fontSize: "var(--t-s)" }}>
-            "Sent" is the venue accepting a market order. The price each filled at is not recorded, so no result per
-            trade is shown; the account value on the Dashboard is what the venue reported.
+            "Sent" is the venue accepting a market order. The check runs after the close, so an order fills at a later
+            session, and its price appears here after the next check. Fees are not taken off, and no result per trade is
+            shown; the account value on the Dashboard is what the venue reported.
           </p>
         </div>
       ) : (

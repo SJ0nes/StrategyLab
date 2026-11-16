@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deployBlocker } from "../src/App";
-import type { Deployed as DeployedRecord, DeploymentStatus, Live, Strategy } from "../src/api";
+import type { Check, Deployed as DeployedRecord, DeploymentStatus, Live, Strategy } from "../src/api";
 import { DeployDialog } from "../src/components/DeployDialog";
 import { Deployed, decisionWords } from "../src/pages/Deployed";
 import { Trades } from "../src/pages/Trades";
@@ -47,10 +47,11 @@ const DEPLOYED: DeployedRecord = {
 const LIVE: Live = {
   available: true,
   checks: [
-    { bar_date: "2026-11-02", recorded_at: "2026-11-02T17:45:00+00:00", equity: 10000, cash: 10000, currency: "GBP", position_quantity: 0, order_side: "buy", order_outcome: "sent" },
-    { bar_date: "2026-11-03", recorded_at: "2026-11-03T17:45:00+00:00", equity: 10500, cash: 20, currency: "GBP", position_quantity: 98.5, order_side: null, order_outcome: "none" },
-    { bar_date: "2026-11-04", recorded_at: "2026-11-04T17:45:00+00:00", equity: 10200, cash: 20, currency: "GBP", position_quantity: 98.5, order_side: "sell", order_outcome: "failed" },
+    { bar_date: "2026-11-02", recorded_at: "2026-11-02T17:45:00+00:00", equity: 10000, cash: 10000, currency: "GBP", position_quantity: 0, order_side: "buy", order_outcome: "sent", venue_order_id: "41", fill: { price: 101.5, quantity: 98.5, currency: "GBP", filled_at: "2026-11-03T08:00:03+00:00" } },
+    { bar_date: "2026-11-03", recorded_at: "2026-11-03T17:45:00+00:00", equity: 10500, cash: 20, currency: "GBP", position_quantity: 98.5, order_side: null, order_outcome: "none", venue_order_id: null, fill: null },
+    { bar_date: "2026-11-04", recorded_at: "2026-11-04T17:45:00+00:00", equity: 10200, cash: 20, currency: "GBP", position_quantity: 98.5, order_side: "sell", order_outcome: "failed", venue_order_id: null, fill: null },
   ],
+  fills_readable: true,
   figures: {
     return_pct: 2,
     sharpe: null,
@@ -213,14 +214,30 @@ describe("the Trades page", () => {
   it("lists the orders sent and refused, newest first, and every decision", () => {
     render(<Trades strategy={STRATEGY} status={STATUS} />);
 
-    const rows = screen.getAllByRole("row").slice(1);
-    expect(rows.map((row) => row.textContent)).toEqual(["2026-11-04SellRefused", "2026-11-02BuySent"]);
-    expect(screen.getByText(/price each filled at is not recorded/)).toBeInTheDocument();
+    const rows = screen.getAllByRole("row").slice(1) as HTMLTableRowElement[];
+    expect(rows.map((row) => [0, 1, 2].map((cell) => row.cells[cell]?.textContent).join(""))).toEqual([
+      "2026-11-04SellRefused",
+      "2026-11-02BuySent",
+    ]);
+    expect(rows[0]?.cells[3]?.textContent).toBe("");
+    expect(rows[1]?.cells[3]?.textContent).toMatch(/^98.5 at 101.50 GBP, .*08:00$/);
+    expect(screen.getByText(/its price appears here after the next check/)).toBeInTheDocument();
+    expect(screen.queryByText(/fills log could not be read/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Daily decisions" }));
     expect(screen.getAllByRole("row")).toHaveLength(4);
     expect(screen.getByText("Blocked: daily loss lock")).toBeInTheDocument();
     expect(screen.getByText("2 of 2")).toBeInTheDocument();
+  });
+
+  it("says an order not yet filled is waiting, and when the fills cannot be read", () => {
+    const waiting: Check = { ...LIVE.checks[0]!, fill: null };
+    const live = { ...LIVE, checks: [waiting], fills_readable: false };
+    render(<Trades strategy={STRATEGY} status={{ ...STATUS, live }} />);
+
+    const [row] = screen.getAllByRole("row").slice(1) as HTMLTableRowElement[];
+    expect(row?.cells[3]?.textContent).toBe("Not yet");
+    expect(screen.getByText(/fills log could not be read/)).toBeInTheDocument();
   });
 
   it("says a strategy that is not deployed has no trades", () => {

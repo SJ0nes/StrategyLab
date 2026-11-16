@@ -673,6 +673,92 @@ def test_orders_sent_and_refused_are_counted(project: Path) -> None:
     assert (figures["sent"], figures["failed"]) == (2, 1)
 
 
+def _fill_line(project: Path, order_id: str, price: Any = 101.5, **changes: Any) -> None:
+    line = {
+        "schema_version": 1,
+        "recorded_at": "2026-11-06T17:45:00+00:00",
+        "venue_order_id": order_id,
+        "ticker": "VUAG.L",
+        "side": "buy",
+        "quantity": 2.0,
+        "price": price,
+        "currency": "GBP",
+        "filled_at": "2026-11-06T08:00:00+00:00",
+        "charges": [],
+        **changes,
+    }
+    with (project / "state" / "fills-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line) + "\n")
+
+
+def test_a_sent_order_carries_its_fill_once_one_is_recorded(project: Path) -> None:
+    _deployed(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 10000.0, "sent", venue_order_id="7")
+    _check(project, 3, 10000.0, "sent", venue_order_id="8")
+    _check(project, 4, 10000.0)
+    _fill_line(project, "7", 101.5)
+    _fill_line(project, "7", 999.0)
+
+    live = _live(project)
+
+    assert live["fills_readable"] is True
+    assert [check["fill"] for check in live["checks"]] == [
+        {
+            "price": 101.5,
+            "quantity": 2.0,
+            "currency": "GBP",
+            "filled_at": "2026-11-06T08:00:00+00:00",
+        },
+        None,
+        None,
+    ]
+    assert live["checks"][0]["venue_order_id"] == "7"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"price": "lots"},
+        {"price": float("inf")},
+        {"price": 0},
+        {"quantity": -1},
+        {"filled_at": "2026-11-06T08:00:00"},
+        {"schema_version": 2},
+        {"venue_order_id": None},
+    ],
+    ids=[
+        "word-price",
+        "inf-price",
+        "zero-price",
+        "negative-quantity",
+        "no-offset",
+        "schema",
+        "no-id",
+    ],
+)
+def test_a_fill_line_that_is_not_a_fill_is_passed_over(
+    project: Path, changes: dict[str, Any]
+) -> None:
+    _deployed(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 10000.0, "sent", venue_order_id="7")
+    _fill_line(project, "7", **changes)
+
+    assert _live(project)["checks"][0]["fill"] is None
+
+
+def test_an_unreadable_fills_log_leaves_the_figures_and_says_so(project: Path) -> None:
+    _deployed(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 10000.0, "sent", venue_order_id="7")
+    # A directory where the log should be: it exists and cannot be read.
+    (project / "state" / "fills-live.jsonl").mkdir()
+
+    live = _live(project)
+
+    assert live["available"] is True
+    assert live["fills_readable"] is False
+    assert live["checks"][0]["fill"] is None
+
+
 def test_lines_that_are_not_checks_are_passed_over(project: Path) -> None:
     _deployed(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
     with (project / "state" / "account-live.jsonl").open("ab") as handle:
