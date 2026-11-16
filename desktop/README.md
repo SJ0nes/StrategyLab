@@ -70,7 +70,9 @@ strategies' newest searches side by side. Rules: `docs/decisions/0020`.
 
 The first launch offers the **tour**: a welcome, then seven stops, each lit
 with a spotlight and explained in a sentence, worded for what the app does
-today. *Tour* in the top bar plays it again. The server remembers that it has
+today. The two stops about a strategy's rules and its path to deployment show
+the first strategy that is not deployed, as the mock does, and the window goes
+back to the strategy it showed before. *Tour* in the top bar plays it again. The server remembers that it has
 been seen, because the page's own storage is lost with each launch's port.
 
 The window never shows the buy-and-hold comparison. The search records it and
@@ -79,14 +81,16 @@ the server leaves it out (`docs/decisions/0014`).
 ## Where the built screens differ from the mock
 
 Compared side by side with `docs/prototype/index.html` at 2560x1440 and
-1366x768, every screen, last on 2026-11-11 with a strategy deployed on a copy of
-the project. The layout, type, colours and chart are the mock's. The differences
+1366x768, every screen, last on 2026-11-16 on a copy of the project with two
+strategies deployed, one of them paused, and one draft, and with no practice
+account set. The window opens on a deployed strategy, not on whichever strategy
+sorts first. The layout, type, colours and chart are the mock's. The differences
 are all places where the mock shows something the project does not have:
 
 | Screen | The mock | The window | Why |
 | --- | --- | --- | --- |
 | Improve | "Short" and "long" averages, "Trend filter" | `fast`, `slow`, `trend` | The names are the config's, so another strategy needs no new wording |
-| Improve | A LIVE square and "Against deployed version" | Neither | Nothing is deployed |
+| Improve | A LIVE square and "Against deployed version" | Neither | Not built: the deployed version is on the Dashboard |
 | Improve | "Run the luck test on this version" for any square | No such button; the luck test shows for the starred square only | The luck test runs on the version a search puts forward, not on a chosen one |
 | Improve | Three figures beside the chart | Five: total return, worst fall and trades are added | They are recorded for every version |
 | Improve, Ruled out | Three columns | Five: how many times recorded, and when last | The record repeats, and covers the whole project |
@@ -185,6 +189,11 @@ No test starts a real search.
 
 The component tests check what a page says, not how it looks. A cell that
 ignored its column span, because a class name meant two things, passed every
-test and was found in a screenshot. Each screen was looked at in the real
-window at 2560x1440 and at 1366x768; nothing compares a screen with the mock
-automatically.
+test and was found in a screenshot. So were, on 2026-11-16, Compare's figures
+running into each other at laptop width, a table scrollbar with nothing to
+scroll, and a worst fall of "−0.0%". Each screen was looked at in the real
+window at 2560x1440 and at 1366x768, captured through the window's debugging
+port by a script that is not part of the repository; nothing compares a screen
+with the mock automatically. The tour's spotlight could not be checked that
+way: a window that is not on screen does not lay out its animation frames, so
+where each stop lands was checked by its tests only.
