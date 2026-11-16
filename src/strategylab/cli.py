@@ -31,6 +31,7 @@ from strategylab.data.source import (
 )
 from strategylab.execution.t212 import T212Error, T212Venue
 from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH, account_record, write_account
+from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH, record_fills
 from strategylab.live.worker import (
     DEFAULT_LIVE_LOG_PATH,
     DEFAULT_REPLAY_LOG_PATH,
@@ -1065,7 +1066,10 @@ def run(
     through the risk layer; writes ONE decision record to
     state/decisions-live.jsonl; sends at most one market order; and appends one
     line to state/account-live.jsonl - the account's value and position as the
-    venue reported them, and whether an order was sent.
+    venue reported them, and whether an order was sent. Before deciding, it
+    appends to state/fills-live.jsonl what any earlier sent order filled at,
+    once the venue reports the fill; a failure there is reported and the check
+    goes on.
 
     THE RECORD IS WRITTEN BEFORE THE ORDER IS SENT, so a venue failure never
     costs the log the decision that preceded it; the record says what the gate
@@ -1158,6 +1162,19 @@ def run(
         raise typer.Exit(code=1) from exc
     for line in reconciled.discrepancies:
         console.print(f"  [yellow]reconciled[/yellow] {line}")
+    # What earlier checks' orders filled at. A record of what happened, read
+    # before deciding and fed into nothing: a failure here is reported and the
+    # check goes on.
+    try:
+        for filled in record_fills(
+            venue, ticker, now, DEFAULT_ACCOUNT_LOG_PATH, DEFAULT_FILLS_LOG_PATH
+        ):
+            console.print(
+                f"  [green]filled[/green] order {filled.venue_order_id}: {filled.side} "
+                f"{filled.quantity:g} at {filled.price:g} {filled.currency}, {filled.filled_at}"
+            )
+    except (T212Error, ValueError, OSError) as exc:
+        err_console.print(f"[yellow]fills[/yellow] {exc}; the check goes on without them")
 
     session = load_session(DEFAULT_SESSION_PATH, today, balance.equity)
     try:

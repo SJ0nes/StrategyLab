@@ -546,6 +546,95 @@ def test_run_hands_the_venue_the_secret_when_one_is_set(
     assert "must-never-be-sent" not in output
 
 
+class _FlatVenue:
+    """A venue holding nothing, that accepts every order, and whose fills are scripted."""
+
+    def __init__(self, fills: list[Any] | Exception) -> None:
+        """Answer ``get_fills`` with ``fills``, or raise it."""
+        self.fills = fills
+        self.orders: list[Any] = []
+
+    def reconcile(self) -> Any:
+        """Report the venue flat and nothing repaired."""
+        from strategylab.execution.venue import ReconcileReport
+
+        return ReconcileReport(datetime.now(UTC), (), (), (), False)
+
+    def get_balance(self) -> Any:
+        """Report a small all-cash account."""
+        from strategylab.execution.venue import Balance
+
+        return Balance(currency="GBP", cash=1000.0, equity=1000.0)
+
+    def get_fills(self, ticker: str) -> list[Any]:
+        """Return or raise the scripted fills."""
+        if isinstance(self.fills, Exception):
+            raise self.fills
+        return self.fills
+
+    def place_order(self, order: Any) -> str:
+        """Accept the order."""
+        self.orders.append(order)
+        return "900"
+
+
+def _run_against(
+    venue: _FlatVenue, searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[int, str]:
+    monkeypatch.setenv("T212_ENVIRONMENT", "demo")
+    monkeypatch.setenv("T212_API_KEY", "a-key-that-must-never-be-sent")
+    monkeypatch.setattr("strategylab.cli.YFinanceSource", _CachedSource)
+    monkeypatch.setattr("strategylab.cli.T212Venue", lambda *args, **kwargs: venue)
+    return invoke("run", searched.as_posix())
+
+
+def test_run_records_an_earlier_orders_fill_before_deciding(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from strategylab.core.types import Side
+    from strategylab.execution.venue import Fill, OrderId
+
+    Path("state/account-live.jsonl").write_text(
+        json.dumps({"order_outcome": "sent", "venue_order_id": "41"}) + "\n", encoding="utf-8"
+    )
+    fill = Fill(
+        order_id=OrderId("41"),
+        ticker="VUAG.L",
+        side=Side.BUY,
+        quantity=2.0,
+        price=99.5,
+        currency="GBP",
+        filled_at=datetime(2026, 11, 17, 8, 0, tzinfo=UTC),
+        charges=(),
+    )
+
+    code, output = _run_against(_FlatVenue([fill]), searched, monkeypatch)
+
+    assert code == 0, output
+    assert "filled order 41" in output
+    (line,) = Path("state/fills-live.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["price"] == 99.5
+    assert Path("state/decisions-live.jsonl").exists()
+
+
+def test_run_goes_on_when_the_fills_cannot_be_read(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from strategylab.execution.t212 import T212Error
+
+    Path("state/account-live.jsonl").write_text(
+        json.dumps({"order_outcome": "sent", "venue_order_id": "41"}) + "\n", encoding="utf-8"
+    )
+
+    code, output = _run_against(_FlatVenue(T212Error("history unavailable")), searched, monkeypatch)
+
+    assert code == 0, output
+    assert "history unavailable" in output
+    assert "the check goes on without them" in output
+    assert not Path("state/fills-live.jsonl").exists()
+    assert Path("state/decisions-live.jsonl").exists()
+
+
 def test_diff_with_no_live_log_is_refused(searched: Path) -> None:
     code, _ = invoke("diff", searched.as_posix())
 

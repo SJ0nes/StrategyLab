@@ -6,7 +6,7 @@ produces. Nothing here is a footnote.
 
 ## What is implemented, and what has never run
 
-Forty modules have working bodies: `protocol.py`, `windows.py`,
+Forty-one modules have working bodies: `protocol.py`, `windows.py`,
 `data/source.py`, `backtest/costs.py`, `backtest/metrics.py`,
 `backtest/engine.py`, `core/config.py`, `core/strategy.py`, `search/grid.py`,
 `search/plateau.py`, `search/graveyard.py`, `search/loop.py`,
@@ -14,7 +14,7 @@ Forty modules have working bodies: `protocol.py`, `windows.py`,
 `report/surface.py`, `report/palette.py`, `report/verdict.py`,
 `validate/walkforward.py`,
 `validate/candidate.py`, `logging/decisions.py`, `risk/limits.py`,
-`execution/t212.py`, `live/worker.py`, `live/account.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
+`execution/t212.py`, `live/worker.py`, `live/account.py`, `live/fills.py`, `api/reading.py`, `api/registry.py`, `api/history.py`, `api/jobs.py`,
 `api/job_runner.py`, `api/rules.py`, `api/drafts.py`, `api/window_state.py`, `api/deployment.py`,
 `api/schedule.py`, `api/live.py`,
 `api/overview.py`, `api/app.py`, `api/server.py`, and all eight commands in `cli.py`. No
@@ -920,13 +920,22 @@ decision record until it has been read beside the venue's own account page.
   example and that the key, the secret and the header are masked in errors.
   The practice account accepted the key-and-secret form on 2026-11-16; the
   key-alone form has never been tried against it.
-- **The account log records what the venue said, not what was filled.** Each
-  check appends the account's equity and cash, the position, and whether its
-  order was sent, to `state/account-live.jsonl`. "Sent" is the venue
-  accepting a market order; the price it filled at is not recorded, so no
-  figure built on this log can say what a trade made. The line is written by
-  the untested body of `run`; `live/account.py`, which builds and writes it,
-  is tested.
+- **The account log records what the venue said; the fill comes a check later,
+  and its parser has never seen a real one.** Each check appends the account's
+  equity and cash, the position, and whether its order was sent, to
+  `state/account-live.jsonl`. "Sent" is the venue accepting a market order.
+  The check runs after London's close, so the order fills at a later session
+  at the earliest, and it is the next check that asks the venue's order history
+  for the fill and appends its price, quantity, time and charges to
+  `state/fills-live.jsonl` (`live/fills.py`). The history is read in the shape
+  T212's documentation gives; on 2026-11-16 the practice account's history was
+  empty, so no real fill has been parsed. Charges keep the venue's sign, which
+  is undocumented, and nothing adds them up, so no figure yet says what a trade
+  made after costs. Only the newest fifty orders are read, so an order whose
+  fill is looked for after fifty more is never found. Whether the venue accepts,
+  queues or refuses a market order sent after the close has not been seen.
+  `live/account.py` and `live/fills.py` are tested; of `run`'s body, two tests
+  drive the fills step against a stand-in venue.
 - **The Trading 212 ticker for `VUAG.L` was read, not traded.** The adapter maps
   protocol symbols to venue tickers through `symbol_map`, which defaults to the
   identity, so an unmapped symbol is sent as written and refused by the venue
