@@ -141,6 +141,18 @@ export function App() {
       .catch(() => setDeployment(null));
   }, [shownId]);
 
+  // The strategy the window opens on is settled by the first deployment answer
+  // and then kept, so a later answer that fails does not move the window to
+  // another strategy's controls.
+  useEffect(() => {
+    if (chosen === null && load.state === "ready" && deployment !== null) {
+      const opening = openingStrategy(load.overview.strategies, null, deployment);
+      if (opening !== undefined) {
+        setChosen(opening.id);
+      }
+    }
+  }, [chosen, load, deployment]);
+
   useEffect(() => {
     askDeployment();
     const timer = window.setInterval(askDeployment, DEPLOYMENT_POLL_MS);

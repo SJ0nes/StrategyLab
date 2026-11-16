@@ -13,5 +13,5 @@ td.wrap { display: table-cell; animation: none; }
 /* Compare's figures can be longer than the mock's - a version's settings, a
    luck test's result - and at laptop width two of them side by side would run
    into each other. They wrap instead, with a gap between the columns. */
-.side td, .side th { white-space: normal; }
-.side td.n, .side th.n { padding-left: var(--s3); }
+.compare-figures td, .compare-figures th { white-space: normal; }
+.compare-figures td.n, .compare-figures th.n { padding-left: var(--s3); }

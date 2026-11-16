@@ -121,6 +121,31 @@ describe("the draft the tour shows", () => {
 });
 
 describe("the app", () => {
+  it("keeps the strategy it opened on when a later deployment answer fails", async () => {
+    const onlyGamma: DeploymentStatus = { ...STATUS, deployed: [{ strategy_id: "gamma", paused: true, proven: false }] };
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        asked.push(path);
+        if (path === "/api/deployment?strategy_id=gamma") {
+          return new Response("{}", { status: 500 });
+        }
+        const body = path === "/api/overview" ? OVERVIEW : path.startsWith("/api/deployment") ? onlyGamma : { current: null, recent: [] };
+        return new Response(JSON.stringify(body));
+      }),
+    );
+
+    render(<App />);
+
+    await waitFor(() => expect(asked).toContain("/api/deployment?strategy_id=gamma"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Without the choice kept, the failed answer sends the window back to alpha,
+    // whose answer sends it to gamma again, and so on.
+    expect(asked).not.toContain("/api/deployment?strategy_id=alpha");
+    expect(screen.getByRole("combobox")).toHaveValue("gamma");
+  });
+
   it("shows a draft for the tour's stops about drafts, then the strategy shown before", async () => {
     vi.stubGlobal(
       "fetch",

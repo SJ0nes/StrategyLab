@@ -121,7 +121,7 @@ export function Compare({ strategies }: { strategies: Strategy[] }) {
           {right !== undefined && <Side strategy={right} key={`b-${right.id}`} />}
         </div>
         <div className="card">
-          <div className="tablewrap side">
+          <div className="tablewrap compare-figures">
             <table>
               <thead>
                 <tr>
