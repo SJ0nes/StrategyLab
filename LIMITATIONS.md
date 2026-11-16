@@ -241,15 +241,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2526 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2612 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
-the Trading 212 adapter, the live worker, the fills log, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — thirty-two
+the Trading 212 adapter, the live worker, the fills log, each strategy's ledger, the command-line wiring, the app's
+server and what it reports, and the commit-time credential scan — thirty-three
 areas, one per test file.
-520 of the 2526 are the risk layer's,
+520 of the 2612 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -1078,6 +1078,19 @@ While the server runs, a thread starts the daily check once a weekday after
   `strategylab run` typed by hand ignores the switch. The risk layer's kill
   switch is still set by editing `configs/risk_limits.yaml`, which the app never
   touches; the top bar shows it.
+- **Several strategies share one account, and that has never run either.**
+  Each deployed strategy asks the risk layer for at most the exposure ceiling
+  divided by how many are deployed, and trades only the units its own recorded
+  fills add up to (`docs/decisions/0022`; the equal split is the operator's
+  choice, the rest the assistant's). Which units are whose is worked out from
+  the account and fills logs, not reported by the venue, which holds one net
+  position. So a strategy sends nothing while its last order's fill is not
+  recorded, and every strategy sends nothing while their units together differ
+  from the venue's: units bought or sold by hand in the Trading 212 app stop
+  every check until the two agree again, and nothing in the app settles the
+  difference. A strategy that holds units cannot be undeployed. Its live
+  figures are the whole account's, not its own. Two strategies have never been
+  deployed together, and only one strategy file exists today.
 - **Live figures are not evidence about the strategy.** Return, largest fall
   and Sharpe are worked out from the equity the venue reported at each check,
   with the backtest's own functions; Sharpe waits for twenty checks. A strategy

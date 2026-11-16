@@ -58,6 +58,15 @@ is written to keep it, and no line is rewritten.
   position.** If they differ by more than a millionth of a unit, nothing is
   sent, and the check says by how much. Units bought or sold by hand in the
   Trading 212 app cause this, and so does an order the venue never reports.
+  A strategy left holding fewer than zero units blocks every order too, because
+  in the total it would cancel another strategy's units.
+- **Units no strategy owns block every strategy.** A check run by hand, without
+  a strategy id, counts its units under no strategy. While any such units are
+  held, or such an order awaits its fill, no strategy's check sends an order:
+  an entry would buy a second position on top of them. And a check run by hand
+  sends nothing while deployed strategies hold or await units, since it trades
+  the venue's whole position. Both were found by security reviews of this
+  change.
 
 **4. Each strategy decides each bar once, in its own log.** A check for a
 deployed strategy writes to `state/live/<strategy id>/decisions-live.jsonl`,

@@ -98,7 +98,7 @@ are all places where the mock shows something the project does not have:
 | Dashboard, deployed | Loss today and money in the market as gauges against the limits | The loss lock and the stop-all state | The account log holds equity, not the day's loss or exposure as the risk layer worked them |
 | Dashboard, deployed | 1M / 3M / All on the account chart; a Recent tests card | One range; Recent decisions instead | A few weeks of checks need no range; tests are on Tests |
 | Top bar | "Stop all buying… selling still allowed" | "Stop all trading" | The risk layer cannot block buying alone, and the app may not add that to it (`docs/decisions/0019`) |
-| Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | One strategy is deployed at a time (`docs/decisions/0019`) |
+| Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | Several strategies can now be deployed, but with more than one their live figures are the whole account's, not each one's (`docs/decisions/0022`) |
 
 ## Opening it from the desktop
 
