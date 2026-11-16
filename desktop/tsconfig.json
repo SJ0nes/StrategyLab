@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["vitest/globals", "@testing-library/jest-dom", "node"]
   },
-  "include": ["src", "tests", "electron/findOnPath.ts", "vite.config.ts"]
+  "include": ["src", "tests", "electron/findOnPath.ts", "electron/policy.ts", "vite.config.ts"]
 }

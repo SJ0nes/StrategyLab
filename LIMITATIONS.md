@@ -1191,10 +1191,14 @@ and undeploy it, stop all trading, run the daily check, and take the final exam
 (SPEND ONE LOOK typed). The check of live decisions against the backtest is not
 in the window; `strategylab diff` does it. Its Backtest screen shows the replay
 a search recorded and can start another search, not a single backtest
-(`docs/decisions/0016`, `0017`, `0019`, `0020`). Its page is tested in a simulated browser and its helper for finding
-`uv` is tested directly. The Electron main process is not: starting the server,
-attaching the token to requests, and refusing to navigate anywhere else were
-checked by launching the app twice on Windows and inspecting it. That check
+(`docs/decisions/0016`, `0017`, `0019`, `0020`). Its page is tested in a simulated browser. The Electron main process's
+decisions are tested directly, without Electron: finding `uv`, the arguments and
+environment the server is started with, reading the port from its ready line,
+which requests get the token, where the window may navigate, and which links
+open outside it (`desktop/electron/policy.ts`). The wiring that carries them out
+is not: starting the server, attaching the token to requests, and refusing to
+navigate anywhere else were checked by launching the app twice on Windows and
+inspecting it. That check
 found the window showing real data, the page's script unable to see the token
 or Node, and no server process left after the window closed - and it is two
 launches on one machine, repeated by nobody else. The window now allows one

@@ -169,9 +169,14 @@ so no request crosses an origin and there is no CORS configuration to get wrong.
 
 ## What is not tested
 
-No test launches Electron. `electron/main.ts` - starting the server, adding the
-token, refusing to navigate away - was checked by running the app and looking,
-twice, on Windows. The component tests cover the page and `findOnPath`. CI runs
+No test launches Electron. What `electron/main.ts` decides is in
+`electron/policy.ts` and tested there: the server's arguments and environment,
+the port read from its ready line (a whole number from 1 to 65535, or nothing),
+the requests that carry the token, where the window may go, and which links open
+in the person's browser. The wiring that acts on those answers - spawning the
+server, the ready timeout, closing the server with the window, the one-instance
+lock - was checked by running the app and looking, twice, on Windows. The
+component tests cover the page, `findOnPath` and `policy.ts`. CI runs
 none of this: the workflow is Python only.
 
 Starting a job, closing the server and finding the job still running was
