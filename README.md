@@ -103,14 +103,14 @@ is what stands between paper and real money.
 | A local server for a desktop app — `strategylab serve`: this machine only, a token on every request, seventeen API routes - nine that read (health, the overview, a strategy's searches, one search in full, its final exams, the graveyard, the jobs, the deployment, and whether the final exam is unlocked) and eight that change something (start a job, take the final exam, confirm a strategy's rules, deploy, pause/resume/undeploy, stop all, remember the tour, stop a job); a job - a search, a search with a hundred-trial noise ceiling, the deployed strategy's daily check, or the final exam - runs as a process that outlives the window, and a scheduler starts the daily check once a weekday after the close while the app is open *(it runs `run` for the one deployed strategy, on the practice account only, and `validate` - the final exam, one permanent look - only after a passed luck test and the phrase SPEND ONE LOOK typed; never `fetch`)* | |
 | Strategies from videos — `.claude/skills/import-strategy/` turns a `/watch` of a video into `configs/<name>.yaml` and `configs/<name>.source.json`, using the existing vocabulary only and listing what it left out; the app shows it as a draft with its rules in words and a path to deployment *(the skill has never been run on a real video)* | |
 
-**2473 tests pass** — verify with `uv run pytest`. They cover the protocol
+**2526 tests pass** — verify with `uv run pytest`. They cover the protocol
 loader, the window accessors, the data layer, the cost model, the
 strategy-config loader, strategy evaluation, the performance metrics, the
 backtest engine, grid expansion, plateau scoring, the graveyard, the search
 loop, the noise ceiling, the reports, walk-forward validation, the candidate
 reader, the decision log, the risk layer, the Trading 212 adapter, the live
-worker, the command-line wiring, the app's server, what it reports about the project and its history, the jobs it starts, and the
-commit-time credential scan in `.claude/hooks/` — thirty-one areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
+worker, the fills log, the command-line wiring, the app's server, what it reports about the project and its history, the jobs it starts, and the
+commit-time credential scan in `.claude/hooks/` — thirty-two areas, one per test file. 42 of the 125 plant a `core.fsmonitor` command in a scratch repository and skip themselves where the installed git does not run one.
 `uv run python tests/mutation/run.py` breaks the code in named ways, one at a
 time, and fails if the tests stay green; it covers sixteen areas of recent work,
 not the whole codebase, and CI does not run it.
@@ -189,7 +189,7 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**2473 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**2526 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 Three tests start the app's server as a child process and talk to it on
@@ -197,7 +197,7 @@ Three tests start the app's server as a child process and talk to it on
 
 ```bash
 git clone <this-repo> && cd StrategyLab
-uv run pytest                   # 2473 tests, none touching the network
+uv run pytest                   # 2526 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
 
