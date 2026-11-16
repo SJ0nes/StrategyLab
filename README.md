@@ -72,10 +72,11 @@ uses, gates the intent, writes a decision record, and sends at most one market
 order. `strategylab diff` replays every bar in that log from the cached bars and
 reports each field on which the two disagree — which tests the simulator, not
 the strategy. The venue adapter is tested through a mock transport, so what is
-proven is this side of the contract and not the vendor's: no request has ever
-reached Trading 212 from this code, the T212 ticker for the execution instrument
-is unverified, and the first real run is the operator's to make with
-`T212_ENVIRONMENT=demo` and a demo key. The command refuses any other
+proven is this side of the contract and not the vendor's. On 2026-11-16 the
+adapter made its first requests to the practice account, read-only: the
+account's cash, its portfolio and the instrument list, which names the
+execution instrument `VUAGl_EQ`. No order has ever been sent, and the first
+real run is the operator's to make with `T212_ENVIRONMENT=demo` and a demo key. The command refuses any other
 environment string; nothing can tell a demo key from a live one, so the string
 is what stands between paper and real money.
 
@@ -90,7 +91,7 @@ is what stands between paper and real money.
 | Backtest engine and metrics, with the determinism test, and a buy-and-hold benchmark over the candidate's own bars | A record of the code version — a search and its validation can run under different commits |
 | Grid expansion (`search.expand_grid`) — the 90 cells of the committed config | A latch that survives its own file — the daily-loss limit now holds for the session, and deleting `state/session.json` clears it |
 | Plateau scoring, the edge check, the degeneracy check | A verified Trading 212 ticker for `VUAG.L`, or any request that has reached the venue |
-| The graveyard — append-only JSON Lines, closed reason vocabulary | A daily check that has reached Trading 212 — `desktop/` can deploy a strategy to the practice account and run its daily check, and that path has never run against the venue: no key has been set, and every check of it used a copy of the project with trading stopped. No running several strategies at once, and no final exam ever taken from the app |
+| The graveyard — append-only JSON Lines, closed reason vocabulary | A daily check that has reached Trading 212 — `desktop/` can deploy a strategy to the practice account and run its daily check, and that path has never run against the venue: the practice key was first set on 2026-11-16 and nothing has been deployed since, and every earlier check of it used a copy of the project with trading stopped. No running several strategies at once, and no final exam ever taken from the app |
 | The search loop — grid → engine → scoring → graveyard, with the window test and an input gate | |
 | The surface report — faceted heatmap, every Sharpe and the surrogate band on one axis, click a cell for its equity curve against buy-and-hold; self-contained HTML, no build step | |
 | Walk-forward validation — folds, three outcomes, the pass margin, the access counter, and a page drawing the folds side by side | |

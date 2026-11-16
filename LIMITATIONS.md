@@ -26,7 +26,8 @@ worker's tests.
 **What is left is not a component but a first run.** The research pipeline —
 fetch, search, report, validate — has run end to end. The live half — the
 Trading 212 adapter, the worker, `run` and `diff` — has been built and tested
-against a mock transport and literals, and has never sent a request to the venue.
+against a mock transport and literals. Its only requests to the venue so far
+were read-only, by hand, on 2026-11-16; it has never sent an order.
 The section "The live half has never run" below lists what that leaves unproven,
 and it is the section a reader of the README's "built" table should go to next.
 
@@ -901,7 +902,11 @@ Everything below is true of code that passes its tests and has never been
 executed against Trading 212. Each is a reason to distrust the first live
 decision record until it has been read beside the venue's own account page.
 
-- **No request has ever reached the venue from this code.** `tests/test_t212.py`
+- **No order has ever reached the venue from this code.** On 2026-11-16 the
+  adapter's `get_balance`, `get_positions` and a read of the instrument list
+  were run by hand against the practice account, and each answered in a shape
+  the adapter parsed. Nothing else has: not `place_order`, not `cancel`, not
+  `reconcile`, not `run`. `tests/test_t212.py`
   drives every adapter method through an `httpx.MockTransport` that answers with
   canned JSON in the shapes the public v0 documentation describes. Whether the
   endpoints still answer in those shapes, whether the demo account behaves like
@@ -913,7 +918,8 @@ decision record until it has been read beside the venue's own account page.
   `key:secret`, as T212's API documentation describes; without it, the key
   alone, the older form. `tests/test_t212.py` asserts the header for a worked
   example and that the key, the secret and the header are masked in errors.
-  Which form a given key is accepted in is learned from the first request.
+  The practice account accepted the key-and-secret form on 2026-11-16; the
+  key-alone form has never been tried against it.
 - **The account log records what the venue said, not what was filled.** Each
   check appends the account's equity and cash, the position, and whether its
   order was sent, to `state/account-live.jsonl`. "Sent" is the venue
@@ -921,12 +927,13 @@ decision record until it has been read beside the venue's own account page.
   figure built on this log can say what a trade made. The line is written by
   the untested body of `run`; `live/account.py`, which builds and writes it,
   is tested.
-- **The Trading 212 ticker for `VUAG.L` is unverified.** The adapter maps
+- **The Trading 212 ticker for `VUAG.L` was read, not traded.** The adapter maps
   protocol symbols to venue tickers through `symbol_map`, which defaults to the
   identity, so an unmapped symbol is sent as written and refused by the venue
-  rather than traded as something else. Confirming the mapping means calling the
-  instruments endpoint, which no test may do. The first run will most likely be
-  refused on this point, and that is the intended failure.
+  rather than traded as something else. On 2026-11-16 the practice account's
+  instrument list gave `VUAGl_EQ`, Vanguard S&P 500 (Acc), ISIN IE00BFMXXD54,
+  in GBP; `T212_TICKER=VUAGl_EQ` maps to it. No test may call that endpoint,
+  and no order has yet been placed under that name.
 - **T212 v0 accepts no client reference.** `venue.py` says `client_ref` is what
   lets a timed-out order be resolved by query rather than resend. The endpoint
   has no such field, so the adapter carries the reference in its own error
@@ -958,7 +965,8 @@ decision record until it has been read beside the venue's own account page.
 - **Exposure is in the instrument's currency, and the gate reads it as the
   account's.** `Position.market_value` is quantity times current price as the
   venue reports both; the risk layer divides it by equity in account currency.
-  For `VUAG.L` on a GBP account the two coincide, unverified. Any other pairing
+  For `VUAG.L` on a GBP account the two coincide: on 2026-11-16 the practice
+  account reported GBP and the instrument list gave `VUAGl_EQ` in GBP. Any other pairing
   would make the exposure percentage a ratio of two currencies.
 - **The four files the live half writes** are `state/session.json`,
   `state/decisions-live.jsonl`, `state/decisions-replay.jsonl` and
@@ -1039,7 +1047,8 @@ While the server runs, a thread starts the daily check once a weekday after
   from the app: its tests start a stand-in, and the assistant never takes it.
 - **The daily check has never reached Trading 212.** Every check of deploying
   ran on a copy of the project with a key that is not a key and the app's
-  stop-all switch already on, so no check could start. Its tests start no
+  stop-all switch already on, so no check could start. The practice key has
+  been set since 2026-11-16, and nothing has been deployed with it. Its tests start no
   process. The first real daily check is the first time this path runs, and
   everything under "The live half has never run" applies to it.
 - **Bank holidays are weekdays to the scheduler.** It has no exchange
