@@ -58,6 +58,18 @@ def test_a_check_that_sent_an_order_is_recorded_as_the_venue_reported_it() -> No
     assert (entry.order_outcome, entry.venue_order_id) == ("sent", "12345")
 
 
+def test_a_check_run_by_hand_names_no_strategy_and_one_share() -> None:
+    entry = _record()
+
+    assert (entry.strategy_id, entry.strategies) == (None, 1)
+
+
+def test_a_deployed_strategys_check_names_it_and_how_many_shared_the_account() -> None:
+    entry = _record(strategy_id="ma_crossover", strategies=3)
+
+    assert (entry.strategy_id, entry.strategies) == ("ma_crossover", 3)
+
+
 def test_only_the_traded_instrument_counts_as_the_position() -> None:
     assert _record(positions=[*HELD, HELD[0]]).position_quantity == 203.0
     assert _record(positions=[]).position_quantity == 0
@@ -86,6 +98,7 @@ def test_a_refused_order_records_failed_with_no_id() -> None:
         ({"venue_order_id": None}, "venue order id"),
         ({"balance": Balance(currency="GBP", cash=1.0, equity=float("nan"))}, "not a number"),
         ({"balance": Balance(currency="GBP", cash=float("inf"), equity=1.0)}, "not a number"),
+        ({"strategies": 0}, "at least one"),
     ],
 )
 def test_a_record_that_contradicts_itself_is_refused(changes: dict[str, Any], match: str) -> None:

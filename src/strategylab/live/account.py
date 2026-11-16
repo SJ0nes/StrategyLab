@@ -20,6 +20,13 @@ and this log does not learn the price it filled at.
 
 Every field is in the account's currency, as :class:`Balance` reports it, except
 ``position_quantity``, which is units of the instrument.
+
+SEVERAL STRATEGIES (``docs/decisions/0022``). A check for a deployed strategy
+names it by id in ``strategy_id``, and records in ``strategies`` how many were
+deployed, so each had 1/``strategies`` of the exposure ceiling. The order ids of
+a strategy's ``sent`` lines are what :mod:`strategylab.live.ledger` counts its
+units from. A line written before these fields existed, or by ``run`` typed
+without a strategy id, has ``strategy_id`` absent or ``None``.
 """
 
 from __future__ import annotations
@@ -61,6 +68,10 @@ class AccountRecord:
         order_quantity: Units the order asked for, or ``None``.
         order_outcome: One of :data:`ORDER_OUTCOMES`.
         venue_order_id: The venue's id for a sent order, else ``None``.
+        strategy_id: The deployed strategy's id, or ``None`` for a check run
+            by hand without one.
+        strategies: How many strategies were deployed, each given an equal
+            share of the exposure ceiling; 1 for a check run by hand.
     """
 
     schema_version: int
@@ -77,6 +88,8 @@ class AccountRecord:
     order_quantity: float | None
     order_outcome: str
     venue_order_id: str | None
+    strategy_id: str | None
+    strategies: int
 
 
 def account_record(
@@ -91,6 +104,8 @@ def account_record(
     order: Order | None,
     outcome: str,
     venue_order_id: str | None,
+    strategy_id: str | None = None,
+    strategies: int = 1,
 ) -> AccountRecord:
     """Build the line for one check.
 
@@ -105,6 +120,8 @@ def account_record(
         order: The order the decision asked for, or ``None``.
         outcome: How it ended; one of :data:`ORDER_OUTCOMES`.
         venue_order_id: The venue's id when ``outcome`` is ``sent``.
+        strategy_id: The deployed strategy's id; ``None`` when run by hand.
+        strategies: How many strategies were deployed; at least 1.
 
     Returns:
         The record.
@@ -113,8 +130,8 @@ def account_record(
         ValueError: If ``recorded_at`` has no offset; ``outcome`` is not in
             :data:`ORDER_OUTCOMES`; ``outcome`` is ``none`` while an order is
             given, or not ``none`` while none is; an id is given for an order
-            that was not sent, or missing for one that was; or a money figure
-            is not finite.
+            that was not sent, or missing for one that was; a money figure
+            is not finite; or ``strategies`` is below 1.
     """
     if recorded_at.tzinfo is None:
         raise ValueError("recorded_at has no offset; a log compared across machines needs one")
@@ -126,6 +143,8 @@ def account_record(
         )
     if (venue_order_id is not None) != (outcome == "sent"):
         raise ValueError("a venue order id belongs to a sent order and to nothing else")
+    if strategies < 1:
+        raise ValueError(f"strategies is {strategies}; a check runs for at least one")
     for name, value in (("equity", balance.equity), ("cash", balance.cash)):
         if not math.isfinite(value):
             raise ValueError(f"{name} is {value}; the venue reported a figure that is not a number")
@@ -145,6 +164,8 @@ def account_record(
         order_quantity=None if order is None else order.quantity,
         order_outcome=outcome,
         venue_order_id=venue_order_id,
+        strategy_id=strategy_id,
+        strategies=strategies,
     )
 
 

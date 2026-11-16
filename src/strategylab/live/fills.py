@@ -72,7 +72,7 @@ class FillRecord:
     charges: list[dict[str, Any]]
 
 
-def _lines(path: Path) -> list[dict[str, Any]]:
+def read_lines(path: Path) -> list[dict[str, Any]]:
     """Read a JSON Lines log, every line an object.
 
     Args:
@@ -116,9 +116,9 @@ def unfilled_orders(account_log: Path, fills_log: Path) -> list[str]:
         ValueError: If either log holds a line that is not a JSON object.
         OSError: If either exists and cannot be read.
     """
-    recorded = {str(entry.get("venue_order_id")) for entry in _lines(fills_log)}
+    recorded = {str(entry.get("venue_order_id")) for entry in read_lines(fills_log)}
     pending: list[str] = []
-    for entry in _lines(account_log):
+    for entry in read_lines(account_log):
         order_id = entry.get("venue_order_id")
         if entry.get("order_outcome") != "sent" or order_id is None:
             continue
