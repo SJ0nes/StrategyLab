@@ -1727,8 +1727,8 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "a job imports from where it runs",
                 "src/strategylab/api/jobs.py",
-                '        sys.executable,\n        "-P",\n        "-m",\n        "strategylab.cli",',
-                '        sys.executable,\n        "-m",\n        "strategylab.cli",',
+                '        sys.executable,\n        "-P",\n        "-m",\n        "strategylab.cli",\n        "search",',
+                '        sys.executable,\n        "-m",\n        "strategylab.cli",\n        "search",',
             ),
             (
                 "the runner imports from where it runs",
@@ -2121,8 +2121,8 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "the runner ignores stop and pause",
                 "src/strategylab/api/jobs.py",
-                "    refusal = check_refusal(root, strategy.id, os.environ)\n    if refusal is not None:\n        raise JobRefused(refusal)\n    deployed = read_deployment(root)",
-                "    deployed = read_deployment(root)",
+                "    refusal = check_refusal(root, strategy.id, os.environ)\n    if refusal is not None:\n        raise JobRefused(refusal)\n    deployed = read_deployment(root, strategy.id)",
+                "    deployed = read_deployment(root, strategy.id)",
             ),
             (
                 "check now runs before the close",
@@ -2139,7 +2139,7 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "check now runs twice a day",
                 "src/strategylab/api/jobs.py",
-                '            raise JobRefused("today\'s check has already been started")',
+                '            raise JobRefused("today\'s check for this strategy has already been started")',
                 "            pass",
             ),
             (
@@ -2179,10 +2179,16 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
                 "    if False:",
             ),
             (
-                "a second strategy deploys beside the first",
+                "a daily check imports from where it runs",
+                "src/strategylab/api/jobs.py",
+                '        sys.executable,\n        "-P",\n        "-m",\n        "strategylab.cli",\n        "run",',
+                '        sys.executable,\n        "-m",\n        "strategylab.cli",\n        "run",',
+            ),
+            (
+                "a deployed strategy deploys a second time",
                 "src/strategylab/api/deployment.py",
-                "        if existing is not None:\n            raise DeployRefused(",
-                "        if False:\n            raise DeployRefused(",
+                '        if any(entry.get("strategy_id") == strategy.id for entry in entries):',
+                "        if False:",
             ),
             (
                 "an unconfirmed strategy deploys",
@@ -2229,8 +2235,8 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "a paused strategy is checked",
                 "src/strategylab/api/deployment.py",
-                '    if deployed["paused"]:\n        return "the deployed strategy is paused"',
-                '    if False:\n        return "the deployed strategy is paused"',
+                '    if deployed["paused"]:\n        return "the strategy is paused"',
+                '    if False:\n        return "the strategy is paused"',
             ),
             (
                 "stop all does not stop the check",
@@ -2241,8 +2247,8 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "another strategy's check runs",
                 "src/strategylab/api/deployment.py",
-                '    if deployed["strategy_id"] != strategy_id:',
-                "    if False:",
+                '        if report["strategy_id"] == strategy_id:',
+                "        if True:",
             ),
             (
                 "the check runs a file edited since deploying",
@@ -2271,14 +2277,14 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "any artifact name is run",
                 "src/strategylab/api/jobs.py",
-                "    if not isinstance(artifact, str) or ARTIFACT_NAME.fullmatch(artifact) is None:",
-                "    if not isinstance(artifact, str):",
+                "    if not isinstance(artifact, str) or ARTIFACT_NAME.fullmatch(artifact) is None:\n        raise JobRefused(\"the deployed search's",
+                "    if not isinstance(artifact, str):\n        raise JobRefused(\"the deployed search's",
             ),
             (
                 "a missing artifact is run",
                 "src/strategylab/api/jobs.py",
-                "    if not (root / path).is_file():",
-                "    if False:",
+                "    if not (root / path).is_file():\n        raise JobRefused(\"the deployed search's",
+                "    if False:\n        raise JobRefused(\"the deployed search's",
             ),
             (
                 "a check runs on a weekend",
@@ -2295,8 +2301,8 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "a check runs twice a day",
                 "src/strategylab/api/schedule.py",
-                "    if moment.date() in checked_days(root):",
-                "    if False:",
+                "        elif moment.date() in checked_days(root, strategy_id):",
+                "        elif False:",
             ),
             (
                 "the next check skips today",
@@ -2319,8 +2325,14 @@ GROUPS: dict[str, tuple[tuple[str, ...], list[Mutant]]] = {
             (
                 "another strategy's checks count",
                 "src/strategylab/api/live.py",
-                '            or line.get("strategy") != strategy\n',
-                "",
+                '                line.get("strategy_id") != strategy_id\n',
+                "                False\n",
+            ),
+            (
+                "another strategy's older checks count",
+                "src/strategylab/api/live.py",
+                '                else line.get("strategy") != strategy\n',
+                "                else False\n",
             ),
             (
                 "checks from before deploying count",
