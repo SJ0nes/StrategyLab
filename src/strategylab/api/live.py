@@ -1,4 +1,4 @@
-"""How the deployed strategy is doing on the practice account, read from its checks' logs.
+"""How a deployed strategy is doing on the practice account, read from its checks' logs.
 
 Four files, all written by ``strategylab run``:
 
@@ -6,12 +6,19 @@ Four files, all written by ``strategylab run``:
   (:mod:`strategylab.live.account`);
 - ``state/fills-live.jsonl`` - what each sent order filled at, learned at a
   later check (:mod:`strategylab.live.fills`);
-- ``state/decisions-live.jsonl`` - each decision and the risk layer's answer;
+- ``state/live/<strategy id>/decisions-live.jsonl`` - each of the strategy's
+  decisions and the risk layer's answer (``docs/decisions/0022``);
 - ``state/session.json`` - the day's opening equity and the loss lock.
 
 Only lines recorded at or after the deployment are counted, and only those
-naming the deployed strategy, so an earlier deployment's checks are not taken
-for this one's.
+naming the deployed strategy - by id, or by name on a line written before
+lines carried an id - so an earlier deployment's checks, and another
+strategy's, are not taken for this one's.
+
+WITH SEVERAL STRATEGIES DEPLOYED THE FIGURES ARE THE ACCOUNT'S. Each check
+records the account's equity, which is every strategy's together, and the
+report says so (``figures_are_the_accounts``). A strategy's own return, from
+its fills, is not worked out.
 
 EVERY FIGURE IS ONE THE PROJECT ALREADY COMPUTES. Sharpe and the largest fall
 are :func:`~strategylab.backtest.metrics.sharpe` and
@@ -43,11 +50,12 @@ from strategylab.api.reading import (
     text_or_none,
 )
 from strategylab.backtest.metrics import max_drawdown, sharpe
+from strategylab.live.worker import live_log_path
 
-#: The four files, relative to the project root.
+#: The files, relative to the project root. Each strategy's decision log is
+#: :func:`~strategylab.live.worker.live_log_path`.
 ACCOUNT_LOG = Path("state") / "account-live.jsonl"
 FILLS_LOG = Path("state") / "fills-live.jsonl"
-DECISION_LOG = Path("state") / "decisions-live.jsonl"
 SESSION_FILE = Path("state") / "session.json"
 
 #: Fewest checks a live Sharpe is shown for. Twenty trading days is about a
@@ -113,21 +121,26 @@ def _lines(path: Path) -> list[dict[str, Any]] | None:
     return kept
 
 
-def _checks(root: Path, strategy: str, since: datetime) -> list[dict[str, Any]] | None:
-    """Read the account at each check since a deployment.
+def _checks(
+    root: Path, strategy: str, strategy_id: str, since: datetime
+) -> list[dict[str, Any]] | None:
+    """Read the account at each of a strategy's checks since its deployment.
 
     Args:
         root: The project root.
         strategy: The deployed strategy's name.
+        strategy_id: Its id.
         since: When it was deployed.
 
     Returns:
         One entry per check, in the order recorded, each with ``bar_date``,
         ``recorded_at``, ``equity`` and ``cash`` in account currency,
         ``currency``, ``position_quantity`` in units, ``order_side``,
-        ``order_outcome``, and ``venue_order_id``. A line is kept only if it is of schema version 1,
-        names ``strategy``, was recorded at or after ``since``, and has a
-        finite equity. ``None`` when the log cannot be read.
+        ``order_outcome``, and ``venue_order_id``. A line is kept only if it
+        is of schema version 1, names ``strategy_id`` - or, having no
+        ``strategy_id``, names ``strategy`` - was recorded at or after
+        ``since``, and has a finite equity. ``None`` when the log cannot be
+        read.
     """
     lines = _lines(root / ACCOUNT_LOG)
     if lines is None:
@@ -138,7 +151,11 @@ def _checks(root: Path, strategy: str, since: datetime) -> list[dict[str, Any]] 
         equity = figure_or_none(line.get("equity"))
         if (
             line.get("schema_version") != 1
-            or line.get("strategy") != strategy
+            or (
+                line.get("strategy_id") != strategy_id
+                if line.get("strategy_id") is not None
+                else line.get("strategy") != strategy
+            )
             or recorded is None
             or recorded < since
             or equity is None
@@ -203,20 +220,25 @@ def _fills(root: Path) -> dict[str, dict[str, Any]] | None:
     return fills
 
 
-def _decisions(root: Path, since: datetime) -> list[dict[str, Any]] | None:
-    """Read the decisions recorded since a deployment, newest first.
+def _decisions(root: Path, strategy_id: str, since: datetime) -> list[dict[str, Any]] | None:
+    """Read a strategy's decisions recorded since its deployment, newest first.
 
     Args:
         root: The project root.
+        strategy_id: The strategy; its own log is read.
         since: When the strategy was deployed.
 
     Returns:
         Up to :data:`RECENT_DECISIONS` entries, each with ``bar_date``,
         ``recorded_at``, ``action``, ``risk_verdict``, ``risk_reason``,
         ``conditions_met`` and ``conditions_failed``. ``None`` when the log
-        cannot be read.
+        cannot be read, or the id names no log this project would write.
     """
-    lines = _lines(root / DECISION_LOG)
+    try:
+        path = root / live_log_path(strategy_id)
+    except ValueError:
+        return None
+    lines = _lines(path)
     if lines is None:
         return None
     kept: list[dict[str, Any]] = []
@@ -310,8 +332,10 @@ def _loss_lock(root: Path, today: date) -> bool | None:
     return payload.get("tripped") is True
 
 
-def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime) -> dict[str, Any]:
-    """Report how the deployed strategy is doing.
+def read_live(
+    root: Path, deployed: dict[str, Any], strategy: str, now: datetime, strategies: int = 1
+) -> dict[str, Any]:
+    """Report how a deployed strategy is doing.
 
     Args:
         root: The project root.
@@ -319,6 +343,7 @@ def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime
             :func:`~strategylab.api.deployment.read_deployment` reports it.
         strategy: The deployed strategy's name, as its config declares it.
         now: The present moment, timezone-aware.
+        strategies: How many strategies are deployed.
 
     Returns:
         The missing shape when the deployment has no readable time or a log
@@ -327,15 +352,18 @@ def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime
         its order filled at (:func:`_fills`) or ``None`` while none is
         recorded; ``fills_readable``, false when the fills log could not be
         read, in which case every ``fill`` is ``None``; ``figures``
-        (:func:`_figures`); ``decisions``, newest first; and ``loss_lock``.
+        (:func:`_figures`); ``figures_are_the_accounts``, true when several
+        strategies are deployed and the figures are therefore all of theirs
+        together; ``decisions``, newest first; and ``loss_lock``.
     """
     since = _instant(deployed.get("deployed_at"))
     if since is None:
         return missing("The deployment records no time it was made.")
-    checks = _checks(root, strategy, since)
+    strategy_id = str(deployed.get("strategy_id"))
+    checks = _checks(root, strategy, strategy_id, since)
     if checks is None:
         return missing("The account log could not be read.")
-    decisions = _decisions(root, since)
+    decisions = _decisions(root, strategy_id, since)
     if decisions is None:
         return missing("The decision log could not be read.")
     fills = _fills(root)
@@ -347,6 +375,7 @@ def read_live(root: Path, deployed: dict[str, Any], strategy: str, now: datetime
         "checks": checks,
         "fills_readable": fills is not None,
         "figures": _figures(checks),
+        "figures_are_the_accounts": strategies > 1,
         "decisions": decisions,
         "loss_lock": _loss_lock(root, now.astimezone(UTC).date()),
     }

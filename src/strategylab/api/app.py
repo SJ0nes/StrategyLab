@@ -49,6 +49,7 @@ from strategylab.api.deployment import (
     DeployRefused,
     deploy,
     read_deployment,
+    read_deployments,
     set_paused,
     set_stop_all,
     stop_all,
@@ -324,19 +325,31 @@ def create_app(
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @application.get("/api/deployment")
-    def deployment() -> Any:
+    def deployment(strategy_id: str | None = None) -> Any:
         now = datetime.now(UTC)
-        deployed = read_deployment(root)
+        everything = read_deployments(root)
+        deployed = None if strategy_id is None else read_deployment(root, strategy_id)
         live = None
+        count = len(everything["deployments"]) if everything["available"] else 0
         if deployed is not None and deployed["available"]:
             strategy = find_strategy(root, str(deployed["strategy_id"]))
             name = strategy.name if strategy is not None else str(deployed["strategy_id"])
-            live = read_live(root, deployed, name, now)
+            live = read_live(root, deployed, name, now, strategies=count)
         return {
-            "deployment": deployed,
+            "deployment": deployed if everything["available"] else everything,
+            "deployed": [
+                {
+                    "strategy_id": item["strategy_id"],
+                    "paused": item["paused"],
+                    "proven": item["proven"],
+                }
+                for item in (everything["deployments"] if everything["available"] else [])
+            ],
             "stop_all": stop_all(root),
             "venue_unready": venue_ready(environ),
-            "schedule": schedule_report(root, now, environ),
+            "schedule": None
+            if strategy_id is None
+            else schedule_report(root, strategy_id, now, environ),
             "live": live,
         }
 
@@ -352,15 +365,15 @@ def create_app(
         except OSError:
             return JSONResponse({"detail": "the deployment could not be recorded"}, status_code=500)
 
-    @application.post("/api/deployment/{action}")
-    def change_deployment(action: str) -> Any:
+    @application.post("/api/strategies/{strategy_id}/deployment/{action}")
+    def change_deployment(strategy_id: str, action: str) -> Any:
         try:
             if action == "pause":
-                return set_paused(root, True, datetime.now(UTC))
+                return set_paused(root, strategy_id, True, datetime.now(UTC))
             if action == "resume":
-                return set_paused(root, False, datetime.now(UTC))
+                return set_paused(root, strategy_id, False, datetime.now(UTC))
             if action == "undeploy":
-                undeploy(root)
+                undeploy(root, strategy_id)
                 return {"deployment": None}
         except DeployRefused as exc:
             return refused(exc)

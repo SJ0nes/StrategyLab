@@ -59,7 +59,9 @@ from typing import Any
 
 from strategylab.api.deployment import (
     ARTIFACT_NAME,
+    DeployRefused,
     check_refusal,
+    deployed_count,
     read_deployment,
     window_refusal,
 )
@@ -242,8 +244,10 @@ def _daily_check_command(root: Path, strategy: StrategyFile) -> list[str]:
         strategy: The strategy the job is for, as the registry found it.
 
     Returns:
-        This interpreter with ``-P``, ``strategylab run``, and the deployed
-        search artifact's path under ``state/``.
+        This interpreter with ``-P``, ``strategylab run``, the deployed search
+        artifact's path under ``state/``, the strategy's id, and how many
+        strategies are deployed, so the check trades the strategy's own units
+        within its equal share (``docs/decisions/0022``).
 
     Raises:
         JobRefused: If a check may not run for the strategy now
@@ -251,7 +255,7 @@ def _daily_check_command(root: Path, strategy: StrategyFile) -> list[str]:
             process's environment) - it is not the one deployed, is paused,
             stop all is on, its file has changed, or the practice account is
             not set - or the deployment's artifact is not a search file that is
-            there.
+            there, or the deployment record cannot be counted.
     """
     # Asked again here, when the runner is about to start the command and not
     # only when the job was started: stop all, or pause, pressed in between must
@@ -259,16 +263,31 @@ def _daily_check_command(root: Path, strategy: StrategyFile) -> list[str]:
     refusal = check_refusal(root, strategy.id, os.environ)
     if refusal is not None:
         raise JobRefused(refusal)
-    deployed = read_deployment(root)
+    deployed = read_deployment(root, strategy.id)
     if deployed is None or not deployed["available"]:
-        raise JobRefused("the job's strategy is not the one deployed")
+        raise JobRefused("the job's strategy is not deployed")
+    try:
+        strategies = deployed_count(root)
+    except DeployRefused as exc:
+        raise JobRefused(str(exc)) from exc
     artifact = deployed["artifact"]
     if not isinstance(artifact, str) or ARTIFACT_NAME.fullmatch(artifact) is None:
         raise JobRefused("the deployed search's file name is not one this app reads")
     path = Path("state") / artifact
     if not (root / path).is_file():
         raise JobRefused("the deployed search's file is not in state/")
-    return [sys.executable, "-P", "-m", "strategylab.cli", "run", path.as_posix()]
+    return [
+        sys.executable,
+        "-P",
+        "-m",
+        "strategylab.cli",
+        "run",
+        path.as_posix(),
+        "--strategy-id",
+        strategy.id,
+        "--strategies",
+        str(strategies),
+    ]
 
 
 def exam_refusal(root: Path, strategy: StrategyFile) -> tuple[str | None, str | None]:
@@ -532,18 +551,19 @@ def read_job(root: Path, job_id: str, now: datetime) -> dict[str, Any] | None:
     }
 
 
-def list_job_records(root: Path) -> list[dict[str, str]]:
-    """List every job on record by id and kind, without reading its state.
+def list_job_records(root: Path) -> list[dict[str, str | None]]:
+    """List every job on record by id, kind and strategy, without reading its state.
 
     Args:
         root: The project root.
 
     Returns:
-        ``{"id", "kind"}`` for each record whose file name is a job id, whose
+        ``{"id", "kind", "strategy_id"}`` for each record whose file name is a job id, whose
         content names that same id, is of this schema version, and has a kind
-        in :data:`JOB_KINDS`. Newest first.
+        in :data:`JOB_KINDS`; ``strategy_id`` is ``None`` when the record names
+        none. Newest first.
     """
-    kept: list[dict[str, str]] = []
+    kept: list[dict[str, str | None]] = []
     for path in sorted((root / JOBS_DIR).glob("*.json"), reverse=True):
         if _JOB_ID.fullmatch(path.stem) is None:
             continue
@@ -557,7 +577,13 @@ def list_job_records(root: Path) -> list[dict[str, str]]:
             and record.get("id") == path.stem
             and kind in JOB_KINDS
         ):
-            kept.append({"id": path.stem, "kind": str(kind)})
+            kept.append(
+                {
+                    "id": path.stem,
+                    "kind": str(kind),
+                    "strategy_id": text_or_none(record.get("strategy_id")),
+                }
+            )
     return kept
 
 
@@ -650,10 +676,12 @@ def start_job(
             raise JobRefused(refusal)
         today = f"{now.astimezone(UTC):%Y%m%d}"
         if any(
-            record["kind"] == DAILY_CHECK and record["id"].startswith(today)
+            record["kind"] == DAILY_CHECK
+            and str(record["id"]).startswith(today)
+            and record.get("strategy_id") == strategy.id
             for record in list_job_records(root)
         ):
-            raise JobRefused("today's check has already been started")
+            raise JobRefused("today's check for this strategy has already been started")
     stamp = now.astimezone(UTC)
     job_id = f"{stamp:%Y%m%dT%H%M%SZ}-{kind}"
     directory = root / JOBS_DIR

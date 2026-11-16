@@ -2,7 +2,10 @@
 
 ``docs/decisions/0019`` records the rules, and that they are the assistant's:
 
-- one strategy is deployed at a time;
+- several strategies may be deployed; each has an equal share of the exposure
+  ceiling, a ledger of its own units, and a decision log of its own
+  (``docs/decisions/0022``, which replaces "one at a time"; the split is the
+  operator's choice, the rest the assistant's);
 - a strategy that failed the luck test may be deployed, and is labelled
   unproven;
 - deploying needs the rules confirmed for the file as it is now, a search on
@@ -15,7 +18,7 @@ TWO FILES, both under ``state/`` and so not committed:
 ``state/deployment.json``, the deployment; ``state/stop-all.json``, the switch.
 Both are read as files this server may not have written. A deployment that
 cannot be read is reported as damaged, never as "nothing deployed", because the
-second reading would let a second strategy deploy beside a first.
+second reading would let a strategy deploy beside others it cannot see.
 
 THE DEPLOYMENT NAMES WHAT WAS DEPLOYED, EXACTLY: the config's content hash, the
 search artifact whose candidate trades, and its parameters. A later edit to the
@@ -45,13 +48,21 @@ from strategylab.api.reading import (
     text_or_none,
 )
 from strategylab.api.registry import StrategyFile, find_strategy
+from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH
+from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH
+from strategylab.live.ledger import AGREEMENT_TOLERANCE_UNITS, read_ledger
+from strategylab.live.worker import STRATEGY_ID
 
 #: The deployment and the switch, relative to the project root.
 DEPLOYMENT_FILE = Path("state") / "deployment.json"
 STOP_ALL_FILE = Path("state") / "stop-all.json"
 
-#: Schema version of both files.
-DEPLOYMENT_SCHEMA_VERSION = 1
+#: Schema version of the deployment file. Version 1 held one deployment; it is
+#: still read, as a list of one.
+DEPLOYMENT_SCHEMA_VERSION = 2
+
+#: Schema version of the stop-all switch's file.
+STOP_ALL_SCHEMA_VERSION = 1
 
 #: Largest file read, in bytes.
 MAX_DEPLOYMENT_BYTES = 64 * 1024
@@ -111,18 +122,21 @@ def _write(path: Path, payload: dict[str, Any]) -> None:
         partial.unlink(missing_ok=True)
 
 
-def _raw_deployment(root: Path) -> dict[str, Any] | None:
+def _raw_deployments(root: Path) -> list[dict[str, Any]] | None:
     """Read the deployment file.
 
     Args:
         root: The project root.
 
     Returns:
-        ``None`` when there is no file. Otherwise its content.
+        ``None`` when there is no file. Otherwise one entry per deployed
+        strategy, in the order the file holds them. A file of schema version 1,
+        written when one strategy was deployed at a time, is read as a list of
+        its one entry.
 
     Raises:
-        DeployRefused: If the file is there but cannot be read, or is not a
-            deployment this code knows.
+        DeployRefused: If the file is there but cannot be read, is not a
+            deployment this code knows, or names a strategy twice or not at all.
     """
     path = root / DEPLOYMENT_FILE
     if not path.exists():
@@ -131,33 +145,53 @@ def _raw_deployment(root: Path) -> dict[str, Any] | None:
         payload = read_json_object(path, MAX_DEPLOYMENT_BYTES)
     except Unreadable as exc:
         raise DeployRefused(f"the deployment record cannot be read: {exc}") from exc
-    if payload.get("schema_version") != DEPLOYMENT_SCHEMA_VERSION:
+    version = payload.get("schema_version")
+    if version == 1:
+        entries: Any = [{key: value for key, value in payload.items() if key != "schema_version"}]
+    elif version == DEPLOYMENT_SCHEMA_VERSION:
+        entries = payload.get("deployments")
+    else:
         raise DeployRefused("the deployment record is in a format this app does not read")
-    return payload
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        raise DeployRefused("the deployment record does not hold a list of deployments")
+    ids = [text_or_none(entry.get("strategy_id")) for entry in entries]
+    if None in ids or len(set(ids)) != len(ids):
+        raise DeployRefused("the deployment record names a strategy twice, or not at all")
+    return entries
 
 
-def read_deployment(root: Path) -> dict[str, Any] | None:
-    """Report the deployment.
+def _write_deployments(root: Path, entries: list[dict[str, Any]]) -> None:
+    """Write the deployments, or remove the file when there are none.
 
     Args:
         root: The project root.
+        entries: One per deployed strategy. Written in order of strategy id.
+
+    Raises:
+        OSError: If the file cannot be written or removed.
+    """
+    if not entries:
+        (root / DEPLOYMENT_FILE).unlink(missing_ok=True)
+        return
+    _write(
+        root / DEPLOYMENT_FILE,
+        {
+            "schema_version": DEPLOYMENT_SCHEMA_VERSION,
+            "deployments": sorted(entries, key=lambda entry: str(entry["strategy_id"])),
+        },
+    )
+
+
+def _report(root: Path, raw: dict[str, Any]) -> dict[str, Any]:
+    """Describe one deployment for the page.
+
+    Args:
+        root: The project root.
+        raw: Its entry, as the file holds it.
 
     Returns:
-        ``None`` when nothing is deployed. The missing shape when the record is
-        damaged - which blocks a new deployment until it is removed by
-        undeploying. Otherwise ``available`` true; ``strategy_id``; ``artifact``,
-        the search whose candidate trades; ``params``, that candidate in BARS;
-        ``proven``, whether the search's luck test passed; ``deployed_at``;
-        ``paused`` and ``paused_at``; and ``current``, false when the strategy
-        is no longer in ``configs/`` or its file has changed since it was
-        deployed - in which case ``problem`` says which.
+        As :func:`read_deployment` describes it.
     """
-    try:
-        raw = _raw_deployment(root)
-    except DeployRefused as exc:
-        return {"available": False, "reason": f"{str(exc)[0].upper()}{str(exc)[1:]}."}
-    if raw is None:
-        return None
     strategy_id = text_or_none(raw.get("strategy_id"))
     strategy = None if strategy_id is None else find_strategy(root, strategy_id)
     problem = None
@@ -180,6 +214,75 @@ def read_deployment(root: Path) -> dict[str, Any] | None:
     }
 
 
+def _damaged(exc: DeployRefused) -> dict[str, Any]:
+    """The missing shape for a deployment file that cannot be read."""
+    return {"available": False, "reason": f"{str(exc)[0].upper()}{str(exc)[1:]}."}
+
+
+def read_deployments(root: Path) -> dict[str, Any]:
+    """Report every deployment.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The missing shape when the record is damaged - which blocks every
+        deployment change but undeploying, which clears it. Otherwise
+        ``available`` true and ``deployments``, each as :func:`read_deployment`
+        reports it, in order of strategy id: the order the daily checks run in.
+    """
+    try:
+        entries = _raw_deployments(root) or []
+    except DeployRefused as exc:
+        return _damaged(exc)
+    reports = [_report(root, entry) for entry in entries]
+    return {
+        "available": True,
+        "deployments": sorted(reports, key=lambda report: str(report["strategy_id"])),
+    }
+
+
+def read_deployment(root: Path, strategy_id: str) -> dict[str, Any] | None:
+    """Report one strategy's deployment.
+
+    Args:
+        root: The project root.
+        strategy_id: The strategy.
+
+    Returns:
+        ``None`` when it is not deployed. The missing shape when the record is
+        damaged. Otherwise ``available`` true; ``strategy_id``; ``artifact``,
+        the search whose candidate trades; ``params``, that candidate in BARS;
+        ``proven``, whether the search's luck test passed; ``deployed_at``;
+        ``paused`` and ``paused_at``; and ``current``, false when the strategy
+        is no longer in ``configs/`` or its file has changed since it was
+        deployed - in which case ``problem`` says which.
+    """
+    everything = read_deployments(root)
+    if not everything["available"]:
+        return everything
+    for report in everything["deployments"]:
+        if report["strategy_id"] == strategy_id:
+            return dict(report)
+    return None
+
+
+def deployed_count(root: Path) -> int:
+    """Count the deployed strategies, paused ones included.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        How many the record holds; each has an equal share of the exposure
+        ceiling (``docs/decisions/0022``).
+
+    Raises:
+        DeployRefused: If the record is damaged.
+    """
+    return len(_raw_deployments(root) or [])
+
+
 def deploy(
     root: Path,
     strategy: StrategyFile,
@@ -188,6 +291,9 @@ def deploy(
     now: datetime,
 ) -> dict[str, Any]:
     """Deploy a strategy's newest searched candidate to the practice account.
+
+    Strategies already deployed stay deployed; each then has an equal share of
+    the exposure ceiling (``docs/decisions/0022``).
 
     Args:
         root: The project root.
@@ -200,25 +306,28 @@ def deploy(
         The deployment, as :func:`read_deployment` reports it.
 
     Raises:
-        DeployRefused: If the name typed is not the strategy's; the practice
-            account is not set; a strategy is already deployed, or the record
-            of one is damaged; the rules are not confirmed for the file as it
+        DeployRefused: If the name typed is not the strategy's; its file name
+            is not one a decision log can be named after; the practice
+            account is not set; the strategy is already deployed, or the
+            record is damaged; the rules are not confirmed for the file as it
             is now; or no search on the file as it is now put a version
             forward.
         OSError: If the record cannot be written.
     """
     if typed.strip() != strategy.name:
         raise DeployRefused(f"type the strategy's name, {strategy.name}, to deploy it")
+    if STRATEGY_ID.fullmatch(strategy.id) is None:
+        raise DeployRefused(
+            "its file name must be letters, digits, _ and - only, as its own decision log "
+            "is named after it"
+        )
     unready = venue_ready(environ)
     if unready is not None:
         raise DeployRefused(unready)
     with _WRITING:
-        existing = _raw_deployment(root)
-        if existing is not None:
-            raise DeployRefused(
-                f"{existing.get('strategy_id')} is already deployed; only one strategy is "
-                "deployed at a time"
-            )
+        entries = _raw_deployments(root) or []
+        if any(entry.get("strategy_id") == strategy.id for entry in entries):
+            raise DeployRefused("it is already deployed")
         if not confirmation(root, strategy)["confirmed"]:
             raise DeployRefused("its rules have not been confirmed for the file as it is now")
         search = latest_search(root, strategy)
@@ -228,10 +337,8 @@ def deploy(
             )
         if ARTIFACT_NAME.fullmatch(str(search["artifact"])) is None:
             raise DeployRefused("the search's file name is not one this app reads")
-        _write(
-            root / DEPLOYMENT_FILE,
+        entries.append(
             {
-                "schema_version": DEPLOYMENT_SCHEMA_VERSION,
                 "strategy_id": strategy.id,
                 "strategy": strategy.name,
                 "config": strategy.config,
@@ -242,18 +349,20 @@ def deploy(
                 "deployed_at": now.astimezone(UTC).isoformat(),
                 "paused": False,
                 "paused_at": None,
-            },
+            }
         )
-    deployed = read_deployment(root)
+        _write_deployments(root, entries)
+    deployed = read_deployment(root, strategy.id)
     assert deployed is not None
     return deployed
 
 
-def set_paused(root: Path, paused: bool, now: datetime) -> dict[str, Any]:
-    """Pause or resume the deployed strategy.
+def set_paused(root: Path, strategy_id: str, paused: bool, now: datetime) -> dict[str, Any]:
+    """Pause or resume one deployed strategy.
 
     Args:
         root: The project root.
+        strategy_id: The strategy.
         paused: True to pause, False to resume.
         now: The present moment, timezone-aware.
 
@@ -261,39 +370,64 @@ def set_paused(root: Path, paused: bool, now: datetime) -> dict[str, Any]:
         The deployment, as :func:`read_deployment` reports it.
 
     Raises:
-        DeployRefused: If nothing is deployed, or the record is damaged.
+        DeployRefused: If the strategy is not deployed, or the record is
+            damaged.
         OSError: If the record cannot be written.
     """
     with _WRITING:
-        raw = _raw_deployment(root)
-        if raw is None:
-            raise DeployRefused("nothing is deployed")
-        raw["paused"] = paused
-        raw["paused_at"] = now.astimezone(UTC).isoformat() if paused else None
-        _write(root / DEPLOYMENT_FILE, raw)
-    deployed = read_deployment(root)
+        entries = _raw_deployments(root) or []
+        entry = next((e for e in entries if e.get("strategy_id") == strategy_id), None)
+        if entry is None:
+            raise DeployRefused("that strategy is not deployed")
+        entry["paused"] = paused
+        entry["paused_at"] = now.astimezone(UTC).isoformat() if paused else None
+        _write_deployments(root, entries)
+    deployed = read_deployment(root, strategy_id)
     assert deployed is not None
     return deployed
 
 
-def undeploy(root: Path) -> None:
-    """Remove the deployment, damaged or not.
+def undeploy(root: Path, strategy_id: str) -> None:
+    """Remove one strategy's deployment, or a damaged record whole.
 
-    The practice account's position, if there is one, is left as it is: the
-    app does not sell on undeploying. The operator closes it from Trading 212.
+    REFUSED WHILE THE STRATEGY HOLDS UNITS (``docs/decisions/0022``). Its units
+    would belong to no deployed strategy, and every later check would find the
+    strategies' units and the venue's position disagreeing. The app does not
+    sell on undeploying; a strategy is undeployed once its own exit has filled.
 
     Args:
         root: The project root.
+        strategy_id: The strategy. Ignored when the record is damaged: the
+            damaged record is removed whole, as it names nothing reliably.
 
     Raises:
-        DeployRefused: If nothing is deployed.
-        OSError: If the record cannot be removed.
+        DeployRefused: If the strategy is not deployed; it holds units, or has
+            an order whose fill is not yet recorded; or the logs that say so
+            cannot be read.
+        OSError: If the record cannot be written or removed.
     """
     with _WRITING:
-        path = root / DEPLOYMENT_FILE
-        if not path.exists():
-            raise DeployRefused("nothing is deployed")
-        path.unlink()
+        try:
+            entries = _raw_deployments(root)
+        except DeployRefused:
+            (root / DEPLOYMENT_FILE).unlink()
+            return
+        entries = entries or []
+        kept = [entry for entry in entries if entry.get("strategy_id") != strategy_id]
+        if len(kept) == len(entries):
+            raise DeployRefused("that strategy is not deployed")
+        try:
+            ledger = read_ledger(root / DEFAULT_ACCOUNT_LOG_PATH, root / DEFAULT_FILLS_LOG_PATH)
+        except (ValueError, OSError) as exc:
+            raise DeployRefused(f"what it holds cannot be read: {exc}") from exc
+        if strategy_id in ledger.waiting:
+            raise DeployRefused("it has an order whose fill is not yet recorded")
+        held = ledger.held(strategy_id)
+        if abs(held) > AGREEMENT_TOLERANCE_UNITS:
+            raise DeployRefused(
+                f"it holds {held:g} units; undeploy it once its own exit has filled"
+            )
+        _write_deployments(root, kept)
 
 
 def stop_all(root: Path) -> dict[str, Any]:
@@ -314,7 +448,7 @@ def stop_all(root: Path) -> dict[str, Any]:
         payload = read_json_object(path, MAX_DEPLOYMENT_BYTES)
     except Unreadable:
         return {"stopped": True, "stopped_at": None, "damaged": True}
-    if payload.get("schema_version") != DEPLOYMENT_SCHEMA_VERSION:
+    if payload.get("schema_version") != STOP_ALL_SCHEMA_VERSION:
         return {"stopped": True, "stopped_at": None, "damaged": True}
     return {
         "stopped": payload.get("stopped") is not False,
@@ -340,7 +474,7 @@ def set_stop_all(root: Path, stopped: bool, now: datetime) -> dict[str, Any]:
     _write(
         root / STOP_ALL_FILE,
         {
-            "schema_version": DEPLOYMENT_SCHEMA_VERSION,
+            "schema_version": STOP_ALL_SCHEMA_VERSION,
             "stopped": stopped,
             "stopped_at": now.astimezone(UTC).isoformat() if stopped else None,
         },
@@ -379,17 +513,15 @@ def check_refusal(root: Path, strategy_id: str, environ: Mapping[str, str]) -> s
         not paused, stop-all is off and the practice account is set.
         Otherwise the first reason it may not.
     """
-    deployed = read_deployment(root)
+    deployed = read_deployment(root, strategy_id)
     if deployed is None:
-        return "nothing is deployed"
+        return "that strategy is not deployed"
     if not deployed["available"]:
         return str(deployed["reason"]).rstrip(".")
-    if deployed["strategy_id"] != strategy_id:
-        return "that strategy is not the one deployed"
     if not deployed["current"]:
         return str(deployed["problem"])
     if deployed["paused"]:
-        return "the deployed strategy is paused"
+        return "the strategy is paused"
     if stop_all(root)["stopped"]:
         return "all trading from the app is stopped"
     return venue_ready(environ)

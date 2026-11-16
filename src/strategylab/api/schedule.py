@@ -1,15 +1,23 @@
-"""When the deployed strategy's daily check is due, and which weekdays were missed.
+"""When each deployed strategy's daily check is due, and which weekdays were missed.
 
 ``docs/decisions/0019`` sets the rule, and records that it is the assistant's:
-one check a weekday, after :data:`CHECK_AFTER` UTC - after the London close in
-both winter and summer time - while the app is open. A day is a UTC day.
+one check a weekday for each deployed strategy, after :data:`CHECK_AFTER` UTC -
+after the London close in both winter and summer time - while the app is open.
+A day is a UTC day.
 
 :func:`due` decides; :func:`start_if_due` acts on it; the server calls the
 second once a minute from a thread of its own (:mod:`strategylab.api.server`).
 Everything here takes the time as an argument, so a test can say what time it
 is.
 
-A WEEKDAY HAS HAD ITS CHECK if a daily check job was started on it, whatever
+SEVERAL STRATEGIES ARE CHECKED ONE AFTER ANOTHER, in order of strategy id
+(``docs/decisions/0022``). The scheduler starts the first strategy whose check
+is due; the job runner refuses a second job while one runs, so the next is
+started at the first minute after the first has finished. Two checks never run
+at once: they share the price cache and the session file.
+
+A WEEKDAY HAS HAD A STRATEGY'S CHECK if a daily check job for that strategy was
+started on it, whatever
 became of the job. A failed check is not retried on the same day: a failure
 that repeats every minute would fill the log, and the next day's check trades
 the next bar anyway. The app shows a failed check as failed.
@@ -27,7 +35,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from strategylab.api.deployment import CHECK_AFTER, check_refusal, read_deployment
+from strategylab.api.deployment import (
+    CHECK_AFTER,
+    check_refusal,
+    read_deployment,
+    read_deployments,
+)
 from strategylab.api.jobs import DAILY_CHECK, JobRefused, list_job_records, start_job
 from strategylab.api.registry import find_strategy
 
@@ -39,21 +52,23 @@ def _is_weekday(day: date) -> bool:
     return day.weekday() < 5
 
 
-def checked_days(root: Path) -> set[date]:
-    """List the UTC days on which a daily check was started.
+def checked_days(root: Path, strategy_id: str) -> set[date]:
+    """List the UTC days on which a strategy's daily check was started.
 
     Args:
         root: The project root.
+        strategy_id: The strategy.
 
     Returns:
-        The day of every daily check job on record, read from its id.
+        The day of every daily check job on record for that strategy, read
+        from its id.
     """
     days: set[date] = set()
     for record in list_job_records(root):
-        if record["kind"] != DAILY_CHECK:
+        if record["kind"] != DAILY_CHECK or record["strategy_id"] != strategy_id:
             continue
         try:
-            days.add(datetime.strptime(record["id"][:8], "%Y%m%d").date())
+            days.add(datetime.strptime(str(record["id"])[:8], "%Y%m%d").date())
         except ValueError:
             # An id shaped like a date that is not one names no day.
             continue
@@ -105,7 +120,7 @@ def missed_days(deployed_at: datetime, now: datetime, checked: set[date]) -> lis
 
 
 def due(root: Path, now: datetime, environ: Mapping[str, str]) -> tuple[str | None, str]:
-    """Decide whether the deployed strategy's check should start now.
+    """Decide whether a deployed strategy's check should start now, and whose.
 
     Args:
         root: The project root.
@@ -114,24 +129,31 @@ def due(root: Path, now: datetime, environ: Mapping[str, str]) -> tuple[str | No
             is set.
 
     Returns:
-        ``(strategy_id, why)``: the strategy to check and ``"due"`` when a
-        check should start; otherwise ``None`` and the reason it should not.
+        ``(strategy_id, why)``: the first strategy, in order of id, whose check
+        should start, and ``"due"``; otherwise ``None`` and the reason none
+        should - the last strategy's, when several are deployed.
     """
     moment = now.astimezone(UTC)
-    deployed = read_deployment(root)
-    if deployed is None or not deployed["available"]:
+    everything = read_deployments(root)
+    if not everything["available"]:
+        return None, str(everything["reason"]).rstrip(".")
+    if not everything["deployments"]:
         return None, "nothing is deployed"
-    strategy_id = str(deployed["strategy_id"])
-    refusal = check_refusal(root, strategy_id, environ)
-    if refusal is not None:
-        return None, refusal
     if not _is_weekday(moment.date()):
         return None, "no check on a weekend"
     if moment.time() < CHECK_AFTER:
         return None, "not yet time for today's check"
-    if moment.date() in checked_days(root):
-        return None, "today's check has already been started"
-    return strategy_id, "due"
+    why = "nothing is deployed"
+    for deployed in everything["deployments"]:
+        strategy_id = str(deployed["strategy_id"])
+        refusal = check_refusal(root, strategy_id, environ)
+        if refusal is not None:
+            why = refusal
+        elif moment.date() in checked_days(root, strategy_id):
+            why = "today's check has already been started"
+        else:
+            return strategy_id, "due"
+    return None, why
 
 
 def start_if_due(
@@ -140,7 +162,7 @@ def start_if_due(
     environ: Mapping[str, str],
     spawn: Callable[[list[str], Path, Path], None] | None = None,
 ) -> dict[str, Any] | None:
-    """Start the daily check if it is due.
+    """Start the first deployed strategy's daily check that is due.
 
     Args:
         root: The project root.
@@ -165,22 +187,25 @@ def start_if_due(
         return None
 
 
-def schedule_report(root: Path, now: datetime, environ: Mapping[str, str]) -> dict[str, Any]:
-    """Describe the schedule for the page.
+def schedule_report(
+    root: Path, strategy_id: str, now: datetime, environ: Mapping[str, str]
+) -> dict[str, Any]:
+    """Describe one strategy's schedule for the page.
 
     Args:
         root: The project root.
+        strategy_id: The strategy.
         now: The present moment, timezone-aware.
         environ: The server's environment.
 
     Returns:
         ``next_check`` as an ISO-8601 instant, or ``None`` when nothing would
         run; ``why_not``, the reason nothing would run, or ``None``;
-        ``missed``, the ISO dates of missed checks since the deployment; and
-        ``checked_today``.
+        ``missed``, the ISO dates of the strategy's missed checks since it was
+        deployed; and ``checked_today``.
     """
-    deployed = read_deployment(root)
-    checked = checked_days(root)
+    deployed = read_deployment(root, strategy_id)
+    checked = checked_days(root, strategy_id)
     moment = now.astimezone(UTC)
     report: dict[str, Any] = {
         "next_check": None,
@@ -188,10 +213,13 @@ def schedule_report(root: Path, now: datetime, environ: Mapping[str, str]) -> di
         "missed": [],
         "checked_today": moment.date() in checked,
     }
-    if deployed is None or not deployed["available"]:
-        report["why_not"] = "nothing is deployed"
+    if deployed is None:
+        report["why_not"] = "that strategy is not deployed"
         return report
-    refusal = check_refusal(root, str(deployed["strategy_id"]), environ)
+    if not deployed["available"]:
+        report["why_not"] = str(deployed["reason"]).rstrip(".")
+        return report
+    refusal = check_refusal(root, strategy_id, environ)
     if refusal is not None:
         report["why_not"] = refusal
     else:

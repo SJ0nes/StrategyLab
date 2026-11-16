@@ -25,7 +25,9 @@ from strategylab.api.deployment import (
     DeployRefused,
     check_refusal,
     deploy,
+    deployed_count,
     read_deployment,
+    read_deployments,
     set_paused,
     set_stop_all,
     stop_all,
@@ -140,6 +142,15 @@ def _deployed(root: Path, when: datetime = THURSDAY - timedelta(days=2)) -> Stra
     return strategy
 
 
+def _rewrite(root: Path, strategy_id: str = "ma_crossover", **changes: Any) -> None:
+    """Change one strategy's entry in the deployment file by hand, as damage would."""
+    record = json.loads((root / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
+    for entry in record["deployments"]:
+        if entry["strategy_id"] == strategy_id:
+            entry.update(changes)
+    (root / DEPLOYMENT_FILE).write_text(json.dumps(record), encoding="utf-8")
+
+
 class Spawned:
     """Stands in for starting a process: records what it was asked to start."""
 
@@ -200,7 +211,9 @@ def test_a_confirmed_strategy_with_a_search_deploys_as_unproven_when_its_luck_te
         "problem": None,
     }
     record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
-    assert record["config_hash"] == strategy.config_hash
+    assert record["schema_version"] == 2
+    (entry,) = record["deployments"]
+    assert entry["config_hash"] == strategy.config_hash
 
 
 def test_a_strategy_whose_luck_test_passed_deploys_as_proven(project: Path) -> None:
@@ -249,7 +262,7 @@ def test_nothing_deploys_without_a_version_from_a_search_on_the_file_as_it_is(
         deploy(project, _confirmed(project), "ma_crossover", READY, THURSDAY)
 
 
-def test_only_one_strategy_is_deployed_at_a_time(project: Path) -> None:
+def test_a_strategy_already_deployed_is_not_deployed_twice(project: Path) -> None:
     _deployed(project)
     before = (project / DEPLOYMENT_FILE).read_text(encoding="utf-8")
 
@@ -263,7 +276,7 @@ def test_only_one_strategy_is_deployed_at_a_time(project: Path) -> None:
 def test_a_damaged_deployment_is_never_read_as_nothing_deployed(project: Path, text: str) -> None:
     (project / DEPLOYMENT_FILE).write_text(text, encoding="utf-8")
 
-    reported = read_deployment(project)
+    reported = read_deployment(project, "ma_crossover")
 
     assert reported is not None
     assert reported["available"] is False
@@ -279,7 +292,7 @@ def test_an_edit_after_deploying_is_reported_and_stops_the_check(project: Path) 
         path.read_text(encoding="utf-8").replace("max: 30", "max: 25"), encoding="utf-8"
     )
 
-    deployed = read_deployment(project)
+    deployed = read_deployment(project, "ma_crossover")
 
     assert deployed is not None
     assert deployed["current"] is False
@@ -290,11 +303,11 @@ def test_an_edit_after_deploying_is_reported_and_stops_the_check(project: Path) 
 def test_pausing_and_resuming(project: Path) -> None:
     _deployed(project)
 
-    paused = set_paused(project, True, THURSDAY)
+    paused = set_paused(project, "ma_crossover", True, THURSDAY)
     assert (paused["paused"], paused["paused_at"]) == (True, THURSDAY.isoformat())
-    assert check_refusal(project, "ma_crossover", READY) == "the deployed strategy is paused"
+    assert check_refusal(project, "ma_crossover", READY) == "the strategy is paused"
 
-    resumed = set_paused(project, False, THURSDAY)
+    resumed = set_paused(project, "ma_crossover", False, THURSDAY)
     assert (resumed["paused"], resumed["paused_at"]) == (False, None)
     assert check_refusal(project, "ma_crossover", READY) is None
 
@@ -302,23 +315,29 @@ def test_pausing_and_resuming(project: Path) -> None:
 def test_undeploying_removes_the_record_and_allows_another_deployment(project: Path) -> None:
     _deployed(project)
 
-    undeploy(project)
+    undeploy(project, "ma_crossover")
 
-    assert read_deployment(project) is None
+    assert read_deployment(project, "ma_crossover") is None
     assert deploy(project, _strategy(project), "ma_crossover", READY, THURSDAY)["available"]
 
 
 def test_a_damaged_record_can_be_undeployed(project: Path) -> None:
     (project / DEPLOYMENT_FILE).write_text("not json", encoding="utf-8")
 
-    undeploy(project)
+    undeploy(project, "anything")
 
-    assert read_deployment(project) is None
+    assert read_deployment(project, "ma_crossover") is None
 
 
-@pytest.mark.parametrize("change", [lambda root: set_paused(root, True, THURSDAY), undeploy])
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda root: set_paused(root, "ma_crossover", True, THURSDAY),
+        lambda root: undeploy(root, "ma_crossover"),
+    ],
+)
 def test_nothing_to_pause_or_undeploy_is_a_refusal(project: Path, change: Any) -> None:
-    with pytest.raises(DeployRefused, match="nothing is deployed"):
+    with pytest.raises(DeployRefused, match="that strategy is not deployed"):
         change(project)
 
 
@@ -387,13 +406,17 @@ def test_the_daily_check_runs_the_deployed_search_and_nothing_else(project: Path
         "strategylab.cli",
         "run",
         f"state/{ARTIFACT}",
+        "--strategy-id",
+        "ma_crossover",
+        "--strategies",
+        "1",
     ]
 
 
 def test_a_daily_check_for_nothing_deployed_builds_no_command(project: Path) -> None:
     _confirmed(project)
 
-    with pytest.raises(JobRefused, match="nothing is deployed"):
+    with pytest.raises(JobRefused, match="that strategy is not deployed"):
         command_for(_record(project), project)
 
 
@@ -402,10 +425,7 @@ def test_a_deployment_naming_anything_but_a_search_file_builds_no_command(
     project: Path, artifact: str
 ) -> None:
     _deployed(project)
-    record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
-    (project / DEPLOYMENT_FILE).write_text(
-        json.dumps({**record, "artifact": artifact}), encoding="utf-8"
-    )
+    _rewrite(project, artifact=artifact)
 
     with pytest.raises(JobRefused, match="file name is not one this app reads"):
         command_for(_record(project), project)
@@ -434,13 +454,13 @@ def test_only_the_daily_check_sees_the_practice_account() -> None:
 def test_the_daily_check_starts_only_when_it_may(project: Path) -> None:
     _deployed(project)
     spawn = Spawned()
-    set_paused(project, True, THURSDAY)
+    set_paused(project, "ma_crossover", True, THURSDAY)
 
     with pytest.raises(JobRefused, match="paused"):
         start_job(project, _strategy(project), DAILY_CHECK, THURSDAY, spawn=spawn, environ=READY)
     assert spawn.calls == []
 
-    set_paused(project, False, THURSDAY)
+    set_paused(project, "ma_crossover", False, THURSDAY)
     with pytest.raises(JobRefused, match="practice account is not set"):
         start_job(project, _strategy(project), DAILY_CHECK, THURSDAY, spawn=spawn, environ={})
     assert spawn.calls == []
@@ -498,7 +518,7 @@ def test_a_check_is_due_on_a_weekday_after_the_close_once(project: Path) -> None
     )
     assert start_if_due(project, THURSDAY + timedelta(minutes=5), READY, spawn=spawn) is None
     assert len(spawn.calls) == 1
-    assert checked_days(project) == {date(2026, 11, 12)}
+    assert checked_days(project, "ma_crossover") == {date(2026, 11, 12)}
 
 
 def test_no_check_on_a_weekend(project: Path) -> None:
@@ -512,7 +532,10 @@ def test_no_check_on_a_weekend(project: Path) -> None:
     ("setup", "reason"),
     [
         (lambda root: None, "nothing is deployed"),
-        (lambda root: (_deployed(root), set_paused(root, True, THURSDAY)), "paused"),
+        (
+            lambda root: (_deployed(root), set_paused(root, "ma_crossover", True, THURSDAY)),
+            "paused",
+        ),
         (lambda root: (_deployed(root), set_stop_all(root, True, THURSDAY)), "stopped"),
     ],
 )
@@ -554,16 +577,19 @@ def test_a_day_deployed_after_its_check_time_is_not_missed() -> None:
 
 
 def test_the_schedule_report_says_why_nothing_runs(project: Path) -> None:
-    assert schedule_report(project, THURSDAY, READY)["why_not"] == "nothing is deployed"
+    assert (
+        schedule_report(project, "ma_crossover", THURSDAY, READY)["why_not"]
+        == "that strategy is not deployed"
+    )
     _deployed(project, when=datetime(2026, 11, 10, 12, 0, tzinfo=UTC))
 
-    report = schedule_report(project, THURSDAY, {})
+    report = schedule_report(project, "ma_crossover", THURSDAY, {})
 
     assert "practice account is not set" in report["why_not"]
     assert report["next_check"] is None
     assert report["missed"] == ["2026-11-10", "2026-11-11", "2026-11-12"]
 
-    ready = schedule_report(project, THURSDAY, READY)
+    ready = schedule_report(project, "ma_crossover", THURSDAY, READY)
     assert ready["why_not"] is None
     assert ready["next_check"] == "2026-11-13T17:30:00+00:00"
 
@@ -596,7 +622,7 @@ def _check(project: Path, day: int, worth: float, outcome: str = "none", **chang
 
 
 def _live(project: Path) -> dict[str, Any]:
-    deployed = read_deployment(project)
+    deployed = read_deployment(project, "ma_crossover")
     assert deployed is not None
     return read_live(project, deployed, "ma_crossover", THURSDAY)
 
@@ -798,9 +824,9 @@ def test_decisions_since_deploying_are_listed_newest_first(project: Path) -> Non
             "action": "hold",
         },
     ]
-    (project / "state" / "decisions-live.jsonl").write_text(
-        "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
-    )
+    own = project / "state" / "live" / "ma_crossover" / "decisions-live.jsonl"
+    own.parent.mkdir(parents=True)
+    own.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
     decisions = _live(project)["decisions"]
 
@@ -848,19 +874,22 @@ def test_deploying_pausing_and_undeploying_over_the_routes(
     right = client.post(
         "/api/strategies/ma_crossover/deploy", json={"typed": "ma_crossover"}, headers=AUTH
     )
-    paused = client.post("/api/deployment/pause", headers=AUTH)
-    status = client.get("/api/deployment", headers=AUTH).json()
-    resumed = client.post("/api/deployment/resume", headers=AUTH)
-    gone = client.post("/api/deployment/undeploy", headers=AUTH)
-    nothing = client.post("/api/deployment/pause", headers=AUTH)
-    unknown = client.post("/api/deployment/sell_everything", headers=AUTH)
+    route = "/api/strategies/ma_crossover/deployment"
+    paused = client.post(f"{route}/pause", headers=AUTH)
+    status = client.get("/api/deployment?strategy_id=ma_crossover", headers=AUTH).json()
+    resumed = client.post(f"{route}/resume", headers=AUTH)
+    gone = client.post(f"{route}/undeploy", headers=AUTH)
+    nothing = client.post(f"{route}/pause", headers=AUTH)
+    unknown = client.post(f"{route}/sell_everything", headers=AUTH)
 
     assert wrong.status_code == 409
     assert right.status_code == 200 and right.json()["proven"] is False
     assert paused.json()["paused"] is True
     assert status["deployment"]["paused"] is True
+    assert status["deployed"] == [{"strategy_id": "ma_crossover", "paused": True, "proven": False}]
     assert status["live"]["available"] is True
-    assert status["schedule"]["why_not"] == "the deployed strategy is paused"
+    assert status["live"]["figures_are_the_accounts"] is False
+    assert status["schedule"]["why_not"] == "the strategy is paused"
     assert status["venue_unready"] is None
     assert resumed.json()["paused"] is False
     assert gone.json() == {"deployment": None}
@@ -882,7 +911,7 @@ def test_the_daily_check_can_be_started_over_the_route_only_when_deployed(
     started = client.post("/api/strategies/ma_crossover/jobs/daily_check", headers=AUTH)
 
     assert refused.status_code == 409
-    assert "nothing is deployed" in refused.json()["detail"]
+    assert "that strategy is not deployed" in refused.json()["detail"]
     assert started.status_code == 201
 
 
@@ -900,9 +929,9 @@ def test_stop_all_over_the_route(project: Path, client: TestClient) -> None:
     ("method", "route"),
     [
         ("post", "/api/strategies/ma_crossover/deploy"),
-        ("post", "/api/deployment/undeploy"),
+        ("post", "/api/strategies/ma_crossover/deployment/undeploy"),
         ("post", "/api/stop-all"),
-        ("get", "/api/deployment"),
+        ("get", "/api/deployment?strategy_id=ma_crossover"),
     ],
 )
 @pytest.mark.parametrize(
@@ -925,21 +954,21 @@ def test_the_deployment_status_never_holds_the_key(project: Path, client: TestCl
     _confirmed(project)
     client.post("/api/strategies/ma_crossover/deploy", json={"typed": "ma_crossover"}, headers=AUTH)
 
-    text = client.get("/api/deployment", headers=AUTH).text
+    text = client.get("/api/deployment?strategy_id=ma_crossover", headers=AUTH).text
 
     assert "present" not in text
     assert "T212_API_KEY" not in text
     assert not list((project / JOBS_DIR).glob("*")) if (project / JOBS_DIR).exists() else True
 
 
-def test_a_check_for_a_strategy_that_is_not_the_deployed_one_may_not_run(project: Path) -> None:
+def test_a_check_for_a_strategy_that_is_not_deployed_may_not_run(project: Path) -> None:
     other = (project / "configs" / "ma_crossover.yaml").read_text(encoding="utf-8")
     (project / "configs" / "other.yaml").write_text(
         other.replace("name: ma_crossover", "name: other"), encoding="utf-8"
     )
     _deployed(project)
 
-    assert check_refusal(project, "other", READY) == "that strategy is not the one deployed"
+    assert check_refusal(project, "other", READY) == "that strategy is not deployed"
     assert check_refusal(project, "ma_crossover", READY) is None
 
 
@@ -1053,7 +1082,7 @@ def test_the_scheduler_stops_with_the_server(
     "change",
     [
         lambda root: set_stop_all(root, True, THURSDAY),
-        lambda root: set_paused(root, True, THURSDAY),
+        lambda root: set_paused(root, "ma_crossover", True, THURSDAY),
     ],
 )
 def test_stop_all_or_pause_pressed_after_a_check_started_still_stops_it(
@@ -1081,13 +1110,10 @@ def test_the_runner_refuses_a_check_without_the_practice_account_in_its_own_envi
 @pytest.mark.parametrize("value", ["true", "yes", 1, None, [False]])
 def test_a_paused_value_that_is_not_plain_false_reads_as_paused(project: Path, value: Any) -> None:
     _deployed(project)
-    record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
-    (project / DEPLOYMENT_FILE).write_text(
-        json.dumps({**record, "paused": value}), encoding="utf-8"
-    )
+    _rewrite(project, paused=value)
 
-    assert read_deployment(project)["paused"] is True  # type: ignore[index]
-    assert check_refusal(project, "ma_crossover", READY) == "the deployed strategy is paused"
+    assert read_deployment(project, "ma_crossover")["paused"] is True  # type: ignore[index]
+    assert check_refusal(project, "ma_crossover", READY) == "the strategy is paused"
 
 
 @pytest.mark.parametrize(
@@ -1134,11 +1160,14 @@ def test_a_job_id_that_is_not_a_date_names_no_day_and_breaks_nothing(project: Pa
     (project / JOBS_DIR).mkdir(parents=True, exist_ok=True)
     bad = "20261399T000000Z-daily_check"
     (project / JOBS_DIR / f"{bad}.json").write_text(
-        json.dumps({"schema_version": 1, "id": bad, "kind": "daily_check"}), encoding="utf-8"
+        json.dumps(
+            {"schema_version": 1, "id": bad, "kind": "daily_check", "strategy_id": "ma_crossover"}
+        ),
+        encoding="utf-8",
     )
 
-    assert checked_days(project) == set()
-    assert schedule_report(project, THURSDAY, READY)["why_not"] is None
+    assert checked_days(project, "ma_crossover") == set()
+    assert schedule_report(project, "ma_crossover", THURSDAY, READY)["why_not"] is None
 
 
 @pytest.mark.parametrize(
@@ -1153,11 +1182,426 @@ def test_a_time_at_the_edge_of_the_calendar_breaks_no_route(
 ) -> None:
     _deployed(project)
     if file == "deployment":
-        record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
-        (project / DEPLOYMENT_FILE).write_text(json.dumps({**record, **change}), encoding="utf-8")
+        _rewrite(project, **change)
     else:
         _check(project, 12, 10000.0, **change)
 
-    answer = client.get("/api/deployment", headers=AUTH)
+    answer = client.get("/api/deployment?strategy_id=ma_crossover", headers=AUTH)
 
     assert answer.status_code == 200
+
+
+# --------------------------------------------------------------------------
+# Several strategies (docs/decisions/0022).
+# --------------------------------------------------------------------------
+
+SECOND_ARTIFACT = "search-20261110T190000Z.json"
+
+
+def _second(root: Path, strategy_id: str = "second", name: str = "second") -> StrategyFile:
+    """Add a second strategy, searched and confirmed, beside ma_crossover."""
+    text = (root / "configs" / "ma_crossover.yaml").read_text(encoding="utf-8")
+    path = root / "configs" / f"{strategy_id}.yaml"
+    path.write_text(text.replace("name: ma_crossover", f"name: {name}"), encoding="utf-8")
+    _search(
+        root,
+        SECOND_ARTIFACT,
+        strategy=name,
+        config_content_hash=config_content_hash(path),
+    )
+    found = find_strategy(root, strategy_id)
+    assert found is not None
+    confirm(root, found, found.config_hash, THURSDAY - timedelta(days=3))
+    return found
+
+
+def _both(root: Path, when: datetime = THURSDAY - timedelta(days=2)) -> StrategyFile:
+    _deployed(root, when)
+    second = _second(root)
+    deploy(root, second, "second", READY, when)
+    return second
+
+
+def _owned(root: Path, strategy_id: str, order_id: str, filled: float | None) -> None:
+    """Record a sent order of ``strategy_id``, and its fill of ``filled`` units if given."""
+    with (root / "state" / "account-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {"order_outcome": "sent", "venue_order_id": order_id, "strategy_id": strategy_id}
+            )
+            + "\n"
+        )
+    if filled is not None:
+        with (root / "state" / "fills-live.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"venue_order_id": order_id, "side": "buy", "quantity": filled}) + "\n"
+            )
+
+
+def test_two_strategies_deploy_side_by_side_in_order_of_id(project: Path) -> None:
+    _both(project)
+
+    everything = read_deployments(project)
+
+    assert everything["available"] is True
+    assert [d["strategy_id"] for d in everything["deployments"]] == ["ma_crossover", "second"]
+    assert read_deployment(project, "second")["artifact"] == SECOND_ARTIFACT  # type: ignore[index]
+    assert deployed_count(project) == 2
+    record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
+    assert [e["strategy_id"] for e in record["deployments"]] == ["ma_crossover", "second"]
+
+
+def test_a_strategy_whose_file_name_cannot_name_a_log_is_not_deployed(project: Path) -> None:
+    strange = _second(project, "has.dot", name="hasdot")
+
+    with pytest.raises(DeployRefused, match="letters, digits"):
+        deploy(project, strange, "hasdot", READY, THURSDAY)
+
+    assert not (project / DEPLOYMENT_FILE).exists()
+
+
+def test_a_file_from_when_one_was_deployed_at_a_time_is_read_as_one(project: Path) -> None:
+    strategy = _strategy(project)
+    (project / DEPLOYMENT_FILE).parent.mkdir(exist_ok=True)
+    (project / DEPLOYMENT_FILE).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "strategy_id": "ma_crossover",
+                "config_hash": strategy.config_hash,
+                "artifact": ARTIFACT,
+                "params": {"fast": 10},
+                "proven": False,
+                "deployed_at": THURSDAY.isoformat(),
+                "paused": False,
+                "paused_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    (only,) = read_deployments(project)["deployments"]
+
+    assert (only["strategy_id"], only["current"], only["paused"]) == ("ma_crossover", True, False)
+    assert deployed_count(project) == 1
+    assert check_refusal(project, "ma_crossover", READY) is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 3, "deployments": []},
+        {"schema_version": 2, "deployments": {"strategy_id": "ma_crossover"}},
+        {"schema_version": 2, "deployments": ["ma_crossover"]},
+        {"schema_version": 2, "deployments": [{"strategy_id": "a"}, {"strategy_id": "a"}]},
+        {"schema_version": 2, "deployments": [{"paused": False}]},
+        {"schema_version": 2, "deployments": [{"strategy_id": 7}]},
+    ],
+    ids=["version", "not-a-list", "not-objects", "twice", "no-id", "id-not-text"],
+)
+def test_a_damaged_record_of_several_blocks_every_change_but_undeploying(
+    project: Path, payload: dict[str, Any]
+) -> None:
+    (project / "state").mkdir(exist_ok=True)
+    (project / DEPLOYMENT_FILE).write_text(json.dumps(payload), encoding="utf-8")
+
+    assert read_deployments(project)["available"] is False
+    assert read_deployment(project, "ma_crossover")["available"] is False  # type: ignore[index]
+    with pytest.raises(DeployRefused):
+        deploy(project, _confirmed(project), "ma_crossover", READY, THURSDAY)
+    with pytest.raises(DeployRefused):
+        set_paused(project, "ma_crossover", True, THURSDAY)
+    with pytest.raises(DeployRefused):
+        deployed_count(project)
+
+    undeploy(project, "ma_crossover")
+
+    assert not (project / DEPLOYMENT_FILE).exists()
+
+
+def test_undeploying_one_strategy_leaves_the_other(project: Path) -> None:
+    _both(project)
+
+    undeploy(project, "second")
+
+    assert [d["strategy_id"] for d in read_deployments(project)["deployments"]] == ["ma_crossover"]
+    undeploy(project, "ma_crossover")
+    assert not (project / DEPLOYMENT_FILE).exists()
+
+
+@pytest.mark.parametrize(
+    ("filled", "said"),
+    [(2.5, "holds 2.5 units"), (None, "fill is not yet recorded")],
+    ids=["holding", "waiting"],
+)
+def test_a_strategy_holding_or_awaiting_units_is_not_undeployed(
+    project: Path, filled: float | None, said: str
+) -> None:
+    _both(project)
+    _owned(project, "second", "41", filled)
+    before = (project / DEPLOYMENT_FILE).read_text(encoding="utf-8")
+
+    with pytest.raises(DeployRefused, match=said):
+        undeploy(project, "second")
+
+    assert (project / DEPLOYMENT_FILE).read_text(encoding="utf-8") == before
+    # The other strategy holds nothing and may go.
+    undeploy(project, "ma_crossover")
+    assert [d["strategy_id"] for d in read_deployments(project)["deployments"]] == ["second"]
+
+
+def test_a_strategy_whose_own_exit_has_filled_is_undeployed(project: Path) -> None:
+    _both(project)
+    _owned(project, "second", "41", 2.5)
+    with (project / "state" / "account-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps({"order_outcome": "sent", "venue_order_id": "42", "strategy_id": "second"})
+            + "\n"
+        )
+    with (project / "state" / "fills-live.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"venue_order_id": "42", "side": "sell", "quantity": 2.5}) + "\n")
+
+    undeploy(project, "second")
+
+    assert read_deployment(project, "second") is None
+
+
+def test_unreadable_holdings_stop_an_undeploy(project: Path) -> None:
+    _both(project)
+    _owned(project, "second", "41", None)
+    (project / "state" / "fills-live.jsonl").write_text(
+        json.dumps({"venue_order_id": "41", "side": "short", "quantity": 1.0}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeployRefused, match="cannot be read"):
+        undeploy(project, "second")
+
+
+def test_pausing_one_strategy_leaves_the_other_running_and_counted(project: Path) -> None:
+    _both(project)
+
+    set_paused(project, "second", True, THURSDAY)
+
+    assert check_refusal(project, "second", READY) == "the strategy is paused"
+    assert check_refusal(project, "ma_crossover", READY) is None
+    assert deployed_count(project) == 2
+
+
+def test_each_check_is_told_how_many_share_the_account(project: Path) -> None:
+    _both(project)
+    found = find_strategy(project, "second")
+    assert found is not None
+    second = _record(project) | {"strategy_id": "second", "config_hash": found.config_hash}
+
+    assert command_for(_record(project), project)[-4:] == [
+        "--strategy-id",
+        "ma_crossover",
+        "--strategies",
+        "2",
+    ]
+    assert command_for(second, project)[-5:] == [
+        f"state/{SECOND_ARTIFACT}",
+        "--strategy-id",
+        "second",
+        "--strategies",
+        "2",
+    ]
+
+
+def test_one_strategys_check_today_does_not_block_anothers(project: Path) -> None:
+    second = _both(project)
+    spawn = Spawned()
+
+    start_job(project, _strategy(project), DAILY_CHECK, THURSDAY, spawn=spawn, environ=READY)
+    _finish_jobs(project)
+    later = THURSDAY + timedelta(minutes=1)
+    start_job(project, second, DAILY_CHECK, later, spawn=spawn, environ=READY)
+    _finish_jobs(project)
+
+    with pytest.raises(JobRefused, match="already been started"):
+        start_job(
+            project, second, DAILY_CHECK, later + timedelta(minutes=1), spawn=spawn, environ=READY
+        )
+    assert len(spawn.calls) == 2
+    assert {r["strategy_id"] for r in list_job_records(project)} == {"ma_crossover", "second"}
+
+
+def _finish_jobs(root: Path) -> None:
+    for record in (root / JOBS_DIR).glob("*.json"):
+        record.with_suffix(".done").write_text('{"exit_code": 0}', encoding="utf-8")
+
+
+def test_the_scheduler_checks_each_strategy_in_turn_in_order_of_id(project: Path) -> None:
+    _both(project)
+    spawn = Spawned()
+
+    assert due(project, THURSDAY, READY) == ("ma_crossover", "due")
+    assert start_if_due(project, THURSDAY, READY, spawn=spawn) is not None
+    # The first check is still running: nothing else starts.
+    _dated(project, THURSDAY)
+    assert start_if_due(project, THURSDAY + timedelta(minutes=1), READY, spawn=spawn) is None
+    _finish_jobs(project)
+
+    assert due(project, THURSDAY + timedelta(minutes=1), READY) == ("second", "due")
+    assert start_if_due(project, THURSDAY + timedelta(minutes=1), READY, spawn=spawn) is not None
+    _finish_jobs(project)
+
+    assert due(project, THURSDAY + timedelta(minutes=2), READY) == (
+        None,
+        "today's check has already been started",
+    )
+    assert len(spawn.calls) == 2
+    assert checked_days(project, "ma_crossover") == {date(2026, 11, 12)}
+    assert checked_days(project, "second") == {date(2026, 11, 12)}
+
+
+def test_a_paused_strategy_is_passed_over_for_the_next(project: Path) -> None:
+    _both(project)
+    set_paused(project, "ma_crossover", True, THURSDAY)
+
+    assert due(project, THURSDAY, READY) == ("second", "due")
+
+
+def test_with_every_strategy_refused_the_last_reason_is_given(project: Path) -> None:
+    _both(project)
+    set_paused(project, "ma_crossover", True, THURSDAY)
+    set_paused(project, "second", True, THURSDAY)
+
+    assert due(project, THURSDAY, READY) == (None, "the strategy is paused")
+
+
+def test_a_damaged_record_makes_nothing_due(project: Path) -> None:
+    (project / DEPLOYMENT_FILE).write_text("not json", encoding="utf-8")
+
+    strategy_id, why = due(project, THURSDAY, READY)
+
+    assert strategy_id is None
+    assert "cannot be read" in why
+
+
+def test_missed_days_are_each_strategys_own(project: Path) -> None:
+    _both(project, when=datetime(2026, 11, 10, 12, 0, tzinfo=UTC))
+    spawn = Spawned()
+    # Only ma_crossover's check ran on the Wednesday.
+    start_job(
+        project,
+        _strategy(project),
+        DAILY_CHECK,
+        datetime(2026, 11, 11, 18, 0, tzinfo=UTC),
+        spawn=spawn,
+        environ=READY,
+    )
+
+    first = schedule_report(project, "ma_crossover", THURSDAY, READY)
+    second = schedule_report(project, "second", THURSDAY, READY)
+
+    assert first["missed"] == ["2026-11-10", "2026-11-12"]
+    assert second["missed"] == ["2026-11-10", "2026-11-11", "2026-11-12"]
+
+
+def test_a_strategys_checks_are_its_own_and_older_lines_go_by_name(project: Path) -> None:
+    _both(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 100.0)  # written before lines carried an id
+    _check(project, 3, 110.0, strategy_id="ma_crossover")
+    _check(project, 4, 999.0, strategy_id="second")
+    _check(project, 5, 120.0, strategy_id="ma_crossover", strategy="renamed")
+    _check(project, 6, 555.0, strategy_id="second", strategy="ma_crossover")
+
+    live = _live(project)
+
+    assert [check["equity"] for check in live["checks"]] == [100.0, 110.0, 120.0]
+
+
+def test_decisions_are_read_from_the_strategys_own_log(project: Path) -> None:
+    _both(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    line = {
+        "source": "live",
+        "recorded_at": "2026-11-04T17:45:00+00:00",
+        "bar_timestamp": "2026-11-04T00:00:00",
+        "action": "hold",
+    }
+    other = project / "state" / "live" / "second" / "decisions-live.jsonl"
+    other.parent.mkdir(parents=True)
+    other.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    (project / "state" / "decisions-live.jsonl").write_text(
+        json.dumps(line) + "\n", encoding="utf-8"
+    )
+
+    assert _live(project)["decisions"] == []
+    second = read_deployment(project, "second")
+    assert second is not None
+    assert [d["action"] for d in read_live(project, second, "second", THURSDAY)["decisions"]] == [
+        "hold"
+    ]
+
+
+def test_with_several_deployed_the_figures_are_said_to_be_the_accounts(project: Path) -> None:
+    _both(project)
+    deployed = read_deployment(project, "ma_crossover")
+    assert deployed is not None
+
+    assert read_live(project, deployed, "ma_crossover", THURSDAY, strategies=2)[
+        "figures_are_the_accounts"
+    ]
+    assert not read_live(project, deployed, "ma_crossover", THURSDAY, strategies=1)[
+        "figures_are_the_accounts"
+    ]
+
+
+def test_the_status_route_lists_every_deployment_and_the_one_asked_for(
+    project: Path, client: TestClient
+) -> None:
+    _both(project)
+    set_paused(project, "second", True, THURSDAY)
+
+    status = client.get("/api/deployment?strategy_id=second", headers=AUTH).json()
+    nothing = client.get("/api/deployment", headers=AUTH).json()
+
+    assert status["deployed"] == [
+        {"strategy_id": "ma_crossover", "paused": False, "proven": False},
+        {"strategy_id": "second", "paused": True, "proven": False},
+    ]
+    assert status["deployment"]["strategy_id"] == "second"
+    assert status["live"]["figures_are_the_accounts"] is True
+    assert status["schedule"]["why_not"] == "the strategy is paused"
+    assert (nothing["deployment"], nothing["schedule"], nothing["live"]) == (None, None, None)
+    assert len(nothing["deployed"]) == 2
+
+
+def test_the_status_route_reports_a_damaged_record_as_damaged(
+    project: Path, client: TestClient
+) -> None:
+    (project / DEPLOYMENT_FILE).write_text("not json", encoding="utf-8")
+
+    status = client.get("/api/deployment?strategy_id=ma_crossover", headers=AUTH).json()
+
+    assert status["deployment"]["available"] is False
+    assert status["deployed"] == []
+    assert status["live"] is None
+
+
+def test_pausing_and_undeploying_one_strategy_over_its_route(
+    project: Path, client: TestClient
+) -> None:
+    _both(project)
+
+    paused = client.post("/api/strategies/second/deployment/pause", headers=AUTH)
+    gone = client.post("/api/strategies/second/deployment/undeploy", headers=AUTH)
+    again = client.post("/api/strategies/second/deployment/undeploy", headers=AUTH)
+
+    assert paused.json()["strategy_id"] == "second"
+    assert gone.json() == {"deployment": None}
+    assert again.status_code == 409
+    assert read_deployment(project, "ma_crossover")["paused"] is False  # type: ignore[index]
+
+
+def test_deployments_are_kept_in_order_of_id_whatever_order_they_came_in(project: Path) -> None:
+    second = _second(project)
+    deploy(project, second, "second", READY, THURSDAY)
+    deploy(project, _confirmed(project), "ma_crossover", READY, THURSDAY)
+
+    record = json.loads((project / DEPLOYMENT_FILE).read_text(encoding="utf-8"))
+
+    assert [e["strategy_id"] for e in record["deployments"]] == ["ma_crossover", "second"]
+    assert due(project, THURSDAY, READY) == ("ma_crossover", "due")
