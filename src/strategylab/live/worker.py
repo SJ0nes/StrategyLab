@@ -28,6 +28,15 @@ through ``evaluate`` directly is therefore the cleanest statement of "what the
 backtest would have decided on this bar", and it is what ``diff`` compares
 against. The risk fields are NOT compared: the replay does not consult the gate,
 and ``LIMITATIONS.md`` records that as the decision it is.
+
+SEVERAL STRATEGIES SHARE THE ACCOUNT IN EQUAL PARTS (``docs/decisions/0022``).
+With N deployed, :func:`decide` hands the gate each strategy's request scaled
+into its share, :func:`shared_request`, and still hands it the whole account.
+The intent it returns, and so the logged ``requested_size_pct``, is the
+strategy's own, which is what ``diff`` compares against a replay that knows
+nothing of shares. :func:`order_for` reads the strategy's own units from the
+ledger (:mod:`strategylab.live.ledger`) when it is given them, not the venue's
+position, which is every strategy's together.
 """
 
 from __future__ import annotations
@@ -246,24 +255,55 @@ def decide(
     bars: pd.DataFrame,
     state: PortfolioState,
     limits: RiskLimits,
+    strategies: int = 1,
 ) -> tuple[Intent, RiskVerdict]:
-    """Evaluate the latest bar and put the intent through the gate.
+    """Evaluate the latest bar and put the intent, in its share, through the gate.
 
     Args:
         definition: The parsed strategy.
         params: Its resolved parameters, in bars.
         bars: The execution instrument's bars, ending at the bar to decide on.
-        state: The account as the venue reports it.
+        state: The whole account as the venue reports it.
         limits: The risk limits.
+        strategies: How many strategies are deployed and share the account.
 
     Returns:
-        The intent and the verdict on it.
+        The intent as the strategy made it, and the gate's verdict on the
+        request :func:`shared_request` makes of it.
 
     Raises:
-        ValueError: Propagated from ``evaluate`` and ``check``.
+        ValueError: Propagated from ``evaluate`` and ``check``, or from
+            :func:`shared_request`.
     """
     intent = evaluate(definition, bars, params)
-    return intent, check(intent, state, limits)
+    asked = replace(intent, size_pct=shared_request(intent.size_pct, strategies, limits))
+    return intent, check(asked, state, limits)
+
+
+def shared_request(size_pct: float, strategies: int, limits: RiskLimits) -> float:
+    """Scale a strategy's request into its equal share of the exposure ceiling.
+
+    Args:
+        size_pct: What the strategy asked for, as a PERCENTAGE of account
+            equity (``95.0`` is ninety-five percent).
+        strategies: How many strategies are deployed; at least 1.
+        limits: The risk limits; ``max_open_exposure_pct`` is the ceiling the
+            strategies share.
+
+    Returns:
+        ``size_pct`` unchanged with one strategy. With N, the smaller of
+        ``size_pct`` and the ceiling, divided by N: a PERCENTAGE of the whole
+        account. Two strategies under a 95 percent ceiling asking for 95 each
+        ask for 47.5 each.
+
+    Raises:
+        ValueError: If ``strategies`` is below 1.
+    """
+    if strategies < 1:
+        raise ValueError(f"strategies is {strategies}; a check runs for at least one")
+    if strategies == 1:
+        return size_pct
+    return min(size_pct, limits.max_open_exposure_pct) / strategies
 
 
 def order_for(
@@ -274,6 +314,7 @@ def order_for(
     ticker: str,
     last_close: float,
     client_ref: str,
+    held_units: float | None = None,
 ) -> Order | None:
     """Turn a permitted intent into the one order it implies, or nothing.
 
@@ -293,6 +334,9 @@ def order_for(
         last_close: The bar's close in the instrument's currency, used as the
             reference price for sizing a buy.
         client_ref: Caller-generated reference for the order.
+        held_units: The strategy's own units of ``ticker``, from the ledger,
+            when several strategies share the account. ``None`` reads the
+            venue's position instead, as a check run by hand does.
 
     Returns:
         The order, or ``None`` when nothing should be sent.
@@ -304,7 +348,11 @@ def order_for(
         raise ValueError(f"last_close must be a positive, finite price, got {last_close}")
     if verdict.verdict is not Verdict.ALLOW:
         return None
-    held = next((p for p in positions if p.ticker == ticker and p.quantity > 0), None)
+    if held_units is None:
+        venue = next((p for p in positions if p.ticker == ticker and p.quantity > 0), None)
+        held = None if venue is None else venue.quantity
+    else:
+        held = held_units if held_units > 0 else None
     if intent.action is Action.ENTER_LONG and verdict.limited_size_pct > 0 and held is None:
         quantity = balance.equity * verdict.limited_size_pct / 100.0 / last_close
         return Order(
@@ -318,7 +366,7 @@ def order_for(
         return Order(
             ticker=ticker,
             side=Side.SELL,
-            quantity=held.quantity,
+            quantity=held,
             order_type=OrderType.MARKET,
             client_ref=client_ref,
         )

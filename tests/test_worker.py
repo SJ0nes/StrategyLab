@@ -32,6 +32,7 @@ from strategylab.live.worker import (
     record,
     replay,
     save_session,
+    shared_request,
     trip_if_reached,
 )
 from strategylab.logging.decisions import DecisionRecord, read_decisions, write_decisions
@@ -240,6 +241,141 @@ def test_a_position_in_another_ticker_does_not_block_an_entry() -> None:
     intent = Intent(action=Action.ENTER_LONG, size_pct=95.0)
     other = [Position(ticker="OTHER", quantity=1.0, average_price=1.0, market_value=1.0)]
     assert order_for(intent, _allow(10.0), _balance(), other, TICKER, 100.0, "r") is not None
+
+
+# ---------------------------------------------------------------------------
+# several strategies: equal shares and each one's own units
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("asked", "strategies", "ceiling", "expected"),
+    [
+        (95.0, 1, 95.0, 95.0),
+        (100.0, 1, 95.0, 100.0),
+        (95.0, 2, 95.0, 47.5),
+        (100.0, 2, 95.0, 47.5),
+        (50.0, 2, 95.0, 25.0),
+        (90.0, 3, 60.0, 20.0),
+        (0.0, 4, 95.0, 0.0),
+    ],
+)
+def test_a_request_is_scaled_into_its_equal_share_of_the_ceiling(
+    asked: float, strategies: int, ceiling: float, expected: float
+) -> None:
+    limits = _limits(max_open_exposure_pct=ceiling)
+
+    assert shared_request(asked, strategies, limits) == pytest.approx(expected, rel=1e-12)
+
+
+def test_a_share_needs_at_least_one_strategy() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        shared_request(95.0, 0, _limits())
+
+
+def test_decide_hands_the_gate_the_shared_request_and_returns_the_strategys_own() -> None:
+    state = portfolio_state(_balance(), [], _session())
+    bars = _bars(RISING_LATE[: CROSS_BAR + 1])
+
+    intent, verdict = decide(_definition(), PARAMS, bars, state, _limits(), strategies=2)
+
+    assert intent.size_pct == 95.0
+    assert (verdict.verdict, verdict.limited_size_pct) == (Verdict.ALLOW, 47.5)
+
+
+def test_two_full_shares_fit_under_the_ceiling_together() -> None:
+    # The first strategy's 47.5% is held; the second's 47.5% is all the
+    # ceiling has left, so the gate does not trim it.
+    held = [Position(ticker=TICKER, quantity=1.0, average_price=1.0, market_value=4_750.0)]
+    state = portfolio_state(_balance(), held, _session())
+    bars = _bars(RISING_LATE[: CROSS_BAR + 1])
+
+    _, verdict = decide(_definition(), PARAMS, bars, state, _limits(), strategies=2)
+
+    assert verdict.limited_size_pct == pytest.approx(47.5, rel=1e-12)
+
+
+def test_a_shared_strategy_still_diffs_clean_against_a_replay_that_knows_no_shares() -> None:
+    bars = _bars(RISING_LATE)
+    live: list[DecisionRecord] = []
+    state = portfolio_state(_balance(), [], _session())
+    for i in range(FIRST_EVALUABLE, len(bars) + 1):
+        window = bars.iloc[:i]
+        intent, verdict = decide(_definition(), PARAMS, window, state, _limits(), strategies=3)
+        live.append(
+            record(
+                intent,
+                verdict,
+                bar_timestamp=window.index[-1].to_pydatetime(),
+                recorded_at=NOW,
+                source="live",
+                ticker=TICKER,
+                params=PARAMS,
+                protocol_version=1,
+            )
+        )
+
+    assert [r.approved_size_pct for r in live if r.action is Action.ENTER_LONG] == [
+        pytest.approx(95.0 / 3, rel=1e-12)
+    ]
+    assert compare(live, replay(_definition(), PARAMS, bars, live, NOW)).divergences == ()
+
+
+def test_with_a_ledger_an_entry_is_sent_while_another_strategy_holds_the_instrument() -> None:
+    intent = Intent(action=Action.ENTER_LONG, size_pct=95.0)
+    others = [Position(ticker=TICKER, quantity=3.0, average_price=1.0, market_value=600.0)]
+
+    order = order_for(intent, _allow(50.0), _balance(), others, TICKER, 200.0, "r", held_units=0.0)
+
+    assert order is not None
+    assert (order.side, order.quantity) == (Side.BUY, 25.0)
+
+
+def test_with_a_ledger_an_entry_while_the_strategy_holds_units_sends_nothing() -> None:
+    intent = Intent(action=Action.ENTER_LONG, size_pct=95.0)
+
+    assert (
+        order_for(intent, _allow(50.0), _balance(), [], TICKER, 200.0, "r", held_units=0.5) is None
+    )
+
+
+def test_with_a_ledger_an_exit_sells_the_strategys_units_and_no_others() -> None:
+    held = [Position(ticker=TICKER, quantity=7.0, average_price=1.0, market_value=1_400.0)]
+
+    order = order_for(
+        Intent(action=Action.EXIT_LONG),
+        _allow(0.0),
+        _balance(),
+        held,
+        TICKER,
+        200.0,
+        "r",
+        held_units=2.5,
+    )
+
+    assert order is not None
+    assert (order.side, order.quantity) == (Side.SELL, 2.5)
+
+
+@pytest.mark.parametrize("units", [0.0, -1.0])
+def test_with_a_ledger_an_exit_while_the_strategy_holds_nothing_sends_nothing(
+    units: float,
+) -> None:
+    held = [Position(ticker=TICKER, quantity=7.0, average_price=1.0, market_value=1_400.0)]
+
+    assert (
+        order_for(
+            Intent(action=Action.EXIT_LONG),
+            _allow(0.0),
+            _balance(),
+            held,
+            TICKER,
+            1.0,
+            "r",
+            held_units=units,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
