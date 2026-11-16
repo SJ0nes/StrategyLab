@@ -27,6 +27,15 @@ pattern look as if it had matched. So this one counts how many times each
 pattern occurs and refuses anything but exactly one, reads the mutated text
 back before running, and judges by the test run's exit code and nothing else.
 
+A THIRD WAY, found later in a scratch harness built the same way. Python keeps
+compiled copies of each module in ``__pycache__`` and trusts one whose recorded
+source size and modification second match the file. A mutant that keeps the
+line's length - ``<`` for ``>`` - written and restored within one second leaves
+a compiled copy of the MUTANT that matches the restored file, and every later
+run imports the defect: the next mutant can look caught because of the last
+one. So the test runs here write no compiled copies, and the old ones under
+``src/`` and ``tests/`` are deleted before anything is mutated.
+
 IT EDITS SOURCE FILES IN PLACE. Each is restored in a ``finally``, but a run
 killed outright can leave one mutant behind. ``git status`` after an
 interrupted run says whether it did, and ``git checkout`` of that file fixes it.
@@ -35,6 +44,8 @@ Do not run the test suite, or commit, while this is running.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -55,12 +66,24 @@ def run_tests(tests: tuple[str, ...]) -> int:
         Zero when every test passed, non-zero otherwise.
     """
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", *tests, "-q", "-x", "-p", "no:cacheprovider"],
+        [sys.executable, "-B", "-m", "pytest", *tests, "-q", "-x", "-p", "no:cacheprovider"],
         cwd=REPOSITORY,
         capture_output=True,
         check=False,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     return done.returncode
+
+
+def forget_compiled() -> None:
+    """Delete every ``__pycache__`` under ``src/`` and ``tests/``.
+
+    None is written again while this runs, so a compiled copy of a mutant can
+    never outlive the mutant.
+    """
+    for top in ("src", "tests"):
+        for cache in (REPOSITORY / top).rglob("__pycache__"):
+            shutil.rmtree(cache)
 
 
 def run_group(name: str) -> int:
@@ -116,6 +139,7 @@ def main(names: list[str]) -> int:
     unknown = [name for name in names if name not in GROUPS]
     if unknown:
         raise SystemExit(f"no such group(s) {unknown}; there are {sorted(GROUPS)}")
+    forget_compiled()
     total = 0
     for name in names or sorted(GROUPS):
         print(f"{name}: {len(GROUPS[name][1])} mutants against {', '.join(GROUPS[name][0])}")
