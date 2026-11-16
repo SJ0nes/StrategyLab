@@ -6,6 +6,7 @@ import {
   type JobKind,
   type Jobs,
   type Overview,
+  type Strategy,
   getDeployment,
   getJobs,
   getOverview,
@@ -59,6 +60,33 @@ type Load =
   | { state: "failed"; message: string }
   | { state: "ready"; overview: Overview };
 
+/**
+ * The strategy the window shows: the one chosen, else the first deployed one,
+ * else the first on the list. A draft whose name sorts first is not where a
+ * window with a running strategy should open.
+ */
+export function openingStrategy(
+  strategies: Strategy[],
+  chosen: string | null,
+  deployment: DeploymentStatus | null,
+): Strategy | undefined {
+  const deployed = new Set((deployment?.deployed ?? []).map((item) => item.strategy_id));
+  return (
+    strategies.find((candidate) => candidate.id === chosen) ??
+    strategies.find((candidate) => deployed.has(candidate.id)) ??
+    strategies[0]
+  );
+}
+
+/**
+ * The first strategy that is not deployed, for the tour's stops about drafts;
+ * ``undefined`` when every strategy is deployed.
+ */
+export function firstDraft(strategies: Strategy[], deployment: DeploymentStatus | null): Strategy | undefined {
+  const deployed = new Set((deployment?.deployed ?? []).map((item) => item.strategy_id));
+  return strategies.find((candidate) => !deployed.has(candidate.id));
+}
+
 export function App() {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [section, setSection] = useState<SectionId>(() => sectionFromHash(window.location.hash));
@@ -73,6 +101,8 @@ export function App() {
   const wasRunning = useRef(false);
   // "welcome" offers the tour, "touring" runs it, null shows neither.
   const [tour, setTour] = useState<"welcome" | "touring" | null>(null);
+  // True while a tour stop about drafts shows a draft in place of the chosen strategy.
+  const [tourDraft, setTourDraft] = useState(false);
   const offered = useRef(false);
   const confettiRef = useRef<HTMLCanvasElement>(null);
   const [deployment, setDeployment] = useState<DeploymentStatus | null>(null);
@@ -90,10 +120,11 @@ export function App() {
       );
   }, [ended, changed]);
 
-  // The strategy whose deployment is asked for: the one chosen, or the first.
+  // The strategy whose deployment is asked for: the one chosen, or the one the window opens on.
   const shownId =
     load.state === "ready"
-      ? ((load.overview.strategies.find((candidate) => candidate.id === chosen) ?? load.overview.strategies[0])?.id ?? null)
+      ? ((tourDraft ? firstDraft(load.overview.strategies, deployment) : undefined) ??
+          openingStrategy(load.overview.strategies, chosen, deployment))?.id ?? null
       : null;
 
   const askDeployment = useCallback(() => {
@@ -148,6 +179,7 @@ export function App() {
 
   const endTour = useCallback((finished: boolean) => {
     setTour(null);
+    setTourDraft(false);
     go("dashboard");
     if (finished) {
       confetti(confettiRef.current);
@@ -179,7 +211,8 @@ export function App() {
   }
   const { overview } = load;
   const strategy =
-    overview.strategies.find((candidate) => candidate.id === chosen) ?? overview.strategies[0];
+    (tourDraft ? firstDraft(overview.strategies, deployment) : undefined) ??
+    openingStrategy(overview.strategies, chosen, deployment);
 
   return (
     <div className="app">
@@ -261,7 +294,7 @@ export function App() {
         </div>
       </main>
       {tour === "welcome" && <Welcome onStart={() => setTour("touring")} onSkip={() => endTour(false)} />}
-      {tour === "touring" && <Tour onGo={go} onEnd={endTour} />}
+      {tour === "touring" && <Tour onGo={go} onDraft={setTourDraft} onEnd={endTour} />}
       <canvas id="confetti" ref={confettiRef} hidden />
       {deploying && strategy !== undefined && (
         <DeployDialog

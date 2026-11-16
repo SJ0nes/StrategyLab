@@ -2,25 +2,30 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 import type { SectionId } from "./Nav";
 
-/** One stop: the section to show, the element to light, and what to say about it. */
+/**
+ * One stop: the section to show, the element to light, and what to say about
+ * it. A ``draft`` stop is about a strategy that is not deployed, so the window
+ * shows one while the stop is up, as the prototype does.
+ */
 export interface Stop {
   go: SectionId;
   target: string;
   title: string;
   text: string;
+  draft?: boolean;
 }
 
 /**
- * The tour, stop by stop. Worded for what the app does today: every strategy
- * is a draft, prices are fetched by command, nothing is deployed. A stop
- * whose element is not on screen lights the middle of the window instead.
+ * The tour, stop by stop. Worded for what the app does today: prices are
+ * fetched by command, and strategies are drafts until deployed. A stop whose
+ * element is not on screen lights the middle of the window instead.
  */
 export const STOPS: Stop[] = [
   {
     go: "dashboard",
     target: "pick",
     title: "Pick a strategy",
-    text: "Everything on screen is about the strategy chosen here. Every one is a draft until it passes the luck test, and one read from a video appears here too.",
+    text: "Everything on screen is about the strategy chosen here. Deployed strategies are listed first, then drafts, and one read from a video appears here too.",
   },
   {
     go: "dashboard",
@@ -31,12 +36,14 @@ export const STOPS: Stop[] = [
   {
     go: "dashboard",
     target: "rules",
+    draft: true,
     title: "Its rules, in plain words",
     text: "Worded from the strategy file itself. For a strategy from a video, anything that could not be turned into a rule is listed in amber.",
   },
   {
     go: "dashboard",
     target: "path",
+    draft: true,
     title: "The path to deployment",
     text: "Confirm the rules, run a backtest, then the luck test. The button is on the step you have reached. A strategy that fails the luck test may still run on the practice account, marked unproven.",
   },
@@ -201,12 +208,14 @@ export function confetti(canvas: HTMLCanvasElement | null): void {
 interface Props {
   /** Show a section; the tour moves the window to each stop's section. */
   onGo: (section: SectionId) => void;
+  /** Show a draft strategy (true) or the one shown before the tour (false). */
+  onDraft: (draft: boolean) => void;
   /** The tour ended: true when it was finished, false when it was skipped. */
   onEnd: (finished: boolean) => void;
 }
 
 /** The spotlight tour. Rendered only while it runs. */
-export function Tour({ onGo, onEnd }: Props) {
+export function Tour({ onGo, onDraft, onEnd }: Props) {
   const [index, setIndex] = useState(0);
   const [placement, setPlacement] = useState<Placement | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -231,8 +240,9 @@ export function Tour({ onGo, onEnd }: Props) {
   useEffect(() => {
     if (stop !== undefined) {
       onGo(stop.go);
+      onDraft(stop.draft === true);
     }
-  }, [stop, onGo]);
+  }, [stop, onGo, onDraft]);
 
   useLayoutEffect(() => {
     // Twice: once for the section change to render, once for its layout.

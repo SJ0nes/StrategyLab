@@ -111,8 +111,9 @@ describe("the stops", () => {
 describe("the tour", () => {
   it("walks forward and back, and moves the window to each stop's section", () => {
     const onGo = vi.fn();
+    const onDraft = vi.fn();
     const onEnd = vi.fn();
-    render(<Tour onGo={onGo} onEnd={onEnd} />);
+    render(<Tour onGo={onGo} onDraft={onDraft} onEnd={onEnd} />);
 
     expect(screen.getByText(`1 of ${STOPS.length}`)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
@@ -123,18 +124,23 @@ describe("the tour", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("heading", { name: STOPS[STOPS.length - 2]?.title })).toBeInTheDocument();
     expect(onGo.mock.calls.map((call) => call[0])).toContain("improve");
+    // A draft is shown for the stops about rules and the path, and only for those.
+    expect(onDraft.mock.calls.map((call) => call[0])).toEqual([
+      ...STOPS.map((stop) => ["rules", "path"].includes(stop.target)),
+      false,
+    ]);
     expect(onEnd).not.toHaveBeenCalled();
   });
 
   it("says it was finished, or skipped", () => {
     const onEnd = vi.fn();
-    const { unmount } = render(<Tour onGo={vi.fn()} onEnd={onEnd} />);
+    const { unmount } = render(<Tour onGo={vi.fn()} onDraft={vi.fn()} onEnd={onEnd} />);
     for (let step = 1; step < STOPS.length; step += 1) {
       fireEvent.click(screen.getByRole("button", { name: "Next" }));
     }
     fireEvent.click(screen.getByRole("button", { name: "Finish" }));
     unmount();
-    render(<Tour onGo={vi.fn()} onEnd={onEnd} />);
+    render(<Tour onGo={vi.fn()} onDraft={vi.fn()} onEnd={onEnd} />);
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
     expect(onEnd.mock.calls).toEqual([[true], [false]]);
@@ -195,7 +201,7 @@ describe("the app's first launch", () => {
   });
 
   it("moves one stop per press however fast the presses come", () => {
-    render(<Tour onGo={vi.fn()} onEnd={vi.fn()} />);
+    render(<Tour onGo={vi.fn()} onDraft={vi.fn()} onEnd={vi.fn()} />);
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "Next" }));

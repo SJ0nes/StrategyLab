@@ -1,7 +1,7 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "../src/App";
+import { App, firstDraft, openingStrategy } from "../src/App";
 import type { DeploymentStatus, Overview, Strategy } from "../src/api";
 import { TopBar } from "../src/components/TopBar";
 
@@ -98,7 +98,56 @@ describe("the strategy list with several deployed", () => {
   });
 });
 
+describe("which strategy the window opens on", () => {
+  const all = OVERVIEW.strategies;
+
+  it("is the one chosen, else the first deployed, else the first", () => {
+    expect(openingStrategy(all, "beta", STATUS)?.id).toBe("beta");
+    expect(openingStrategy(all, null, { ...STATUS, deployed: [{ strategy_id: "gamma", paused: false, proven: false }] })?.id).toBe("gamma");
+    expect(openingStrategy(all, null, { ...STATUS, deployed: [] })?.id).toBe("alpha");
+    expect(openingStrategy(all, null, null)?.id).toBe("alpha");
+    expect(openingStrategy(all, "gone", { ...STATUS, deployed: [{ strategy_id: "missing", paused: false, proven: false }] })?.id).toBe("alpha");
+    expect(openingStrategy([], null, STATUS)).toBeUndefined();
+  });
+});
+
+describe("the draft the tour shows", () => {
+  it("is the first strategy not deployed, or none when all are", () => {
+    expect(firstDraft(OVERVIEW.strategies, STATUS)?.id).toBe("beta");
+    expect(firstDraft(OVERVIEW.strategies, null)?.id).toBe("alpha");
+    const all = { ...STATUS, deployed: ["alpha", "beta", "gamma"].map((id) => ({ strategy_id: id, paused: false, proven: false })) };
+    expect(firstDraft(OVERVIEW.strategies, all)).toBeUndefined();
+  });
+});
+
 describe("the app", () => {
+  it("shows a draft for the tour's stops about drafts, then the strategy shown before", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        const body = path === "/api/overview" ? OVERVIEW : path.startsWith("/api/deployment") ? STATUS : { current: null, recent: [] };
+        return new Response(JSON.stringify(body));
+      }),
+    );
+    render(<App />);
+    const picker = await screen.findByRole("combobox");
+    await waitFor(() => expect(screen.getByText("Running")).toBeInTheDocument());
+    expect(picker).toHaveValue("alpha");
+
+    fireEvent.click(screen.getByRole("button", { name: /Tour/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("beta"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("alpha"));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("beta"));
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("alpha"));
+  });
+
   it("asks for the deployment of the strategy shown", async () => {
     const asked: string[] = [];
     vi.stubGlobal(
@@ -113,5 +162,23 @@ describe("the app", () => {
     render(<App />);
 
     await waitFor(() => expect(asked).toContain("/api/deployment?strategy_id=alpha"));
+  });
+
+  it("moves to a deployed strategy when the first on the list is a draft", async () => {
+    const onlyGamma: DeploymentStatus = { ...STATUS, deployed: [{ strategy_id: "gamma", paused: true, proven: false }] };
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        asked.push(path);
+        const body = path === "/api/overview" ? OVERVIEW : path.startsWith("/api/deployment") ? onlyGamma : { current: null, recent: [] };
+        return new Response(JSON.stringify(body));
+      }),
+    );
+
+    render(<App />);
+
+    await waitFor(() => expect(asked).toContain("/api/deployment?strategy_id=gamma"));
+    expect(await screen.findByText("Paused")).toBeInTheDocument();
   });
 });
