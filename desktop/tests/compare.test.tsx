@@ -75,6 +75,16 @@ describe("comparing", () => {
     expect(bestOf(detail(0.5, 10, 9, "failed"))?.sharpe).toBe(0.5);
   });
 
+  it("opens on two strategies that have a search, not on a draft that sorts first", () => {
+    const searched = (id: string): Strategy => ({ ...strategy(id), latest_search: { artifact: `search-${id}.json` } as Strategy["latest_search"] });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([]))));
+
+    render(<Compare strategies={[strategy("a_draft"), searched("beta"), searched("gamma")]} />);
+
+    expect(screen.getByRole("combobox", { name: "Strategy A" })).toHaveValue("beta");
+    expect(screen.getByRole("combobox", { name: "Strategy B" })).toHaveValue("gamma");
+  });
+
   it("says one strategy cannot be compared", () => {
     render(<Compare strategies={[strategy("only")]} />);
 

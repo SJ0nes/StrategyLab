@@ -8,4 +8,10 @@
 /* The prototype's `.wrap` is the page's column, a flex container, and its tables
    reuse the name for a cell whose text may wrap. A cell that is both stops being
    a table cell, so it ignores the columns it was told to span. */
-td.wrap { display: table-cell; }
+td.wrap { display: table-cell; animation: none; }
+
+/* Compare's figures can be longer than the mock's - a version's settings, a
+   luck test's result - and at laptop width two of them side by side would run
+   into each other. They wrap instead, with a gap between the columns. */
+.side td, .side th { white-space: normal; }
+.side td.n, .side th.n { padding-left: var(--s3); }

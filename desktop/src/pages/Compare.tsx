@@ -37,8 +37,13 @@ function Side({ strategy }: { strategy: Strategy }) {
 
 /** Two strategies side by side, on what their newest searches recorded. */
 export function Compare({ strategies }: { strategies: Strategy[] }) {
-  const [a, setA] = useState(strategies[0]?.id ?? "");
-  const [b, setB] = useState(strategies[1]?.id ?? "");
+  // Opens on the first two strategies with a search to compare, before any without.
+  const ordered = [
+    ...strategies.filter((strategy) => strategy.latest_search !== null),
+    ...strategies.filter((strategy) => strategy.latest_search === null),
+  ];
+  const [a, setA] = useState(ordered[0]?.id ?? "");
+  const [b, setB] = useState(ordered[1]?.id ?? "");
   const left = strategies.find((strategy) => strategy.id === a);
   const right = strategies.find((strategy) => strategy.id === b);
   const loadA = useLoad<Searches | null>(`compare-${a}`, () => (left ? loadSearches(left.id) : Promise.resolve(null)));
@@ -116,7 +121,7 @@ export function Compare({ strategies }: { strategies: Strategy[] }) {
           {right !== undefined && <Side strategy={right} key={`b-${right.id}`} />}
         </div>
         <div className="card">
-          <div className="tablewrap">
+          <div className="tablewrap side">
             <table>
               <thead>
                 <tr>
