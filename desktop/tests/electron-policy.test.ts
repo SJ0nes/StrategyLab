@@ -47,9 +47,10 @@ describe("how the server is started", () => {
   it("hands the token over in the environment, keeping the rest of it", () => {
     const env = { PATH: "C:\\bin", T212_ENVIRONMENT: "demo" };
 
-    const started = serverEnvironment(env, "launch-token");
+    const made = "launch-token";
+    const started = serverEnvironment(env, made);
 
-    expect(started).toEqual({ PATH: "C:\\bin", T212_ENVIRONMENT: "demo", STRATEGYLAB_APP_TOKEN: "launch-token" });
+    expect(started).toEqual({ PATH: "C:\\bin", T212_ENVIRONMENT: "demo", STRATEGYLAB_APP_TOKEN: made });
     expect(TOKEN_VARIABLE).toBe("STRATEGYLAB_APP_TOKEN");
     expect(env).toEqual({ PATH: "C:\\bin", T212_ENVIRONMENT: "demo" });
   });
