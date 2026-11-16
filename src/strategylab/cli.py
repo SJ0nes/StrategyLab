@@ -32,7 +32,12 @@ from strategylab.data.source import (
 from strategylab.execution.t212 import T212Error, T212Venue
 from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH, account_record, write_account
 from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH, record_fills
-from strategylab.live.ledger import deployed_holdings, disagreement, read_ledger
+from strategylab.live.ledger import (
+    AGREEMENT_TOLERANCE_UNITS,
+    deployed_holdings,
+    disagreement,
+    read_ledger,
+)
 from strategylab.live.worker import (
     DEFAULT_REPLAY_LOG_PATH,
     DEFAULT_SESSION_PATH,
@@ -1249,7 +1254,15 @@ def run(
     blocked = deployed_holdings(ledger)
     if strategy_id is not None:
         held_units = ledger.held(strategy_id)
-        if strategy_id in ledger.waiting:
+        unowned = ledger.held(None)
+        if abs(unowned) > AGREEMENT_TOLERANCE_UNITS or None in ledger.waiting:
+            # Bought by a check that named no strategy: no strategy's ledger
+            # counts them, so an entry here would buy a second position on top.
+            blocked = (
+                f"{unowned:g} units were traded by checks run without --strategy-id, and no "
+                "strategy owns them; close them with a check run by hand first"
+            )
+        elif strategy_id in ledger.waiting:
             blocked = "an earlier order of this strategy has no recorded fill yet"
         else:
             blocked = disagreement(ledger, positions, ticker)

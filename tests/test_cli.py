@@ -903,6 +903,38 @@ def test_a_check_run_by_hand_still_uses_the_venues_position(
     assert (line["strategy_id"], line["strategies"]) == (None, 1)
 
 
+def test_units_no_strategy_owns_stop_a_strategys_orders(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bought by a check run by hand, or before checks named their strategy.
+    _forced(monkeypatch, "enter_long")
+    _sent_and_filled(None, "1", "buy", 3.0)  # type: ignore[arg-type]
+    venue = _HoldingVenue(3.0)
+
+    code, output = _run_as(venue, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert venue.orders == []
+    assert "no strategy owns them" in output
+
+
+def test_an_order_no_strategy_owns_still_awaiting_its_fill_stops_a_strategys_orders(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forced(monkeypatch, "enter_long")
+    Path("state").mkdir(exist_ok=True)
+    Path("state/account-live.jsonl").write_text(
+        json.dumps({"order_outcome": "sent", "venue_order_id": "9"}) + "\n", encoding="utf-8"
+    )
+    venue = _FlatVenue([])
+
+    code, output = _run_as(venue, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert venue.orders == []
+    assert "no strategy owns them" in output
+
+
 def test_a_check_run_by_hand_sends_nothing_while_deployed_strategies_hold_units(
     searched: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
