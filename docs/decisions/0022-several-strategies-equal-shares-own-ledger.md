@@ -108,3 +108,4 @@ which with several strategies is all of them together. The page says so.
 - A way to settle a disagreement between the ledgers and the venue other than
   trading by hand until they match.
 - Each strategy's own return, from its fills, rather than the account's.
+  Settled by `docs/decisions/0023`, which works it out from closed trades.
