@@ -72,6 +72,7 @@ from strategylab.api.overview import read_overview
 from strategylab.api.reading import plain_reason
 from strategylab.api.registry import find_strategy
 from strategylab.api.schedule import schedule_report
+from strategylab.api.settle import SettleRefused, settle, settlement
 from strategylab.api.window_state import mark_tour_seen
 from strategylab.protocol import ProtocolError
 
@@ -184,6 +185,13 @@ class Typed(BaseModel):
     """What a deploy request carries: the strategy's name, as the operator typed it."""
 
     typed: str = Field(max_length=200)
+
+
+class Settle(BaseModel):
+    """What a settlement carries: the strategy's name as typed, and the difference shown."""
+
+    typed: str = Field(max_length=200)
+    units: float
 
 
 class Switch(BaseModel):
@@ -351,6 +359,7 @@ def create_app(
             if strategy_id is None
             else schedule_report(root, strategy_id, now, environ),
             "live": live,
+            "settlement": settlement(root, now),
         }
 
     @application.post("/api/strategies/{strategy_id}/deploy")
@@ -380,6 +389,18 @@ def create_app(
         except OSError:
             return JSONResponse({"detail": "the deployment could not be changed"}, status_code=500)
         return JSONResponse({"detail": "no such change"}, status_code=404)
+
+    @application.post("/api/strategies/{strategy_id}/settle")
+    def settle_difference(strategy_id: str, body: Settle) -> Any:
+        strategy = find_strategy(root, strategy_id)
+        if strategy is None:
+            return no_strategy
+        try:
+            return settle(root, strategy, body.typed, body.units, datetime.now(UTC))
+        except SettleRefused as exc:
+            return refused(exc)
+        except OSError:
+            return JSONResponse({"detail": "the correction could not be recorded"}, status_code=500)
 
     @application.post("/api/stop-all")
     def change_stop_all(switch: Switch) -> Any:
