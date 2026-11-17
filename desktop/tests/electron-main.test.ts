@@ -21,7 +21,7 @@ import { apiPatterns, serverArguments, serverEnvironment, TOKEN_VARIABLE } from 
 /** A stand-in for the server process. */
 class FakeChild extends EventEmitter {
   stdout = new PassThrough();
-  stdin = { end: vi.fn() };
+  stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
 }
 
 /** A stand-in for one Electron window, keeping what main.ts set on it. */
@@ -265,6 +265,15 @@ describe("when the server cannot be started", () => {
     await vi.waitFor(() => expect(app.exit).toHaveBeenCalledWith(1));
     expect(child.stdin.end).toHaveBeenCalled();
     expect(FakeWindow.made).toHaveLength(0);
+  });
+
+  it("is not stopped by a broken pipe when the lifeline of a server already gone is closed", async () => {
+    await launch();
+    await ready();
+    child.emit("exit", 1);
+    await vi.waitFor(() => expect(app.exit).toHaveBeenCalledWith(1));
+
+    expect(() => child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).not.toThrow();
   });
 
   it("stops when the server exits before it is ready", async () => {

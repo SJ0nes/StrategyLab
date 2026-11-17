@@ -74,6 +74,9 @@ function startServer(launchToken: string): Promise<number> {
       windowsHide: true,
     });
     server = child;
+    // Ending the lifeline of a server that has already gone can fail with a
+    // broken pipe. The server is gone either way, so that is not worth a crash.
+    child.stdin?.on("error", () => undefined);
 
     const timer = setTimeout(
       () => reject(new Error("the StrategyLab server did not report a port in time")),
