@@ -1549,6 +1549,50 @@ def test_with_several_deployed_the_figures_are_said_to_be_the_accounts(project: 
     ]
 
 
+def test_a_strategys_own_trades_are_reported_from_its_own_fills(project: Path) -> None:
+    _both(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 100.0, "sent", strategy_id="ma_crossover", venue_order_id="1")
+    _check(project, 3, 100.0, "sent", strategy_id="second", venue_order_id="2")
+    _check(project, 4, 100.0, "sent", strategy_id="ma_crossover", venue_order_id="3")
+    _check(project, 5, 100.0, "sent", strategy_id="ma_crossover", venue_order_id="4")
+    _fill_line(project, "1", 50.0)
+    _fill_line(project, "2", 10.0)
+    _fill_line(project, "3", 60.0, side="sell")
+    _fill_line(project, "4", 62.5)
+    deployed = read_deployment(project, "ma_crossover")
+    assert deployed is not None
+
+    own = read_live(project, deployed, "ma_crossover", THURSDAY, strategies=2)["own"]
+
+    # One closed trade, 60 / 50 - 1 = 20%; the second strategy's fill at 10
+    # is not this one's, and the purchase at 62.5 is still open.
+    assert own["available"] is True
+    assert own["return_pct"] == pytest.approx(20.0)
+    assert (own["closed"], own["wins"], own["why_missing"]) == (1, 1, None)
+    assert own["open"] == {
+        "price": 62.5,
+        "quantity": 2.0,
+        "currency": "GBP",
+        "filled_at": "2026-11-06T08:00:00+00:00",
+    }
+    assert own["charges"] == []
+
+
+def test_own_trades_that_cannot_be_read_say_why_and_leave_the_rest(project: Path) -> None:
+    _deployed(project, when=datetime(2026, 11, 2, 12, 0, tzinfo=UTC))
+    _check(project, 2, 100.0, "sent", strategy_id="ma_crossover", venue_order_id="1")
+    _fill_line(project, "1", 50.0, side="short")
+
+    live = _live(project)
+
+    assert live["available"] is True
+    assert live["own"]["available"] is False
+    assert live["own"]["reason"] == (
+        "The strategy's own trades could not be read: "
+        "state/fills-live.jsonl holds a fill whose side is 'short'"
+    )
+
+
 def test_the_status_route_lists_every_deployment_and_the_one_asked_for(
     project: Path, client: TestClient
 ) -> None:

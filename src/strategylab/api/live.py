@@ -17,8 +17,9 @@ strategy's, are not taken for this one's.
 
 WITH SEVERAL STRATEGIES DEPLOYED THE FIGURES ARE THE ACCOUNT'S. Each check
 records the account's equity, which is every strategy's together, and the
-report says so (``figures_are_the_accounts``). A strategy's own return, from
-its fills, is not worked out.
+report says so (``figures_are_the_accounts``). The strategy's own return,
+from its own closed trades and before charges, is reported beside them as
+``own`` (:mod:`strategylab.live.trades`, ``docs/decisions/0023``).
 
 EVERY FIGURE IS ONE THE PROJECT ALREADY COMPUTES. Sharpe and the largest fall
 are :func:`~strategylab.backtest.metrics.sharpe` and
@@ -50,6 +51,7 @@ from strategylab.api.reading import (
     text_or_none,
 )
 from strategylab.backtest.metrics import max_drawdown, sharpe
+from strategylab.live.trades import own_fills, own_trades
 from strategylab.live.worker import live_log_path
 
 #: The files, relative to the project root. Each strategy's decision log is
@@ -311,6 +313,48 @@ def _figures(checks: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _own(root: Path, strategy_id: str, since: datetime) -> dict[str, Any]:
+    """Report a strategy's own trades since its deployment.
+
+    Args:
+        root: The project root.
+        strategy_id: The strategy.
+        since: When it was deployed.
+
+    Returns:
+        The missing shape, with the reason, when a log cannot be read or holds
+        a line that cannot be counted. Otherwise ``available`` true;
+        ``return_pct``, its closed trades' returns chained, a PERCENTAGE
+        before charges, or ``None``; ``closed`` and ``wins``, counts of
+        trades; ``open``, the purchase of a trade not yet closed (``price``
+        per unit as the venue quoted it, ``quantity`` in units, ``currency``,
+        ``filled_at``) or ``None``; ``charges``, every non-zero charge on the
+        fills counted, with the venue's sign; and ``why_missing``.
+    """
+    try:
+        trades = own_trades(own_fills(root / ACCOUNT_LOG, root / FILLS_LOG, strategy_id, since))
+    except (ValueError, OSError) as exc:
+        detail = str(exc).replace(root.as_posix() + "/", "")
+        return missing(f"The strategy's own trades could not be read: {detail}")
+    bought = trades.open
+    return {
+        "available": True,
+        "return_pct": trades.return_pct,
+        "closed": trades.closed,
+        "wins": trades.wins,
+        "open": None
+        if bought is None
+        else {
+            "price": bought.price,
+            "quantity": bought.quantity,
+            "currency": bought.currency,
+            "filled_at": bought.filled_at,
+        },
+        "charges": [dict(charge) for charge in trades.charges],
+        "why_missing": trades.why_missing,
+    }
+
+
 def _loss_lock(root: Path, today: date) -> bool | None:
     """Read whether the daily loss limit has locked buying today.
 
@@ -354,7 +398,8 @@ def read_live(
         read, in which case every ``fill`` is ``None``; ``figures``
         (:func:`_figures`); ``figures_are_the_accounts``, true when several
         strategies are deployed and the figures are therefore all of theirs
-        together; ``decisions``, newest first; and ``loss_lock``.
+        together; ``own``, the strategy's own trades (:func:`_own`);
+        ``decisions``, newest first; and ``loss_lock``.
     """
     since = _instant(deployed.get("deployed_at"))
     if since is None:
@@ -376,6 +421,7 @@ def read_live(
         "fills_readable": fills is not None,
         "figures": _figures(checks),
         "figures_are_the_accounts": strategies > 1,
+        "own": _own(root, strategy_id, since),
         "decisions": decisions,
         "loss_lock": _loss_lock(root, now.astimezone(UTC).date()),
     }
