@@ -205,7 +205,9 @@ argument, the window opened only on the ready line's port, the window's
 isolation settings, the token added to API requests alone, every way out of the
 window refused, the server's lifeline closed when the window goes or the server
 fails to start (missing `uv`, a process that cannot run, an exit before ready,
-no port within a minute), and a second copy of the app starting no server. A
+no port within a minute), a pipe error from a server already gone ignored, and
+a second copy of the app starting no server and bringing the open window to
+the front instead. A
 stand-in shows what `main.ts` asks Electron to do, not what Electron does with
 it. What Electron does is checked by `npm run smoke`, against the real window:
 whether the page's script can see the token or Node, whether the header reaches

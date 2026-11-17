@@ -51,6 +51,7 @@ const ICON = path.resolve(__dirname, "..", "build", "icon.ico");
 const READY_TIMEOUT_MS = 60_000;
 
 let server: ChildProcess | null = null;
+let shown: BrowserWindow | null = null;
 
 /**
  * Start `strategylab serve` and resolve with the port it chose.
@@ -126,6 +127,10 @@ async function openWindow(): Promise<void> {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   window.removeMenu();
+  shown = window;
+  window.on("closed", () => {
+    shown = null;
+  });
 
   // The token is added to API requests here, on their way out. A WebSocket to
   // the API gets it the same way.
@@ -162,6 +167,15 @@ app.setAppUserModelId("StrategyLab");
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Opening the app again brings the window already open to the front.
+  app.on("second-instance", () => {
+    if (shown !== null) {
+      if (shown.isMinimized()) {
+        shown.restore();
+      }
+      shown.focus();
+    }
+  });
   app.whenReady().then(openWindow).catch((error: unknown) => {
     console.error(error);
     stopServer();

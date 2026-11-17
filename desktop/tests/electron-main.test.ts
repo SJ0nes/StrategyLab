@@ -36,6 +36,26 @@ class FakeWindow {
   openHandler: ((details: { url: string }) => { action: string }) | null = null;
   loadURL = vi.fn(async (_url: string) => undefined);
   removeMenu = vi.fn();
+  minimized = false;
+  destroyed = false;
+  // A closed Electron window throws on use, and so does this one.
+  isMinimized = vi.fn(() => this.alive() && this.minimized);
+  restore = vi.fn(() => void this.alive());
+  focus = vi.fn(() => void this.alive());
+  windowHandlers = new Map<string, () => void>();
+  on = vi.fn((name: string, handler: () => void) => {
+    this.windowHandlers.set(name, () => {
+      this.destroyed = name === "closed" || this.destroyed;
+      handler();
+    });
+  });
+
+  alive(): true {
+    if (this.destroyed) {
+      throw new Error("Object has been destroyed");
+    }
+    return true;
+  }
   webContents = {
     on: (name: string, handler: (event: { preventDefault: () => void }, url: string) => void) => {
       this.handlers.set(name, handler);
@@ -325,6 +345,31 @@ describe("closing", () => {
 });
 
 describe("one window at a time", () => {
+  it("brings the open window to the front when the app is opened again", async () => {
+    const window = await opened();
+    window.minimized = true;
+    fake.appHandlers.get("second-instance")!();
+
+    expect(window.restore).toHaveBeenCalled();
+    expect(window.focus).toHaveBeenCalled();
+  });
+
+  it("does not restore a window that is not minimized, and forgets one that has closed", async () => {
+    const window = await opened();
+    fake.appHandlers.get("second-instance")!();
+    expect(window.restore).not.toHaveBeenCalled();
+    expect(window.focus).toHaveBeenCalledTimes(1);
+
+    window.windowHandlers.get("closed")!();
+    fake.appHandlers.get("second-instance")!();
+    expect(window.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when the app is opened again before its window is up", async () => {
+    await launch();
+    expect(() => fake.appHandlers.get("second-instance")!()).not.toThrow();
+  });
+
   it("shows under the desktop shortcut's id", async () => {
     await launch();
 
