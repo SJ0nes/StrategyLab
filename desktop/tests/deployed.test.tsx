@@ -2,9 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deployBlocker } from "../src/App";
-import type { Check, Decision, Deployed as DeployedRecord, DeploymentStatus, Live, Strategy } from "../src/api";
+import type { Check, Decision, Deployed as DeployedRecord, DeploymentStatus, Live, OwnTrades, Strategy } from "../src/api";
 import { DeployDialog } from "../src/components/DeployDialog";
-import { Deployed, decisionLine, decisionWords } from "../src/pages/Deployed";
+import { Deployed, decisionLine, decisionWords, ownReturn } from "../src/pages/Deployed";
 import { Trades } from "../src/pages/Trades";
 
 const STRATEGY: Strategy = {
@@ -62,6 +62,7 @@ const LIVE: Live = {
     why_missing: { sharpe: "needs 20 checks; 3 so far" },
   },
   figures_are_the_accounts: false,
+  own: { available: true, return_pct: null, closed: 0, wins: 0, open: null, charges: [], why_missing: "no trade has closed yet" },
   decisions: [
     { bar_date: "2026-11-04", recorded_at: "2026-11-04T17:45:00+00:00", action: "exit_long", risk_verdict: "allow", risk_reason: "within limits", conditions_met: ["sma cross"], conditions_failed: [] },
     { bar_date: "2026-11-03", recorded_at: "2026-11-03T17:45:00+00:00", action: "enter_long", risk_verdict: "reject", risk_reason: "daily loss lock", conditions_met: ["a", "b"], conditions_failed: [] },
@@ -107,6 +108,22 @@ describe("what may be deployed", () => {
     expect(decisionLine({ ...hold, conditions_failed: [] })).toBe("2026-11-02");
     expect(decisionLine({ ...hold, conditions_failed: [], risk_reason: null })).toBe("2026-11-02");
     expect(decisionLine({ ...sell, bar_date: null })).toBe("met sma cross. within limits");
+  });
+
+  it("gives a strategy's own return, or the reason there is none", () => {
+    const own: OwnTrades = { available: true, return_pct: -4.25, closed: 1, wins: 0, open: null, charges: [], why_missing: null };
+
+    expect(ownReturn(own, "+2.0%")).toEqual({ value: "−4.3%", note: "1 closed trade, before charges; account +2.0%", tone: "down" });
+    expect(ownReturn({ ...own, return_pct: 0, closed: 3 }, "none").tone).toBe("up");
+    expect(ownReturn({ ...own, return_pct: null, why_missing: "no trade has closed yet; one is open" }, "+1.0%")).toEqual({
+      value: "none",
+      note: "no trade has closed yet; one is open; account +1.0%",
+      tone: "",
+    });
+    expect(ownReturn({ available: false, reason: "The strategy's own trades could not be read: x" }, "+1.0%").note).toBe(
+      "The strategy's own trades could not be read: x",
+    );
+    expect(ownReturn(undefined, "none").value).toBe("none");
   });
 
   it("words each decision", () => {
@@ -234,6 +251,33 @@ describe("the deployed strategy's Dashboard", () => {
     rerender(<Deployed strategy={STRATEGY} deployed={DEPLOYED} status={shared} onStart={onStart} onChanged={onChanged} />);
 
     expect(screen.getByRole("note")).toHaveTextContent("whole account's");
+  });
+
+  it("shows the strategy's own return first when several strategies share the account", () => {
+    const own: OwnTrades = {
+      available: true,
+      return_pct: 12.5,
+      closed: 2,
+      wins: 1,
+      open: null,
+      charges: [{ name: "STAMP_DUTY_RESERVE_TAX", amount: -0.2, currency: "GBP" }],
+      why_missing: null,
+    };
+    const { rerender } = render(
+      <Deployed strategy={STRATEGY} deployed={DEPLOYED} status={STATUS} onStart={onStart} onChanged={onChanged} />,
+    );
+    expect(screen.getByText("Return since deployed")).toBeInTheDocument();
+    expect(screen.queryByText("Its own return")).toBeNull();
+
+    const shared = { ...STATUS, live: { ...LIVE, figures_are_the_accounts: true, own } };
+    rerender(<Deployed strategy={STRATEGY} deployed={DEPLOYED} status={shared} onStart={onStart} onChanged={onChanged} />);
+
+    const card = screen.getByText("Its own return").parentElement as HTMLElement;
+    expect(card).toHaveTextContent("+12.5%");
+    expect(card).toHaveTextContent("2 closed trades, before charges; account +2.0%");
+    expect(screen.queryByText("Return since deployed")).toBeNull();
+    expect(screen.getByRole("note")).toHaveTextContent("STAMP_DUTY_RESERVE_TAX -0.2 GBP");
+    expect(screen.getByRole("note")).toHaveTextContent("not taken off");
   });
 
   it("says why no check is due when the server gives no schedule", () => {

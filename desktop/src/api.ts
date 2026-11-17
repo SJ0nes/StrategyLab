@@ -348,6 +348,20 @@ export interface LiveFigures {
   why_missing: Record<string, string>;
 }
 
+/** A strategy's own trades since it was deployed, from its own fills. */
+export interface OwnTrades {
+  available: true;
+  /** Its closed trades' returns chained, a percentage, before charges; null with the reason in `why_missing`. */
+  return_pct: number | null;
+  closed: number;
+  wins: number;
+  /** The purchase of a trade not yet closed. Price is per unit, as the venue quoted it. */
+  open: { price: number; quantity: number; currency: string | null; filled_at: string | null } | null;
+  /** Each non-zero charge on the fills counted, with the venue's sign, which is not documented. */
+  charges: { name: string; amount: number; currency: string }[];
+  why_missing: string | null;
+}
+
 export interface Live {
   available: true;
   checks: Check[];
@@ -356,6 +370,8 @@ export interface Live {
   figures: LiveFigures;
   /** True when several strategies are deployed, so the figures are the whole account's, not this strategy's alone. */
   figures_are_the_accounts: boolean;
+  /** The strategy's own trades; Missing when its fills could not be read. */
+  own: OwnTrades | Missing;
   decisions: Decision[];
   /** True when the daily loss limit has locked buying today; null when unknown. */
   loss_lock: boolean | null;

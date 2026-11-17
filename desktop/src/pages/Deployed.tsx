@@ -7,6 +7,8 @@ import {
   type DeploymentStatus,
   type JobKind,
   type Live,
+  type Missing,
+  type OwnTrades,
   type Strategy,
   changeDeployment,
 } from "../api";
@@ -23,7 +25,6 @@ export function decisionWords(action: string | null, verdict: string | null): st
   return `${what}, blocked`;
 }
 
-/** A live figure, or the reason there is none. */
 /**
  * The newest decision in one line: its day, then the conditions met, or failed
  * when none were met, then the risk layer's reason. The day stands alone when
@@ -46,8 +47,34 @@ export function decisionLine(decision: Decision): string {
   return said === "" ? decision.bar_date : `${decision.bar_date}: ${said}`;
 }
 
+/** A live figure, or the reason there is none. */
 function figure(value: number | null, render: (value: number) => string, why: string | undefined): [string, string] {
   return value === null ? ["none", why ?? "not enough checks yet"] : [render(value), ""];
+}
+
+/**
+ * The first card when several strategies share the account: the strategy's own
+ * return from its closed trades, before charges, with the account's beside it.
+ */
+export function ownReturn(
+  own: OwnTrades | Missing | undefined,
+  account: string,
+): { value: string; note: string; tone: string } {
+  if (own === undefined) {
+    return { value: "none", note: "the live figures could not be read", tone: "" };
+  }
+  if (!own.available) {
+    return { value: "none", note: own.reason, tone: "" };
+  }
+  if (own.return_pct === null) {
+    return { value: "none", note: `${own.why_missing ?? "no trade has closed yet"}; account ${account}`, tone: "" };
+  }
+  const trades = `${own.closed} closed trade${own.closed === 1 ? "" : "s"}`;
+  return {
+    value: signedPct(own.return_pct),
+    note: `${trades}, before charges; account ${account}`,
+    tone: own.return_pct < 0 ? "down" : "up",
+  };
 }
 
 interface Props {
@@ -85,6 +112,9 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
     figures?.why_missing.max_drawdown_pct,
   );
   const expected = strategy.latest_search?.sharpe;
+  const shared = live?.figures_are_the_accounts === true;
+  const own = ownReturn(live?.own, ret);
+  const charges = live?.own.available === true ? live.own.charges : [];
 
   return (
     <>
@@ -134,18 +164,30 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
         </div>
       )}
 
-      {live?.figures_are_the_accounts === true && (
+      {shared && (
         <p className="soft" role="note">
-          Several strategies are deployed and share the practice account, each with an equal share. These figures, and
-          the position below, are the whole account's, not {strategy.name}'s alone.
+          Several strategies are deployed and share the practice account, each with an equal share. The first figure is{" "}
+          {strategy.name}'s own, from its closed trades. The others, and the position below, are the whole account's.
+          {charges.length > 0 &&
+            ` The venue reported charges on its fills (${charges
+              .map((charge) => `${charge.name} ${charge.amount} ${charge.currency}`)
+              .join(", ")}); they are not taken off, as the venue does not document their sign.`}
         </p>
       )}
       <div className="kpis" data-tour="kpis">
-        <div className="card kpi">
-          <span className="label">Return since deployed</span>
-          <span className={`big ${figures?.return_pct == null ? "" : figures.return_pct < 0 ? "down" : "up"}`}>{ret}</span>
-          <small>{retWhy || `${checks.length} checks`}</small>
-        </div>
+        {shared ? (
+          <div className="card kpi">
+            <span className="label">Its own return</span>
+            <span className={`big ${own.tone}`}>{own.value}</span>
+            <small>{own.note}</small>
+          </div>
+        ) : (
+          <div className="card kpi">
+            <span className="label">Return since deployed</span>
+            <span className={`big ${figures?.return_pct == null ? "" : figures.return_pct < 0 ? "down" : "up"}`}>{ret}</span>
+            <small>{retWhy || `${checks.length} checks`}</small>
+          </div>
+        )}
         <div className="card kpi">
           <span className="label">
             <Term word="sharpe" /> (live)
