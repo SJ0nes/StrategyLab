@@ -1,9 +1,9 @@
 import { useState } from "react";
 
-import type { SearchDetail, Strategy } from "../api";
+import { type DeploymentStatus, type OwnTrades, type SearchDetail, type Strategy, getDeployment } from "../api";
 import { Chart } from "../components/Chart";
 import { Term } from "../components/Term";
-import { type Searches, loadSearches, useLoad } from "../useLoad";
+import { type Load, type Searches, loadSearches, useLoad } from "../useLoad";
 import { gatePill, signedPct, versionLabel, whenLabel } from "../words";
 
 /** The figures a strategy's newest search recorded for the version it put forward, or null when there are none. */
@@ -20,6 +20,42 @@ export function better(a: number | null | undefined, b: number | null | undefine
     return null;
   }
   return (a > b) === higher ? "a" : "b";
+}
+
+/** One side's live record: its own trades and when it was deployed, or why there are none. */
+export interface LiveSide {
+  own: OwnTrades | null;
+  since: string | null;
+  why: string;
+}
+
+/** What a strategy's deployment answer says about its own trades on the practice account. */
+export function liveSide(load: Load<DeploymentStatus | null>): LiveSide {
+  const none = (why: string): LiveSide => ({ own: null, since: null, why });
+  if (load.state === "loading") {
+    return none("reading…");
+  }
+  if (load.state === "failed") {
+    return none(load.message);
+  }
+  const deployment = load.value?.deployment ?? null;
+  if (deployment === null) {
+    return none("not deployed");
+  }
+  if (!deployment.available) {
+    return none(deployment.reason);
+  }
+  const live = load.value?.live ?? null;
+  if (live === null) {
+    return { own: null, since: deployment.deployed_at, why: "no live figures" };
+  }
+  if (!live.available) {
+    return { own: null, since: deployment.deployed_at, why: live.reason };
+  }
+  if (!live.own.available) {
+    return { own: null, since: deployment.deployed_at, why: live.own.reason };
+  }
+  return { own: live.own, since: deployment.deployed_at, why: live.own.why_missing ?? "" };
 }
 
 function Side({ strategy }: { strategy: Strategy }) {
@@ -48,6 +84,8 @@ export function Compare({ strategies }: { strategies: Strategy[] }) {
   const right = strategies.find((strategy) => strategy.id === b);
   const loadA = useLoad<Searches | null>(`compare-${a}`, () => (left ? loadSearches(left.id) : Promise.resolve(null)));
   const loadB = useLoad<Searches | null>(`compare-${b}`, () => (right ? loadSearches(right.id) : Promise.resolve(null)));
+  const deployA = useLoad<DeploymentStatus | null>(`live-${a}`, () => (left ? getDeployment(left.id) : Promise.resolve(null)));
+  const deployB = useLoad<DeploymentStatus | null>(`live-${b}`, () => (right ? getDeployment(right.id) : Promise.resolve(null)));
 
   if (strategies.length < 2) {
     return (
@@ -98,14 +136,23 @@ export function Compare({ strategies }: { strategies: Strategy[] }) {
     ["Trades", bestA?.trade_count, bestB?.trade_count, (value) => String(value), true],
   ];
 
+  const liveA = liveSide(deployA);
+  const liveB = liveSide(deployB);
+  // A count of trades is not better for being larger, so that row marks neither side.
+  const liveRows: [string, number | null | undefined, number | null | undefined, (value: number) => string, boolean | null][] = [
+    ["Own return, live", liveA.own?.return_pct, liveB.own?.return_pct, signedPct, true],
+    ["Closed trades, live", liveA.own?.closed, liveB.own?.closed, (value) => String(value), null],
+  ];
+
   return (
     <>
       <div className="head">
         <div>
           <h1>Compare</h1>
           <p>
-            Two strategies side by side, on what their newest searches recorded on old prices. ◀ marks the better
-            one. A higher score on old prices alone is often luck: the luck test row says which passed.
+            Two strategies side by side, on what their newest searches recorded on old prices and, once deployed, on
+            their own closed trades on the practice account, before charges. ◀ marks the better one. A higher score on
+            old prices alone is often luck: the luck test row says which passed. A few live trades say less still.
           </p>
         </div>
         <span className="between">
@@ -162,6 +209,23 @@ export function Compare({ strategies }: { strategies: Strategy[] }) {
                   <td className="n">{searchA === null ? "never" : whenLabel(searchA.generated_at)}</td>
                   <td className="n">{searchB === null ? "never" : whenLabel(searchB.generated_at)}</td>
                 </tr>
+                <tr>
+                  <td>Deployed</td>
+                  <td className="n">{liveA.since === null ? liveA.why : whenLabel(liveA.since)}</td>
+                  <td className="n">{liveB.since === null ? liveB.why : whenLabel(liveB.since)}</td>
+                </tr>
+                {liveRows.map(([name, x, y, render, higher]) => {
+                  const mark = higher === null ? null : better(x, y, higher);
+                  const cell = (value: number | null | undefined, side: "a" | "b", why: string) =>
+                    value == null ? <span className="soft">{why || "none"}</span> : mark === side ? <b>{render(value)} ◀</b> : render(value);
+                  return (
+                    <tr key={name}>
+                      <td>{name}</td>
+                      <td className="n">{cell(x, "a", liveA.why)}</td>
+                      <td className="n">{cell(y, "b", liveB.why)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

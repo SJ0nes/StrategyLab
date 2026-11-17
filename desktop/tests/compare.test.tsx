@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SearchDetail, Strategy } from "../src/api";
-import { Compare, better, bestOf } from "../src/pages/Compare";
+import type { DeploymentStatus, OwnTrades, SearchDetail, Strategy } from "../src/api";
+import { Compare, better, bestOf, liveSide } from "../src/pages/Compare";
+import { whenLabel } from "../src/words";
 
 function strategy(id: string): Strategy {
   return {
@@ -57,6 +58,21 @@ function detail(sharpe: number, ret: number, fall: number, status: "passed" | "f
   } as unknown as SearchDetail;
 }
 
+function own(returnPct: number | null, closed: number): OwnTrades {
+  return { available: true, return_pct: returnPct, closed, wins: 0, open: null, charges: [], why_missing: returnPct === null ? "no trade has closed yet" : null };
+}
+
+function deployedStatus(id: string, trades: OwnTrades): DeploymentStatus {
+  return {
+    deployment: { available: true, strategy_id: id, deployed_at: "2026-11-02T12:00:00+00:00" },
+    deployed: [],
+    stop_all: { stopped: false, stopped_at: null, damaged: false },
+    venue_unready: null,
+    schedule: null,
+    live: { available: true, own: trades },
+  } as unknown as DeploymentStatus;
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -83,6 +99,56 @@ describe("comparing", () => {
 
     expect(screen.getByRole("combobox", { name: "Strategy A" })).toHaveValue("beta");
     expect(screen.getByRole("combobox", { name: "Strategy B" })).toHaveValue("gamma");
+  });
+
+  it("reads a side's own live trades, or says why there are none", () => {
+    const status = deployedStatus("alpha", own(12.5, 2));
+    const ready = (value: DeploymentStatus | null) => ({ state: "ready" as const, value });
+
+    expect(liveSide({ state: "loading" }).why).toBe("reading…");
+    expect(liveSide({ state: "failed", message: "no answer" }).why).toBe("no answer");
+    expect(liveSide(ready(null)).why).toBe("not deployed");
+    expect(liveSide(ready({ ...status, deployment: null })).why).toBe("not deployed");
+    expect(liveSide(ready({ ...status, deployment: { available: false, reason: "damaged" } } as DeploymentStatus)).why).toBe("damaged");
+    expect(liveSide(ready({ ...status, live: null }))).toEqual({ own: null, since: "2026-11-02T12:00:00+00:00", why: "no live figures" });
+    expect(liveSide(ready({ ...status, live: { available: false, reason: "log unreadable" } })).why).toBe("log unreadable");
+    expect(
+      liveSide(ready({ ...status, live: { available: true, own: { available: false, reason: "fills unreadable" } } } as unknown as DeploymentStatus)).why,
+    ).toBe("fills unreadable");
+    expect(liveSide(ready(status))).toEqual({ own: own(12.5, 2), since: "2026-11-02T12:00:00+00:00", why: "" });
+    expect(liveSide(ready(deployedStatus("alpha", own(null, 0)))).why).toBe("no trade has closed yet");
+  });
+
+  it("sets deployed strategies' own live returns side by side, and marks no side on a count of trades", async () => {
+    const answers: Record<string, DeploymentStatus> = {
+      alpha: deployedStatus("alpha", own(12.5, 2)),
+      beta: deployedStatus("beta", own(-3, 5)),
+      gamma: { ...deployedStatus("gamma", own(null, 0)), deployment: null },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        const asked = /strategy_id=([a-z]+)/.exec(path);
+        return new Response(JSON.stringify(asked ? answers[asked[1]!] : []));
+      }),
+    );
+    render(<Compare strategies={[strategy("alpha"), strategy("beta"), strategy("gamma")]} />);
+
+    const live = (await screen.findByText("Own return, live")).closest("tr") as HTMLElement;
+    await waitFor(() => expect(within(live).getByText("+12.5% ◀")).toBeInTheDocument());
+    expect(within(live).getByText("−3.0%")).toBeInTheDocument();
+    const trades = screen.getByText("Closed trades, live").closest("tr") as HTMLElement;
+    expect(trades).toHaveTextContent("25");
+    expect(trades).not.toHaveTextContent("◀");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Strategy B" }), { target: { value: "gamma" } });
+    const deployed = screen.getByText("Deployed").closest("tr") as HTMLElement;
+    await waitFor(() => expect(deployed).toHaveTextContent("not deployed"));
+    const [, sideA] = within(deployed).getAllByRole("cell");
+    expect(sideA).toHaveTextContent(whenLabel("2026-11-02T12:00:00+00:00"));
+    const again = screen.getByText("Own return, live").closest("tr") as HTMLElement;
+    expect(within(again).getByText("+12.5%")).toBeInTheDocument();
+    expect(again).not.toHaveTextContent("◀");
   });
 
   it("says one strategy cannot be compared", () => {
