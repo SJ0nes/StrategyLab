@@ -241,15 +241,15 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2636 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2679 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
 walk-forward validation, the candidate reader, the decision log, the risk layer,
-the Trading 212 adapter, the live worker, the fills log, each strategy's ledger and its own trades, the command-line wiring, the app's
-server and what it reports, and the commit-time credential scan — thirty-four
+the Trading 212 adapter, the live worker, the fills log, each strategy's ledger and its own trades, settling a disagreement with the venue, the command-line wiring, the app's
+server and what it reports, and the commit-time credential scan — thirty-five
 areas, one per test file.
-520 of the 2636 are the risk layer's,
+520 of the 2679 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -999,7 +999,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in eighteen
+  `tests/mutation/` now holds a harness and a list of named mutants in nineteen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
@@ -1015,16 +1015,17 @@ decision record until it has been read beside the venue's own account page.
   pattern goes stale is reported, never counted as caught.
 
 **There is a server now, and it can trade on the practice account.** `strategylab serve` exists
-for a desktop app (`docs/decisions/0014`). It has seventeen
+for a desktop app (`docs/decisions/0014`). It has eighteen
 API routes. Nine read: one says it is alive; one reports the protocol version,
 the access counter, the cached prices, the kill switch, whether a venue key is
 set, and each strategy config with its newest search, its rules in words, where
 it came from and whether its rules are confirmed; three report a strategy's
 history - its searches, one search in full, its reads of the held-back window;
 one the graveyard; one the jobs; one the deployment and its live figures; one
-whether the final exam is unlocked. Eight change something: start a job, take
+whether the final exam is unlocked. Nine change something: start a job, take
 the final exam, record that the operator has read a strategy's rules, deploy,
-pause, resume or undeploy (one route), turn stop all on or off, remember that
+pause, resume or undeploy (one route), settle a disagreement with the venue by
+giving the difference to a strategy, turn stop all on or off, remember that
 the tour has been seen, and ask a running job to stop. No job starts for a strategy
 whose rules are not confirmed for its file as it is now (`docs/decisions/0018`). A job is
 `strategylab search` on a config in `configs/`, with no trials or with the
@@ -1095,8 +1096,14 @@ While the server runs, a thread starts the daily check once a weekday after
   position. So a strategy sends nothing while its last order's fill is not
   recorded, and every strategy sends nothing while their units together differ
   from the venue's: units bought or sold by hand in the Trading 212 app stop
-  every check until the two agree again, and nothing in the app settles the
-  difference. A strategy that holds units cannot be undeployed. Its Sharpe,
+  every check until the two agree again. The operator settles it on the
+  Dashboard by naming the strategy the difference belongs to, which appends a
+  correction and sends nothing (`docs/decisions/0024`, the operator's choice);
+  the venue's figure is the one the newest check recorded, so it is offered only
+  when nothing has been recorded since, and it gives the whole difference to one
+  strategy or none. A strategy left below zero, units no strategy owns, and an
+  order whose fill never arrives are not settled there. A correction has never
+  been made against the real account. A strategy that holds units cannot be undeployed. Its Sharpe,
   largest fall and position on the Dashboard are the whole account's. Its own
   return is worked out from its own closed trades (`docs/decisions/0023`, the
   per-trade method the operator's choice): before charges, because the venue's
