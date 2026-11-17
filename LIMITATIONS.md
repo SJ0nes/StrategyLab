@@ -1236,11 +1236,15 @@ to API requests only, refuse every way out of the window, close the server's
 lifeline when the window goes or the server fails to start, and start no server
 in a second copy of the app - and nothing about what Electron does with it.
 Writing that test found the second copy starting a server of its own before it
-quit; it no longer does. What only a real launch shows was checked by launching
-the app twice on Windows and inspecting it. That check found the window showing
-real data, the page's script unable to see the token or Node, and no server
-process left after the window closed - and it is two launches on one machine,
-repeated by nobody else. The window can be pointed at a copy of the project;
+quit; it no longer does. What only a real launch shows is checked by
+`npm run smoke` in `desktop/`, which opens the real window on a throwaway copy of
+the project: the page's script has no Node, no token-shaped string is in the
+page's address, storage, markup or window strings (a value held inside the
+page's own code is not searched), the page's API requests get in while the same
+request from outside is refused, and the server stops once the window closes.
+Each check was seen to fail against a `main.ts` or server broken on purpose. It is run by hand, on one Windows
+machine; nothing runs it on a schedule or on another system, and it does not
+check that a job the window started survives it. The window can be pointed at a copy of the project;
 that was used in the check of a job described above, and has a test against the
 stand-in only. CI does not build or test anything
 under `desktop/`. Every screen was compared with the approved mock in the real

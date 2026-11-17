@@ -158,7 +158,21 @@ the server it started.
 ```bash
 npm test         # component tests, in a simulated browser; opens no window
 npm run typecheck
+npm run build && npm run smoke   # opens the real window on a throwaway copy
 ```
+
+`npm run smoke` launches the real window on a copy of the project made in the
+system's temporary folder, with no Trading 212 variable, and presses nothing.
+It checks that the page's script has no Node, that no token-shaped string is in
+the page's address, storage, markup or window strings (a value held inside the
+page's own code is not searched), that the page's API requests get in while the
+same request from outside the window is refused, and that the server stops once
+the window closes; on Windows, also that no process the window started is left,
+and it stops any that is. It deletes the copy when done. The server runs this
+repository's code, so uv may update the repository's `.venv/`, as `npm start`
+does. While it runs, the window takes a debugger on a local port, which any
+program on the machine could attach to. It cannot run while another StrategyLab
+window is open, because the window allows one copy of itself.
 
 ## How the pieces fit
 
@@ -193,10 +207,14 @@ window refused, the server's lifeline closed when the window goes or the server
 fails to start (missing `uv`, a process that cannot run, an exit before ready,
 no port within a minute), and a second copy of the app starting no server. A
 stand-in shows what `main.ts` asks Electron to do, not what Electron does with
-it. Whether the page's script can see the token or Node, whether the header
-reaches the server, and whether a server is left after the window closes were
-checked by running the app and looking, twice, on Windows. CI runs none of
-this: the workflow is Python only.
+it. What Electron does is checked by `npm run smoke`, against the real window:
+whether the page's script can see the token or Node, whether the header reaches
+the server, and whether the server stops after the window closes. On 2026-11-17
+each of its checks was seen to fail against a `main.ts` or server broken on
+purpose (Node let into the page, the token put in the page's address, a wrong
+token sent, the server's lifeline ignored), and to pass against a change to a
+comment. It has been run on one Windows machine, and only by hand. CI runs none of this: the
+workflow is Python only.
 
 Starting a job, closing the server and finding the job still running was
 checked by hand, once, on Windows, on a copy of the project: see LIMITATIONS.
