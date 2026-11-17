@@ -70,8 +70,68 @@ class Ledger:
         return math.fsum(self.units.values())
 
 
-def _quantity(entry: dict[str, object], path: Path) -> float:
-    """Read a fill line's units, refusing anything that is not a positive number."""
+@dataclass(frozen=True)
+class SentOrder:
+    """Who sent an order, and when, as the account log's ``sent`` line says.
+
+    Attributes:
+        strategy_id: The strategy that sent it, ``None`` for a check run
+            without one.
+        recorded_at: The line's ``recorded_at``, ISO-8601 text as written,
+            or ``None`` when the line has none.
+    """
+
+    strategy_id: str | None
+    recorded_at: str | None
+
+
+def sent_orders(account_log: Path) -> dict[str, SentOrder]:
+    """Read which strategy sent each order, in the order the orders were sent.
+
+    The one place an order is given to a strategy: the ledger and each
+    strategy's own trades (:mod:`strategylab.live.trades`) both read it here.
+
+    Args:
+        account_log: ``state/account-live.jsonl``.
+
+    Returns:
+        Venue order id to who sent it. Only ``sent`` lines with an id count;
+        an id sent twice belongs to its first line.
+
+    Raises:
+        ValueError: If a line is not a JSON object.
+        OSError: If the log exists and cannot be read.
+    """
+    owner: dict[str, SentOrder] = {}
+    for entry in read_lines(account_log):
+        order_id = entry.get("venue_order_id")
+        if entry.get("order_outcome") != "sent" or order_id is None:
+            continue
+        strategy_id = entry.get("strategy_id")
+        recorded_at = entry.get("recorded_at")
+        owner.setdefault(
+            str(order_id),
+            SentOrder(
+                strategy_id=None if strategy_id is None else str(strategy_id),
+                recorded_at=recorded_at if isinstance(recorded_at, str) else None,
+            ),
+        )
+    return owner
+
+
+def fill_quantity(entry: dict[str, object], path: Path) -> float:
+    """Read a fill line's units, refusing anything that is not a positive number.
+
+    Args:
+        entry: One line of the fills log.
+        path: The log, named in the error.
+
+    Returns:
+        The units filled.
+
+    Raises:
+        ValueError: If ``quantity`` is not a finite number above zero.
+    """
     quantity = entry.get("quantity")
     if (
         isinstance(quantity, bool)
@@ -99,13 +159,7 @@ def read_ledger(account_log: Path, fills_log: Path) -> Ledger:
             quantity that is not a positive number.
         OSError: If a log exists and cannot be read.
     """
-    owner: dict[str, str | None] = {}
-    for entry in read_lines(account_log):
-        order_id = entry.get("venue_order_id")
-        if entry.get("order_outcome") != "sent" or order_id is None:
-            continue
-        strategy_id = entry.get("strategy_id")
-        owner.setdefault(str(order_id), None if strategy_id is None else str(strategy_id))
+    owner = {order_id: sent.strategy_id for order_id, sent in sent_orders(account_log).items()}
     units: dict[str | None, float] = {}
     filled: set[str] = set()
     for entry in read_lines(fills_log):
@@ -115,7 +169,7 @@ def read_ledger(account_log: Path, fills_log: Path) -> Ledger:
         side = entry.get("side")
         if side not in ("buy", "sell"):
             raise ValueError(f"{fills_log.as_posix()} holds a fill whose side is {side!r}")
-        quantity = _quantity(entry, fills_log)
+        quantity = fill_quantity(entry, fills_log)
         strategy_id = owner[order_id]
         units[strategy_id] = units.get(strategy_id, 0.0) + (
             quantity if side == "buy" else -quantity
