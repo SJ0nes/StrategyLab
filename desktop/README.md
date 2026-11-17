@@ -207,7 +207,8 @@ window refused, the server's lifeline closed when the window goes or the server
 fails to start (missing `uv`, a process that cannot run, an exit before ready,
 no port within a minute), a pipe error from a server already gone ignored, and
 a second copy of the app starting no server and bringing the open window to
-the front instead. A
+the front instead (also seen to work in the real window, minimized and opened
+again from the shortcut, on Windows on 2026-11-17). A
 stand-in shows what `main.ts` asks Electron to do, not what Electron does with
 it. What Electron does is checked by `npm run smoke`, against the real window:
 whether the page's script can see the token or Node, whether the header reaches
