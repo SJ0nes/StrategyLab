@@ -294,6 +294,16 @@ describe("when the server cannot be started", () => {
     await vi.waitFor(() => expect(app.exit).toHaveBeenCalledWith(1));
 
     expect(() => child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }))).not.toThrow();
+    expect(console.error).not.toHaveBeenCalledWith(expect.objectContaining({ code: "EPIPE" }));
+  });
+
+  it("reports, without stopping, any other error on the lifeline", async () => {
+    await opened();
+    const other = Object.assign(new Error("write ECONNRESET"), { code: "ECONNRESET" });
+
+    expect(() => child.stdin.emit("error", other)).not.toThrow();
+    expect(console.error).toHaveBeenCalledWith(other);
+    expect(app.exit).not.toHaveBeenCalled();
   });
 
   it("stops when the server exits before it is ready", async () => {
