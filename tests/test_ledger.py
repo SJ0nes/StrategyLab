@@ -241,3 +241,24 @@ def test_units_held_or_awaited_by_deployed_strategies_are_named() -> None:
 
     assert holding is not None and "alpha, beta" in holding
     assert waiting is not None and "gamma" in waiting and "None" not in waiting
+
+
+def test_a_strategy_that_sold_all_it_bought_does_not_stop_a_hand_run(
+    logs: tuple[Path, Path],
+) -> None:
+    # 0.1 + 0.2 - 0.3 is 5.55e-17 in floating point, not zero: a strategy that
+    # has sold everything it bought can still show a remainder far below a
+    # unit, and that remainder must not block a check run by hand for ever.
+    account, fills = logs
+    _sent(account, "1", "alpha")
+    _sent(account, "2", "alpha")
+    _sent(account, "3", "alpha", Side.SELL)
+    _filled(fills, "1", 0.1)
+    _filled(fills, "2", 0.2)
+    _filled(fills, "3", 0.3, Side.SELL)
+
+    ledger = read_ledger(account, fills)
+
+    assert ledger.held("alpha") != 0.0
+    assert abs(ledger.held("alpha")) < AGREEMENT_TOLERANCE_UNITS
+    assert deployed_holdings(ledger) is None
