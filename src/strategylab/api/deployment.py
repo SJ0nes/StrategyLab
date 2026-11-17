@@ -46,11 +46,16 @@ from strategylab.api.reading import (
     params_or_none,
     read_json_object,
     text_or_none,
+    without_root,
 )
 from strategylab.api.registry import StrategyFile, find_strategy
 from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH
 from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH
-from strategylab.live.ledger import AGREEMENT_TOLERANCE_UNITS, read_ledger
+from strategylab.live.ledger import (
+    AGREEMENT_TOLERANCE_UNITS,
+    DEFAULT_CORRECTIONS_LOG_PATH,
+    read_ledger,
+)
 from strategylab.live.worker import STRATEGY_ID
 
 #: The deployment and the switch, relative to the project root.
@@ -417,9 +422,15 @@ def undeploy(root: Path, strategy_id: str) -> None:
         if len(kept) == len(entries):
             raise DeployRefused("that strategy is not deployed")
         try:
-            ledger = read_ledger(root / DEFAULT_ACCOUNT_LOG_PATH, root / DEFAULT_FILLS_LOG_PATH)
+            ledger = read_ledger(
+                root / DEFAULT_ACCOUNT_LOG_PATH,
+                root / DEFAULT_FILLS_LOG_PATH,
+                root / DEFAULT_CORRECTIONS_LOG_PATH,
+            )
         except (ValueError, OSError) as exc:
-            raise DeployRefused(f"what it holds cannot be read: {exc}") from exc
+            raise DeployRefused(
+                f"what it holds cannot be read: {without_root(str(exc), root)}"
+            ) from exc
         if strategy_id in ledger.waiting:
             raise DeployRefused("it has an order whose fill is not yet recorded")
         held = ledger.held(strategy_id)

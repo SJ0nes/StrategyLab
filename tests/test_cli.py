@@ -588,6 +588,42 @@ def _run_against(
     return invoke("run", searched.as_posix())
 
 
+class _OrderedVenue(_FlatVenue):
+    """A flat venue that notes the order it was asked for fills and for the position."""
+
+    def __init__(self) -> None:
+        """Script no fills and note nothing yet."""
+        super().__init__([])
+        self.asked: list[str] = []
+
+    def reconcile(self) -> Any:
+        """Note the position was read."""
+        self.asked.append("position")
+        return super().reconcile()
+
+    def get_fills(self, ticker: str) -> list[Any]:
+        """Note the fills were read."""
+        self.asked.append("fills")
+        return super().get_fills(ticker)
+
+
+def test_run_reads_the_fills_before_the_position(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fill recorded by this check must already be in the position it records,
+    # or settling that record would take the fill's units from a strategy.
+    Path("state").mkdir(exist_ok=True)
+    Path("state/account-live.jsonl").write_text(
+        json.dumps({"order_outcome": "sent", "venue_order_id": "41"}) + "\n", encoding="utf-8"
+    )
+    venue = _OrderedVenue()
+
+    code, output = _run_against(venue, searched, monkeypatch)
+
+    assert code == 0, output
+    assert venue.asked == ["fills", "position"]
+
+
 def test_run_records_an_earlier_orders_fill_before_deciding(
     searched: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -871,6 +907,47 @@ def test_units_the_ledgers_cannot_account_for_stop_every_order(
     assert venue.orders == []
     assert "No order sent" in output
     assert "holds 3 units" in output
+
+
+def test_a_correction_clears_the_block_and_the_exit_sells_what_is_left(
+    searched: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The operator's example: alpha bought 10, 2 were sold by hand, the venue
+    # holds 8. Blocked until a correction gives alpha -2; then its exit sells 8.
+    _forced(monkeypatch, "exit_long")
+    _sent_and_filled("alpha", "1", "buy", 10.0)
+    blocked = _HoldingVenue(8.0)
+
+    code, output = _run_as(blocked, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert blocked.orders == []
+    assert "No order sent" in output
+    Path("state/corrections-live.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "recorded_at": "2026-11-19T09:00:00+00:00",
+                "strategy_id": "alpha",
+                "units": -2.0,
+                "venue_units": 8.0,
+                "recorded_units": 10.0,
+                "snapshot_at": "2026-11-18T17:45:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # The next check is on the next bar; the fixture has one, so forget this one.
+    Path("state/live/alpha/decisions-live.jsonl").unlink()
+    settled = _HoldingVenue(8.0)
+
+    code, output = _run_as(settled, searched, monkeypatch, "--strategy-id", "alpha")
+
+    assert code == 0, output
+    assert settled.orders, output
+    (order,) = settled.orders
+    assert (order.side.value, order.quantity) == ("sell", 8.0)
 
 
 def test_a_damaged_ledger_stops_the_check(searched: Path, monkeypatch: pytest.MonkeyPatch) -> None:

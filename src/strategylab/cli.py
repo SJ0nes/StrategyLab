@@ -34,6 +34,7 @@ from strategylab.live.account import DEFAULT_ACCOUNT_LOG_PATH, account_record, w
 from strategylab.live.fills import DEFAULT_FILLS_LOG_PATH, record_fills
 from strategylab.live.ledger import (
     AGREEMENT_TOLERANCE_UNITS,
+    DEFAULT_CORRECTIONS_LOG_PATH,
     deployed_holdings,
     disagreement,
     read_ledger,
@@ -1200,17 +1201,18 @@ def run(
     symbol_map = {ticker: venue_ticker} if venue_ticker else None
     try:
         venue = T212Venue(key, environment, api_secret=pair, symbol_map=symbol_map)
-        reconciled = venue.reconcile()
-        balance = venue.get_balance()
-        positions = list(reconciled.venue_positions)
     except (T212Error, ValueError, OSError) as exc:
         err_console.print(f"[bold red]venue[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
-    for line in reconciled.discrepancies:
-        console.print(f"  [yellow]reconciled[/yellow] {line}")
     # What earlier checks' orders filled at. A record of what happened, read
     # before deciding and fed into nothing: a failure here is reported and the
     # check goes on.
+    # READ BEFORE THE POSITION, so every fill recorded here is already in the
+    # position read next. Read after it, a fill landing in between would be in
+    # the ledgers and not in the position this check records, and settling that
+    # record (docs/decisions/0024) would take those units from a strategy. Read
+    # first, such a fill is in the position while its order still waits for a
+    # recorded fill, and nothing is settled while an order waits.
     try:
         for filled in record_fills(
             venue, ticker, now, DEFAULT_ACCOUNT_LOG_PATH, DEFAULT_FILLS_LOG_PATH
@@ -1221,6 +1223,15 @@ def run(
             )
     except (T212Error, ValueError, OSError) as exc:
         err_console.print(f"[yellow]fills[/yellow] {exc}; the check goes on without them")
+    try:
+        reconciled = venue.reconcile()
+        balance = venue.get_balance()
+        positions = list(reconciled.venue_positions)
+    except (T212Error, ValueError, OSError) as exc:
+        err_console.print(f"[bold red]venue[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    for line in reconciled.discrepancies:
+        console.print(f"  [yellow]reconciled[/yellow] {line}")
 
     # ONE DECISION PER BAR. On a bank holiday, or before the day's prices are
     # out, the newest bar is one an earlier check decided; deciding it again
@@ -1247,7 +1258,9 @@ def run(
     # nothing while deployed strategies hold or await units of their own.
     held_units: float | None = None
     try:
-        ledger = read_ledger(DEFAULT_ACCOUNT_LOG_PATH, DEFAULT_FILLS_LOG_PATH)
+        ledger = read_ledger(
+            DEFAULT_ACCOUNT_LOG_PATH, DEFAULT_FILLS_LOG_PATH, DEFAULT_CORRECTIONS_LOG_PATH
+        )
     except (ValueError, OSError) as exc:
         err_console.print(f"[bold red]ledger[/bold red] {exc}")
         raise typer.Exit(code=1) from exc

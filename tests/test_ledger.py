@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -14,10 +15,14 @@ from strategylab.live.account import account_record, write_account
 from strategylab.live.fills import fill_record, write_fill
 from strategylab.live.ledger import (
     AGREEMENT_TOLERANCE_UNITS,
+    Correction,
     Ledger,
     deployed_holdings,
     disagreement,
+    disagreement_with,
+    read_corrections,
     read_ledger,
+    write_correction,
 )
 
 NOW = datetime(2026, 11, 18, 17, 40, tzinfo=UTC)
@@ -65,8 +70,12 @@ def _filled(log: Path, order_id: str, quantity: float, side: Side = Side.BUY) ->
     write_fill(fill_record(fill, NOW), log)
 
 
+def _ledger(account: Path, fills: Path) -> Ledger:
+    return read_ledger(account, fills, account.parent / "corrections-live.jsonl")
+
+
 def test_no_logs_is_an_empty_ledger(logs: tuple[Path, Path]) -> None:
-    ledger = read_ledger(*logs)
+    ledger = _ledger(*logs)
 
     assert ledger == Ledger()
     assert (ledger.held("a"), ledger.total()) == (0.0, 0.0)
@@ -81,7 +90,7 @@ def test_each_strategy_holds_its_own_buys_less_its_own_sells(logs: tuple[Path, P
     _filled(fills, "2", 2.25)
     _filled(fills, "3", 1.5, Side.SELL)
 
-    ledger = read_ledger(account, fills)
+    ledger = _ledger(account, fills)
 
     assert ledger.units == {"a": 3.0, "b": 2.25}
     assert ledger.total() == 5.25
@@ -96,7 +105,7 @@ def test_a_sent_order_with_no_fill_yet_counts_nothing_and_its_strategy_waits(
     _sent(account, "2", "b")
     _filled(fills, "1", 4.0)
 
-    ledger = read_ledger(account, fills)
+    ledger = _ledger(account, fills)
 
     assert ledger.units == {"a": 4.0}
     assert ledger.waiting == frozenset({"b"})
@@ -107,7 +116,7 @@ def test_a_check_run_by_hand_is_counted_under_none(logs: tuple[Path, Path]) -> N
     _sent(account, "1", None)
     _filled(fills, "1", 2.0)
 
-    ledger = read_ledger(account, fills)
+    ledger = _ledger(account, fills)
 
     assert ledger.units == {None: 2.0}
     assert ledger.held(None) == 2.0
@@ -119,7 +128,7 @@ def test_a_fill_of_an_order_no_check_sent_is_not_counted(logs: tuple[Path, Path]
     _filled(fills, "1", 2.0)
     _filled(fills, "99", 50.0)
 
-    assert read_ledger(account, fills).units == {"a": 2.0}
+    assert _ledger(account, fills).units == {"a": 2.0}
 
 
 def test_an_order_filled_twice_in_the_log_counts_once(logs: tuple[Path, Path]) -> None:
@@ -128,7 +137,7 @@ def test_an_order_filled_twice_in_the_log_counts_once(logs: tuple[Path, Path]) -
     _filled(fills, "1", 2.0)
     _filled(fills, "1", 7.0)
 
-    assert read_ledger(account, fills).units == {"a": 2.0}
+    assert _ledger(account, fills).units == {"a": 2.0}
 
 
 def test_an_order_id_sent_twice_belongs_to_the_first_line(logs: tuple[Path, Path]) -> None:
@@ -137,7 +146,7 @@ def test_an_order_id_sent_twice_belongs_to_the_first_line(logs: tuple[Path, Path
     _sent(account, "1", "b")
     _filled(fills, "1", 2.0)
 
-    assert read_ledger(account, fills).units == {"a": 2.0}
+    assert _ledger(account, fills).units == {"a": 2.0}
 
 
 @pytest.mark.parametrize(
@@ -160,7 +169,7 @@ def test_a_damaged_fill_of_a_sent_order_is_refused(
     fills.write_text(json.dumps(line) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="side|quantity"):
-        read_ledger(account, fills)
+        _ledger(account, fills)
 
 
 def test_an_infinite_quantity_is_refused(logs: tuple[Path, Path]) -> None:
@@ -169,7 +178,7 @@ def test_an_infinite_quantity_is_refused(logs: tuple[Path, Path]) -> None:
     fills.write_text('{"venue_order_id": "1", "side": "buy", "quantity": Infinity}\n', "utf-8")
 
     with pytest.raises(ValueError, match="quantity"):
-        read_ledger(account, fills)
+        _ledger(account, fills)
 
 
 VUAG = Position(ticker="VUAG.L", quantity=5.25, average_price=1.0, market_value=5.25)
@@ -211,7 +220,7 @@ def test_an_id_on_a_line_that_was_not_sent_owns_nothing(logs: tuple[Path, Path])
     )
     _filled(fills, "5", 3.0)
 
-    ledger = read_ledger(account, fills)
+    ledger = _ledger(account, fills)
 
     assert (ledger.units, ledger.waiting) == ({}, frozenset())
 
@@ -257,8 +266,82 @@ def test_a_strategy_that_sold_all_it_bought_does_not_stop_a_hand_run(
     _filled(fills, "2", 0.2)
     _filled(fills, "3", 0.3, Side.SELL)
 
-    ledger = read_ledger(account, fills)
+    ledger = _ledger(account, fills)
 
     assert ledger.held("alpha") != 0.0
     assert abs(ledger.held("alpha")) < AGREEMENT_TOLERANCE_UNITS
     assert deployed_holdings(ledger) is None
+
+
+def _correction(strategy_id: str, units: float) -> Correction:
+    return Correction(
+        schema_version=1,
+        recorded_at="2026-11-19T09:00:00+00:00",
+        strategy_id=strategy_id,
+        units=units,
+        venue_units=8.0,
+        recorded_units=10.0,
+        snapshot_at="2026-11-18T17:40:00+00:00",
+    )
+
+
+def test_a_correction_gives_its_units_to_the_strategy_named(logs: tuple[Path, Path]) -> None:
+    # The records say alpha holds 10; the venue holds 8 after 2 were sold by
+    # hand. A correction of -2 to alpha leaves it 8, which agrees.
+    account, fills = logs
+    corrections = account.parent / "corrections-live.jsonl"
+    _sent(account, "1", "alpha")
+    _sent(account, "2", "beta")
+    _filled(fills, "1", 10.0)
+    _filled(fills, "2", 3.0)
+    assert disagreement_with(_ledger(account, fills), 11.0, "VUAG.L") is not None
+
+    write_correction(_correction("alpha", -2.0), corrections)
+    ledger = _ledger(account, fills)
+
+    assert ledger.units == {"alpha": 8.0, "beta": 3.0}
+    assert disagreement_with(ledger, 11.0, "VUAG.L") is None
+    assert read_corrections(corrections) == [_correction("alpha", -2.0)]
+
+
+def test_a_correction_can_give_units_to_a_strategy_that_had_none(logs: tuple[Path, Path]) -> None:
+    account, fills = logs
+    corrections = account.parent / "corrections-live.jsonl"
+    write_correction(_correction("gamma", 1.5), corrections)
+
+    assert _ledger(account, fills).units == {"gamma": 1.5}
+
+
+def test_the_venues_units_are_compared_as_given() -> None:
+    ledger = Ledger(units={"alpha": 4.0})
+
+    assert disagreement_with(ledger, 4.0, "VUAG.L") is None
+    said = disagreement_with(ledger, 6.5, "VUAG.L")
+    assert said is not None and "6.5" in said and "4" in said
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": 2},
+        {"strategy_id": None},
+        {"recorded_at": "2026-11-19T09:00:00"},
+        {"recorded_at": "soon"},
+        {"units": 0},
+        {"units": "2"},
+        {"units": float("inf")},
+        {"units": True},
+        {"venue_units": None},
+        {"recorded_units": float("nan")},
+    ],
+)
+def test_a_line_that_is_not_a_correction_is_refused(
+    logs: tuple[Path, Path], change: dict[str, object]
+) -> None:
+    account, fills = logs
+    corrections = account.parent / "corrections-live.jsonl"
+    line = {**asdict(_correction("alpha", -2.0)), **change}
+    corrections.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not a correction"):
+        _ledger(account, fills)

@@ -74,6 +74,27 @@ def plain_reason(root: Path, error: Exception) -> str:
     return message
 
 
+def without_root(text: str, root: Path) -> str:
+    """Take the project root out of a message, in either slash style.
+
+    An error raised while reading a file names its full path, which on this
+    machine includes the user's name. The window, and so anyone shown it,
+    needs only the path inside the project.
+
+    Args:
+        text: The message.
+        root: The project root.
+
+    Returns:
+        The message with ``root`` and the separator after it removed, whether
+        written with forward slashes or the platform's own.
+    """
+    for form in {root.as_posix(), str(root)}:
+        for separator in ("/", "\\"):
+            text = text.replace(form + separator, "")
+    return text
+
+
 def missing(reason: str) -> dict[str, Any]:
     """Return the shape that stands for a figure which could not be read.
 

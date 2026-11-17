@@ -19,7 +19,7 @@ from strategylab.core.types import Side
 from strategylab.execution.venue import Balance, Charge, Fill, Order, OrderId, OrderType
 from strategylab.live.account import account_record, write_account
 from strategylab.live.fills import fill_record, write_fill
-from strategylab.live.ledger import AGREEMENT_TOLERANCE_UNITS
+from strategylab.live.ledger import AGREEMENT_TOLERANCE_UNITS, Correction, write_correction
 from strategylab.live.trades import OwnFill, own_fills, own_trades
 
 DEPLOYED = datetime(2026, 11, 2, 18, 0, tzinfo=UTC)
@@ -79,6 +79,12 @@ def _filled(
         charges=charges,
     )
     write_fill(fill_record(fill, moment), log)
+
+
+def _own(account: Path, fills: Path, strategy_id: str) -> list[OwnFill]:
+    return own_fills(
+        account, fills, account.parent / "corrections-live.jsonl", strategy_id, DEPLOYED
+    )
 
 
 def _fill(side: str, quantity: float, price: float) -> OwnFill:
@@ -215,7 +221,7 @@ def test_only_the_strategys_own_filled_orders_since_deploying_are_read(
     _filled(fills, "2", 2, 66.0, Side.SELL)
     _filled(fills, "1", 2, 55.0)
 
-    read = own_fills(account, fills, "alpha", DEPLOYED)
+    read = _own(account, fills, "alpha")
 
     assert [(fill.order_id, fill.side, fill.quantity, fill.price) for fill in read] == [
         ("1", "buy", 2.0, 55.0),
@@ -233,7 +239,7 @@ def test_an_order_filled_twice_in_the_log_is_read_once_at_its_first_price(
     _filled(fills, "1", 1, 40.0)
     _filled(fills, "1", 1, 99.0)
 
-    assert [fill.price for fill in own_fills(account, fills, "alpha", DEPLOYED)] == [40.0]
+    assert [fill.price for fill in _own(account, fills, "alpha")] == [40.0]
 
 
 def test_only_non_zero_charges_are_kept(logs: tuple[Path, Path]) -> None:
@@ -247,7 +253,7 @@ def test_only_non_zero_charges_are_kept(logs: tuple[Path, Path]) -> None:
         charges=(Charge("FX_FEE", 0.0, "GBP"), Charge("STAMP_DUTY_RESERVE_TAX", -0.2, "GBP")),
     )
 
-    read = own_fills(account, fills, "alpha", DEPLOYED)
+    read = _own(account, fills, "alpha")
 
     assert read[0].charges == (
         {"name": "STAMP_DUTY_RESERVE_TAX", "amount": -0.2, "currency": "GBP"},
@@ -269,7 +275,7 @@ def test_a_fill_whose_price_is_not_a_positive_number_is_refused(
     _raw(fills, {"venue_order_id": "1", "side": "buy", "quantity": 1.0, "price": price})
 
     with pytest.raises(ValueError, match="price is not a positive number"):
-        own_fills(account, fills, "alpha", DEPLOYED)
+        _own(account, fills, "alpha")
 
 
 def test_a_fill_with_an_unknown_side_is_refused(logs: tuple[Path, Path]) -> None:
@@ -278,7 +284,7 @@ def test_a_fill_with_an_unknown_side_is_refused(logs: tuple[Path, Path]) -> None
     _raw(fills, {"venue_order_id": "1", "side": "short", "quantity": 1.0, "price": 10.0})
 
     with pytest.raises(ValueError, match="side is 'short'"):
-        own_fills(account, fills, "alpha", DEPLOYED)
+        _own(account, fills, "alpha")
 
 
 def test_a_sent_order_of_the_strategy_with_no_time_is_refused(logs: tuple[Path, Path]) -> None:
@@ -296,6 +302,127 @@ def test_a_sent_order_of_the_strategy_with_no_time_is_refused(logs: tuple[Path, 
     _filled(fills, "2", 1, 30.0)
 
     with pytest.raises(ValueError, match="no time it was recorded"):
-        own_fills(account, fills, "alpha", DEPLOYED)
+        _own(account, fills, "alpha")
     # Another strategy's line without a time does not stop this one being read.
-    assert [fill.order_id for fill in own_fills(account, fills, "beta", DEPLOYED)] == ["2"]
+    assert [fill.order_id for fill in _own(account, fills, "beta")] == ["2"]
+
+
+# --------------------------------------------------------------------------
+# Corrections (docs/decisions/0024).
+# --------------------------------------------------------------------------
+
+
+def _correction(units: float) -> OwnFill:
+    return OwnFill(
+        order_id="correction",
+        side="correction",
+        quantity=units,
+        price=None,
+        currency=None,
+        filled_at=None,
+        charges=(),
+    )
+
+
+def test_two_units_sold_by_hand_and_corrected_still_leave_the_trade_counted() -> None:
+    # Bought 10 at 100; 2 sold by hand and corrected away; the strategy sells
+    # its 8 at 110. 110 / 100 - 1 = 10%: the ratio does not depend on units.
+    trades = own_trades([_fill("buy", 10, 100.0), _correction(-2.0), _fill("sell", 8, 110.0)])
+
+    assert trades.return_pct == pytest.approx(10.0)
+    assert (trades.closed, trades.left_out, trades.why_missing) == (1, 0, None)
+
+
+def test_a_trade_a_correction_closes_is_left_out_and_later_trades_count() -> None:
+    # The first trade ends in a correction, so it has no sale price. The second,
+    # 60 / 50 - 1 = 20%, is the whole return.
+    trades = own_trades(
+        [
+            _fill("buy", 5, 100.0),
+            _correction(-5.0),
+            _fill("buy", 2, 50.0),
+            _fill("sell", 2, 60.0),
+        ]
+    )
+
+    assert trades.return_pct == pytest.approx(20.0)
+    assert (trades.closed, trades.left_out) == (1, 1)
+
+
+def test_a_trade_a_correction_adds_units_to_is_left_out() -> None:
+    trades = own_trades([_fill("buy", 5, 100.0), _correction(1.0), _fill("sell", 6, 130.0)])
+
+    assert trades.return_pct is None
+    assert (trades.closed, trades.left_out) == (0, 1)
+    assert trades.why_missing == "no trade has closed without a correction; 1 left out"
+
+
+def test_units_a_correction_gives_a_strategy_holding_none_are_open_with_no_price() -> None:
+    opened = own_trades([_correction(3.0)])
+    sold = own_trades([_correction(3.0), _fill("sell", 3, 90.0)])
+
+    assert opened.open is not None and opened.open.price is None
+    assert opened.why_missing == "no trade has closed yet; one is open"
+    assert (sold.return_pct, sold.left_out) == (None, 1)
+
+
+def test_a_correction_that_takes_from_a_strategy_holding_none_gives_no_return() -> None:
+    trades = own_trades([_correction(-1.0)])
+
+    assert trades.return_pct is None
+    assert trades.why_missing == "a correction took units from the strategy while it held none"
+
+
+def test_corrections_are_read_in_time_order_and_only_the_strategys_since_deploying(
+    logs: tuple[Path, Path],
+) -> None:
+    account, fills = logs
+    corrections = account.parent / "corrections-live.jsonl"
+    _sent(account, "1", "alpha", days=1)
+    _sent(account, "2", "alpha", Side.SELL, days=3)
+    _filled(fills, "1", 10, 100.0)
+    _filled(fills, "2", 8, 110.0, Side.SELL)
+    for when, strategy_id, units in [
+        (DEPLOYED - timedelta(days=1), "alpha", 5.0),
+        (DEPLOYED + timedelta(days=2), "alpha", -2.0),
+        (DEPLOYED + timedelta(days=2), "beta", 4.0),
+    ]:
+        write_correction(
+            Correction(
+                schema_version=1,
+                recorded_at=when.isoformat(),
+                strategy_id=strategy_id,
+                units=units,
+                venue_units=0.0,
+                recorded_units=0.0,
+                snapshot_at=when.isoformat(),
+            ),
+            corrections,
+        )
+
+    read = _own(account, fills, "alpha")
+
+    assert [(fill.side, fill.quantity) for fill in read] == [
+        ("buy", 10.0),
+        ("correction", -2.0),
+        ("sell", 8.0),
+    ]
+    assert own_trades(read).return_pct == pytest.approx(10.0)
+
+
+def test_a_purchase_while_corrected_units_are_held_continues_that_trade() -> None:
+    # A correction gave the strategy 3 units with no price; a purchase of 2 on
+    # top and a sale of all 5 is one trade, left out. The trade after it,
+    # 60 / 50 - 1 = 20%, still counts.
+    trades = own_trades(
+        [
+            _correction(3.0),
+            _fill("buy", 2, 100.0),
+            _fill("sell", 5, 110.0),
+            _fill("buy", 1, 50.0),
+            _fill("sell", 1, 60.0),
+        ]
+    )
+
+    assert trades.return_pct == pytest.approx(20.0)
+    assert (trades.closed, trades.left_out) == (1, 1)

@@ -49,8 +49,10 @@ from strategylab.api.reading import (
     parse_json,
     read_json_object,
     text_or_none,
+    without_root,
 )
 from strategylab.backtest.metrics import max_drawdown, sharpe
+from strategylab.live.ledger import DEFAULT_CORRECTIONS_LOG_PATH
 from strategylab.live.trades import own_fills, own_trades
 from strategylab.live.worker import live_log_path
 
@@ -332,9 +334,17 @@ def _own(root: Path, strategy_id: str, since: datetime) -> dict[str, Any]:
         fills counted, with the venue's sign; and ``why_missing``.
     """
     try:
-        trades = own_trades(own_fills(root / ACCOUNT_LOG, root / FILLS_LOG, strategy_id, since))
+        trades = own_trades(
+            own_fills(
+                root / ACCOUNT_LOG,
+                root / FILLS_LOG,
+                root / DEFAULT_CORRECTIONS_LOG_PATH,
+                strategy_id,
+                since,
+            )
+        )
     except (ValueError, OSError) as exc:
-        detail = str(exc).replace(root.as_posix() + "/", "")
+        detail = without_root(str(exc), root)
         return missing(f"The strategy's own trades could not be read: {detail}")
     bought = trades.open
     return {
@@ -352,6 +362,7 @@ def _own(root: Path, strategy_id: str, since: datetime) -> dict[str, Any]:
         },
         "charges": [dict(charge) for charge in trades.charges],
         "why_missing": trades.why_missing,
+        "left_out": trades.left_out,
     }
 
 
