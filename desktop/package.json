@@ -12,6 +12,7 @@
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.electron.json",
     "start": "npm run build && electron .",
     "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
   "dependencies": {
