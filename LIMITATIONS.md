@@ -241,7 +241,7 @@ against a mid and an open is a traded price, so using it as the mid is an
 approximation — a smaller error than the one it avoids, and stated rather than
 hidden. The last bar's signal is recorded and never filled.
 
-2612 tests pass (`uv run pytest`). They cover the protocol loader, the window
+2613 tests pass (`uv run pytest`). They cover the protocol loader, the window
 accessors, the data layer, the cost model, the strategy-config loader, strategy
 evaluation, the performance metrics, the backtest engine, grid expansion,
 plateau scoring, the graveyard, the search loop, the noise ceiling, the reports,
@@ -249,7 +249,7 @@ walk-forward validation, the candidate reader, the decision log, the risk layer,
 the Trading 212 adapter, the live worker, the fills log, each strategy's ledger, the command-line wiring, the app's
 server and what it reports, and the commit-time credential scan — thirty-three
 areas, one per test file.
-520 of the 2612 are the risk layer's,
+520 of the 2613 are the risk layer's,
 and that is a statement about parameterisation rather than about importance.
 Thirty-four more arrived with the daily-loss latch: six assertions at those four equities, four asserting an exception and six a returned value, one of them a rejection from `check`. The figures that follow describe the 486 before
 that. 316 of those 486 are assertions repeated at four account equities, because at an
@@ -999,7 +999,7 @@ decision record until it has been read beside the venue's own account page.
 - **The mutation figures in older commit messages cannot be re-run from the
   repository; newer mutants can.** The harness that produced the early figures
   lived outside it, and `docs/decisions/0006` lists that as a past finding.
-  `tests/mutation/` now holds a harness and a list of named mutants in sixteen
+  `tests/mutation/` now holds a harness and a list of named mutants in seventeen
   groups: `uv run python tests/mutation/run.py` applies each one, runs the
   tests named for its group, restores the file, and exits non-zero if any
   mutant survives. It covers the work done since it was written, not the whole
