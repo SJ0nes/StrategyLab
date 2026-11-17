@@ -322,4 +322,15 @@ describe("one window at a time", () => {
     expect(app.setAppUserModelId).toHaveBeenCalledWith("StrategyLab");
   });
 
+  it("quits, and starts no server, when another window is already open", async () => {
+    fake.lock = false;
+    await launch();
+    fake.ready?.();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(app.quit).toHaveBeenCalled();
+    expect(app.whenReady).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(FakeWindow.made).toHaveLength(0);
+  });
 });

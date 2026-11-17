@@ -154,15 +154,17 @@ async function openWindow(): Promise<void> {
 // The same id as the desktop shortcut, so Windows shows the window under its icon.
 app.setAppUserModelId("StrategyLab");
 
+// `app.quit()` does not stop this script, so the second copy must not go on to
+// start a server of its own before it goes.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
+} else {
+  app.whenReady().then(openWindow).catch((error: unknown) => {
+    console.error(error);
+    stopServer();
+    app.exit(1);
+  });
 }
-
-app.whenReady().then(openWindow).catch((error: unknown) => {
-  console.error(error);
-  stopServer();
-  app.exit(1);
-});
 
 app.on("window-all-closed", () => {
   stopServer();
