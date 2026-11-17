@@ -189,7 +189,7 @@ Full version, with every module marked and every test counted, in
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Both commands below
 were last run with an empty `data/` cache:
-**2636 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
+**2679 passed**, and `status` reported `data  not cached` and pointed at `fetch`.
 The clone and the first `uv run` need the network to fetch dependencies; **the
 test suite itself makes no network call**, which is the property that matters.
 Three tests start the app's server as a child process and talk to it on
