@@ -184,11 +184,19 @@ No test launches Electron. What `electron/main.ts` decides is in
 `electron/policy.ts` and tested there: the server's arguments and environment,
 the port read from its ready line (a whole number from 1 to 65535, or nothing),
 the requests that carry the token, where the window may go, and which links open
-in the person's browser. The wiring that acts on those answers - spawning the
-server, the ready timeout, closing the server with the window, the one-instance
-lock - was checked by running the app and looking, twice, on Windows. The
-component tests cover the page, `findOnPath` and `policy.ts`. CI runs
-none of this: the workflow is Python only.
+in the person's browser. `tests/electron-main.test.ts` runs `main.ts` itself
+against a stand-in for Electron and for the server process: the server started
+with the policy's arguments, directory and environment, the token in no
+argument, the window opened only on the ready line's port, the window's
+isolation settings, the token added to API requests alone, every way out of the
+window refused, the server's lifeline closed when the window goes or the server
+fails to start (missing `uv`, a process that cannot run, an exit before ready,
+no port within a minute), and a second copy of the app starting no server. A
+stand-in shows what `main.ts` asks Electron to do, not what Electron does with
+it. Whether the page's script can see the token or Node, whether the header
+reaches the server, and whether a server is left after the window closes were
+checked by running the app and looking, twice, on Windows. CI runs none of
+this: the workflow is Python only.
 
 Starting a job, closing the server and finding the job still running was
 checked by hand, once, on Windows, on a copy of the project: see LIMITATIONS.

@@ -1229,14 +1229,20 @@ decisions are tested directly, without Electron: finding `uv`, the arguments and
 environment the server is started with, reading the port from its ready line,
 which requests get the token, where the window may navigate, and which links
 open outside it (`desktop/electron/policy.ts`). The wiring that carries them out
-is not: starting the server, attaching the token to requests, and refusing to
-navigate anywhere else were checked by launching the app twice on Windows and
-inspecting it. That check
-found the window showing real data, the page's script unable to see the token
-or Node, and no server process left after the window closed - and it is two
-launches on one machine, repeated by nobody else. The window now allows one
-instance of itself and can be pointed at a copy of the project; both were used
-in the check of a job described above, and neither has a test. CI does not build or test anything
+is tested against a stand-in for Electron and for the server process, never
+Electron itself (`desktop/tests/electron-main.test.ts`): it shows what the main
+process asks Electron to do - start the server as the policy says, add the token
+to API requests only, refuse every way out of the window, close the server's
+lifeline when the window goes or the server fails to start, and start no server
+in a second copy of the app - and nothing about what Electron does with it.
+Writing that test found the second copy starting a server of its own before it
+quit; it no longer does. What only a real launch shows was checked by launching
+the app twice on Windows and inspecting it. That check found the window showing
+real data, the page's script unable to see the token or Node, and no server
+process left after the window closed - and it is two launches on one machine,
+repeated by nobody else. The window can be pointed at a copy of the project;
+that was used in the check of a job described above, and has a test against the
+stand-in only. CI does not build or test anything
 under `desktop/`. Every screen was compared with the approved mock in the real
 window at two sizes, by the assistant that built them, with a strategy deployed
 on a copy of the project; `desktop/README.md` lists where they differ and why.
