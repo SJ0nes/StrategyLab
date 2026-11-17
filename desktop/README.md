@@ -108,7 +108,7 @@ are all places where the mock shows something the project does not have:
 | Dashboard, deployed | Return since deployed, the strategy's | With several strategies deployed, "Its own return": its closed trades chained, before charges, with the account's return beside it | The account's equity is every strategy's together; charges carry an undocumented sign, and no price for an open trade is recorded (`docs/decisions/0023`) |
 | Dashboard, deployed | 1M / 3M / All on the account chart; a Recent tests card | One range; Recent decisions instead | A few weeks of checks need no range; tests are on Tests |
 | Top bar | "Stop all buying… selling still allowed" | "Stop all trading" | The risk layer cannot block buying alone, and the app may not add that to it (`docs/decisions/0019`) |
-| Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches | Several strategies can now be deployed, and each one's own return is on its Dashboard (`docs/decisions/0023`); Compare does not show it yet |
+| Compare | Two deployed strategies over 90 days live | Any two strategies on their newest searches, and for a deployed one its own return from its closed trades, before charges, and how many have closed; no live chart | A few weeks of closed trades are a handful of points, and an open trade has no recorded price (`docs/decisions/0023`) |
 
 ## Opening it from the desktop
 

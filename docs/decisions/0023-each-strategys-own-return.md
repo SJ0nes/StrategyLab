@@ -68,5 +68,6 @@ that strategy's, and the card is unchanged.
 
 - A strategy that has not closed a trade shows no return, however long it has
   held, until it sells.
-- Compare does not show live figures yet; a strategy's own return is what it
-  would compare.
+- Compare shows each deployed strategy's own return and its count of closed
+  trades beside the search figures, and marks the better return. It marks
+  neither side on the count of trades, which is not better for being larger.
