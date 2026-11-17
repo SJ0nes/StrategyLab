@@ -59,7 +59,7 @@ function detail(sharpe: number, ret: number, fall: number, status: "passed" | "f
 }
 
 function own(returnPct: number | null, closed: number): OwnTrades {
-  return { available: true, return_pct: returnPct, closed, wins: 0, open: null, charges: [], why_missing: returnPct === null ? "no trade has closed yet" : null };
+  return { available: true, return_pct: returnPct, closed, wins: 0, open: null, charges: [], why_missing: returnPct === null ? "no trade has closed yet" : null, left_out: 0 };
 }
 
 function deployedStatus(id: string, trades: OwnTrades): DeploymentStatus {

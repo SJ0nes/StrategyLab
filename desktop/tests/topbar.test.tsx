@@ -43,6 +43,7 @@ const STATUS: DeploymentStatus = {
   venue_unready: null,
   schedule: null,
   live: null,
+  settlement: { state: "agree" },
 };
 
 function bar(chosen: string, status: DeploymentStatus | null = STATUS) {

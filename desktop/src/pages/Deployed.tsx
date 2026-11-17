@@ -13,6 +13,7 @@ import {
   changeDeployment,
 } from "../api";
 import { Chart } from "../components/Chart";
+import { SettleCard } from "../components/SettleCard";
 import { Term } from "../components/Term";
 import { signedPct, versionLabel, whenLabel } from "../words";
 
@@ -69,7 +70,7 @@ export function ownReturn(
   if (own.return_pct === null) {
     return { value: "none", note: `${own.why_missing ?? "no trade has closed yet"}; account ${account}`, tone: "" };
   }
-  const trades = `${own.closed} closed trade${own.closed === 1 ? "" : "s"}`;
+  const trades = `${own.closed} closed trade${own.closed === 1 ? "" : "s"}${own.left_out > 0 ? `, ${own.left_out} left out after a correction` : ""}`;
   return {
     value: signedPct(own.return_pct),
     note: `${trades}, before charges; account ${account}`,
@@ -157,6 +158,7 @@ export function Deployed({ strategy, deployed, status, onStart, onChanged }: Pro
           {deployed.problem}. Undeploy, then deploy it again to trade the file as it is now.
         </div>
       )}
+      <SettleCard strategy={strategy} settlement={status.settlement} onChanged={onChanged} />
       {status.live !== null && !status.live.available && (
         <div className="empty" role="alert">
           <b>The live figures could not be read</b>

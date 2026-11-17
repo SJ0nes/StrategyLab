@@ -355,11 +355,13 @@ export interface OwnTrades {
   return_pct: number | null;
   closed: number;
   wins: number;
-  /** The purchase of a trade not yet closed. Price is per unit, as the venue quoted it. */
-  open: { price: number; quantity: number; currency: string | null; filled_at: string | null } | null;
+  /** The purchase of a trade not yet closed. Price is per unit, as the venue quoted it; null when a correction gave it units. */
+  open: { price: number | null; quantity: number; currency: string | null; filled_at: string | null } | null;
   /** Each non-zero charge on the fills counted, with the venue's sign, which is not documented. */
   charges: { name: string; amount: number; currency: string }[];
   why_missing: string | null;
+  /** Trades a correction opened, added units to or closed, so left out of the return. */
+  left_out: number;
 }
 
 export interface Live {
@@ -396,9 +398,32 @@ export interface DeploymentStatus {
   /** The chosen strategy's schedule; null when no strategy was named. */
   schedule: { next_check: string | null; why_not: string | null; missed: string[]; checked_today: boolean } | null;
   live: Live | Missing | null;
+  /** Whether the strategies' units and Trading 212's position disagree, and whether that can be settled now. */
+  settlement: Settlement;
 }
 
-export const getDeployment = (strategyId: string | null): Promise<DeploymentStatus> =>
+/**
+ * The strategies' units against the venue's position at the newest check. `difference` is the venue's
+ * less the recorded, in units: what a correction would give the strategy named.
+ */
+export type Settlement =
+  | { state: "agree" }
+  | { state: "unreadable"; why: string }
+  | {
+      state: "wait" | "settle";
+      why: string;
+      venue_units: number;
+      recorded_units: number;
+      difference: number;
+      snapshot_at: string;
+      ticker: string;
+    };
+
+/** Give the whole difference to one deployed strategy. `units` is the difference the window showed. */
+export const settleDifference = (id: string, typed: string, units: number): Promise<Settlement> =>
+  post<Settlement>(`${strategyPath(id)}/settle`, { typed, units });
+
+export const getDeployment =(strategyId: string | null): Promise<DeploymentStatus> =>
   get<DeploymentStatus>(
     strategyId === null ? "/api/deployment" : `/api/deployment?strategy_id=${encodeURIComponent(strategyId)}`,
   );
