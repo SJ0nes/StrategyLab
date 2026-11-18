@@ -87,6 +87,7 @@ from strategylab.search.loop import (
     trade_fingerprint,
     write_search_result,
 )
+from strategylab.search.noise import noise_ceiling
 from strategylab.search.plateau import FINGERPRINT_COLUMN, METRIC_COLUMN, plateau_score
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1986,7 +1987,7 @@ def test_a_search_hands_its_process_count_to_the_ceiling(
     # The count cannot be seen in the result - that is the point of it - so the
     # only way to know the search passed it on is to watch the call.
     handed: dict[str, Any] = {}
-    real = loop_module.noise_ceiling
+    real = noise_ceiling
 
     def watching(*args: Any, **kwargs: Any) -> pd.Series:
         handed.update(kwargs)

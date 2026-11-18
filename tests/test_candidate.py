@@ -571,7 +571,7 @@ def test_a_recorded_hash_that_is_simply_wrong_is_refused(tmp_path: Path) -> None
 # --------------------------------------------------------------------------
 
 #: Gate objects for every status short of a pass, with counts that agree with it.
-SHORT_OF_A_PASS = {
+SHORT_OF_A_PASS: dict[str, dict[str, Any]] = {
     "not_computed": {"scoreable_trials": 0, "beaten": None, "required": None},
     "undetermined": {"scoreable_trials": 20, "beaten": 19, "required": 19},
     "failed": {"scoreable_trials": 100, "beaten": 12, "required": 95},

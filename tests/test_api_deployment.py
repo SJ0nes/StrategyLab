@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from strategylab.api.app import MIN_TOKEN_CHARS, create_app
 from strategylab.api.deployment import (
+    CHECK_AFTER,
     DEPLOYMENT_FILE,
     STOP_ALL_FILE,
     DeployRefused,
@@ -48,7 +49,6 @@ from strategylab.api.jobs import (
 from strategylab.api.live import MIN_CHECKS_FOR_SHARPE, read_live
 from strategylab.api.registry import StrategyFile, find_strategy
 from strategylab.api.schedule import (
-    CHECK_AFTER,
     checked_days,
     due,
     missed_days,

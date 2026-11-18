@@ -29,15 +29,35 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from strategylab.execution.venue import Fill, Venue
+from strategylab.execution.venue import Fill
 
 #: Where ``run`` appends, relative to the working directory.
 DEFAULT_FILLS_LOG_PATH = Path("state/fills-live.jsonl")
 
 #: Schema version of one line.
 FILLS_SCHEMA_VERSION = 1
+
+
+class FillHistory(Protocol):
+    """The one part of a venue that recording fills asks for.
+
+    Every :class:`~strategylab.execution.venue.Venue` is one. Naming only this
+    method says that recording fills reads the venue's order history and can
+    send, cancel or reconcile nothing.
+    """
+
+    def get_fills(self, ticker: str) -> list[Fill]:
+        """Return the newest fills the venue reports for one instrument.
+
+        Args:
+            ticker: The symbol as the protocol names it.
+
+        Returns:
+            The fills, newest first.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -174,7 +194,7 @@ def write_fill(entry: FillRecord, path: Path = DEFAULT_FILLS_LOG_PATH) -> None:
 
 
 def record_fills(
-    venue: Venue,
+    venue: FillHistory,
     ticker: str,
     now: datetime,
     account_log: Path,

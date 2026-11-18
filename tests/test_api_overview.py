@@ -135,7 +135,7 @@ def test_cached_prices_are_described_from_their_provenance(project: Path) -> Non
 def test_a_cache_altered_after_it_was_written_is_missing_not_trusted(project: Path) -> None:
     _cache(project)
     bars = pd.read_parquet(FIXTURE_BARS)
-    bars.iloc[0, 0] += 1.0
+    bars.iloc[0:1, 0] += 1.0
     bars.to_parquet(project / "data" / "SPY.parquet")
 
     prices = read_overview(project, {})["prices"]
@@ -304,7 +304,7 @@ def test_a_search_run_on_an_earlier_version_of_the_config_says_so(project: Path)
 def test_no_reason_names_the_directory_the_project_is_kept_in(project: Path) -> None:
     _cache(project)
     bars = pd.read_parquet(FIXTURE_BARS)
-    bars.iloc[0, 0] += 1.0
+    bars.iloc[0:1, 0] += 1.0
     bars.to_parquet(project / "data" / "SPY.parquet")
     (project / "configs" / "risk_limits.yaml").unlink()
     (project / "configs" / "from_a_video.yaml").write_text("name: broken\n", encoding="utf-8")

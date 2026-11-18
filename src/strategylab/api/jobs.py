@@ -396,7 +396,9 @@ def _spawn_detached(command: list[str], root: Path, log: Path, venue: bool = Fal
             "stdout": output,
             "stderr": subprocess.STDOUT,
         }
-        if os.name == "nt":
+        # `sys.platform`, not `os.name`: the type checker narrows on this test, so the
+        # Windows-only flags below are checked on Windows and skipped elsewhere.
+        if sys.platform == "win32":
             # No console window, and its own process group so that a Ctrl+C
             # meant for the server does not reach it.
             flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP

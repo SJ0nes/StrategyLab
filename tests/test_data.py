@@ -493,6 +493,7 @@ def test_fetch_returns_the_vendors_bars_in_this_projects_shape(
 
     assert list(bars.columns) == list(REQUIRED_COLUMNS)
     assert bars.index.name == "date"
+    assert isinstance(bars.index, pd.DatetimeIndex)
     assert bars.index.tz is None
     # Oldest first, though the vendor handed them over newest first.
     assert [stamp.date() for stamp in bars.index] == [

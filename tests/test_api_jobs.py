@@ -102,6 +102,19 @@ class Spawned:
         self.venue.append(venue)
 
 
+class Ran:
+    """Stands in for running a job's command: records each one and reports success."""
+
+    def __init__(self) -> None:
+        """Start with nothing run."""
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: list[str], root: Path) -> int:
+        """Record one command, run nothing, and return a success exit code."""
+        self.commands.append(command)
+        return 0
+
+
 def _start(project: Path, strategy: StrategyFile, kind: str = "luck_test") -> dict[str, Any]:
     return start_job(project, strategy, kind, NOW, spawn=Spawned())
 
@@ -630,11 +643,11 @@ def test_the_runner_runs_nothing_for_a_record_that_names_no_job(
     path = project / JOBS_DIR / f"{SEARCH_ID}.json"
     record = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(json.dumps({**record, **changes}), encoding="utf-8")
-    ran: list[list[str]] = []
+    ran = Ran()
 
-    returned = run_job(project, SEARCH_ID, lambda command, root: ran.append(command) or 0)
+    returned = run_job(project, SEARCH_ID, ran)
 
-    assert ran == []
+    assert ran.commands == []
     assert returned == COULD_NOT_RUN
     done = json.loads((project / JOBS_DIR / f"{SEARCH_ID}.done").read_text(encoding="utf-8"))
     assert done["exit_code"] == COULD_NOT_RUN
@@ -948,12 +961,12 @@ def test_a_record_that_names_a_different_job_is_not_that_job(
     path = project / JOBS_DIR / f"{LUCK_ID}.json"
     record = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(json.dumps({**record, "id": SEARCH_ID}), encoding="utf-8")
-    ran: list[list[str]] = []
+    ran = Ran()
 
-    returned = run_job(project, LUCK_ID, lambda command, root: ran.append(command) or 0)
+    returned = run_job(project, LUCK_ID, ran)
 
     assert read_job(project, LUCK_ID, NOW) is None
-    assert ran == []
+    assert ran.commands == []
     assert returned == COULD_NOT_RUN
 
 
@@ -1061,11 +1074,11 @@ def test_the_runner_refuses_a_job_whose_strategy_file_changed_after_it_started(
     path.write_text(
         path.read_text(encoding="utf-8").replace("max: 30", "max: 25"), encoding="utf-8"
     )
-    ran: list[list[str]] = []
+    ran = Ran()
 
-    returned = run_job(project, SEARCH_ID, lambda command, root: ran.append(command) or 0)
+    returned = run_job(project, SEARCH_ID, ran)
 
-    assert ran == []
+    assert ran.commands == []
     assert returned == COULD_NOT_RUN
 
 

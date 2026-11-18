@@ -32,6 +32,7 @@ import math
 import re
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1226,6 +1227,8 @@ def test_a_loss_that_cannot_be_read_has_not_been_shown_to_be_reached(
     field: str, unreadable_value: float
 ) -> None:
     state = _state(10_000.0)
-    unreadable = dataclasses.replace(state, **{field: unreadable_value})
+    # The field is chosen at run time, so the checker cannot tie the value to it.
+    changes: dict[str, Any] = {field: unreadable_value}
+    unreadable = dataclasses.replace(state, **changes)
 
     assert daily_loss_reached(unreadable, _limits()) is False
