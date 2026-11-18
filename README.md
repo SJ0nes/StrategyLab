@@ -3,8 +3,8 @@
 **StrategyLab tests whether a trading strategy has a real edge or only a lucky
 fit to past prices.** It shows statistical validation (a search is compared
 with what the same search finds on 100 block-resampled copies of history),
-walk-forward testing on 2019–2024 data the search never sees (built and tested,
-never yet run: no strategy has earned it), and a strategy rejected: the
+walk-forward testing on 2019–2024 data the search never sees (built and tested;
+no strategy has earned it, so those years are still unread), and a strategy rejected: the
 moving-average crossover the search put forward, by plateau score, had a Sharpe
 ratio of 0.64 that beat only 25 of 100 surrogates where 95 were needed. Built by Sam with [Claude Code](https://claude.com/claude-code),
 Anthropic's AI coding agent, which wrote the code under his direction
@@ -428,7 +428,7 @@ threshold.
 This repository was built in supervised sessions with
 [Claude Code](https://claude.com/claude-code), Anthropic's AI coding agent,
 which wrote the code, the tests and the documentation under Sam's direction.
-Every commit carries its `Co-Authored-By` trailer. The sessions are visible in `git log` if you look at the timestamps, and
+The sessions are visible in `git log` if you look at the timestamps, and
 `git log --format=%ad --date=iso` will show you exactly when the work happened —
 including that it is more than one sitting, with a long gap in the middle. It is
 stated here rather than left to be inferred. No figure is quoted because it grows

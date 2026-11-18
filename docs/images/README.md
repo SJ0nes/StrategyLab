@@ -11,9 +11,13 @@ at a throwaway copy of the project and with every `T212_*` variable removed, so
 it had no venue key ("No venue key set" in the top bar) and could reach no
 account. The copy held `protocol.yaml`, `configs/`, the price caches under
 `data/`, the built page, and from `state/` only the hundred-trial search
-artifact of 2026-11-10 and the graveyard. It held no deployment, account log,
-fills log, job or confirmation, so the window shows `ma_crossover` as a draft.
-No button was pressed except the menu and the Tests row that opens its detail.
+artifact of 2026-11-10 and the graveyard, plus a `state/window.json` written
+by hand to mark the tour as seen so its welcome did not cover the screens. It
+held no deployment, account log, fills log, job or confirmation, so the window
+shows `ma_crossover` as a draft. The screens were reached by setting the
+page's address to each section, the strategy dropdown was set to
+`ma_crossover`, and the only thing clicked was the Tests row that opens its
+detail; no button was pressed.
 The window was captured at 1440 x 810 CSS pixels, scale 1.5, over its
 debugging port. The growth figures beside each curve are a simulated
 backtest's equity from a 10,000 start, not an account.
