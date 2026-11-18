@@ -4,9 +4,9 @@
 fit to past prices.** It shows statistical validation (a search is compared
 with what the same search finds on 100 block-resampled copies of history),
 walk-forward testing on 2019–2024 data the search never sees (built and tested,
-never yet run: no strategy has earned it), and a strategy rejected: the best
-moving-average crossover's Sharpe ratio of 0.64 beat only 25 of 100 surrogates
-where 95 were needed. Built by Sam with [Claude Code](https://claude.com/claude-code),
+never yet run: no strategy has earned it), and a strategy rejected: the
+moving-average crossover the search put forward, by plateau score, had a Sharpe
+ratio of 0.64 that beat only 25 of 100 surrogates where 95 were needed. Built by Sam with [Claude Code](https://claude.com/claude-code),
 Anthropic's AI coding agent, which wrote the code under his direction
 ([how](#how-this-was-built)). Stack: Python 3.12 (pandas, NumPy, FastAPI,
 Typer; pytest, mypy `--strict`, ruff) and an Electron, React and TypeScript
@@ -15,7 +15,7 @@ desktop window.
 | | |
 |---|---|
 | ![The Dashboard: the strategy's rules in words and its path to deployment, stopped at the failed luck test](docs/images/app-dashboard.png) | ![Tests: the luck test on record, beat 25 of 100, needed 95](docs/images/app-tests.png) |
-| **Dashboard** — the rules in plain words, and the path to deployment stopped at the failed luck test. | **Tests** — every check on record; the luck test row opened. |
+| **Dashboard** — the rules in plain words, and the path to deployment: rules not yet confirmed, luck test failed. | **Tests** — every check on record; the luck test row opened. |
 | ![Improve: the 90-version grid of in-sample Sharpe ratios, with the chosen version's growth line](docs/images/app-improve.png) | ![Compare: two strategies' newest searches side by side](docs/images/app-compare.png) |
 | **Improve** — the 90 versions searched, scored on 2005–2018 prices. | **Compare** — the second strategy here exists only for this picture and has no luck test, so its higher score proves nothing. |
 
@@ -427,8 +427,8 @@ threshold.
 
 This repository was built in supervised sessions with
 [Claude Code](https://claude.com/claude-code), Anthropic's AI coding agent,
-which wrote the code, the tests and the documentation under Sam's direction;
-every commit carries its `Co-Authored-By` trailer. That is visible in `git log` if you look at the timestamps, and
+which wrote the code, the tests and the documentation under Sam's direction.
+Every commit carries its `Co-Authored-By` trailer. The sessions are visible in `git log` if you look at the timestamps, and
 `git log --format=%ad --date=iso` will show you exactly when the work happened —
 including that it is more than one sitting, with a long gap in the middle. It is
 stated here rather than left to be inferred. No figure is quoted because it grows

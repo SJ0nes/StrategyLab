@@ -15,7 +15,8 @@ artifact of 2026-11-10 and the graveyard. It held no deployment, account log,
 fills log, job or confirmation, so the window shows `ma_crossover` as a draft.
 No button was pressed except the menu and the Tests row that opens its detail.
 The window was captured at 1440 x 810 CSS pixels, scale 1.5, over its
-debugging port.
+debugging port. The growth figures beside each curve are a simulated
+backtest's equity from a 10,000 start, not an account.
 
 **Compare needs two strategies and the project has one.** For that picture
 only, the copy also held `configs/ma_cross_unfiltered.yaml`: `ma_crossover`
