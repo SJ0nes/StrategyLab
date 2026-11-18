@@ -1,5 +1,29 @@
 # StrategyLab
 
+**StrategyLab tests whether a trading strategy has a real edge or only a lucky
+fit to past prices.** It shows statistical validation (a search is compared
+with what the same search finds on 100 block-resampled copies of history),
+walk-forward testing on 2019–2024 data the search never sees (built and tested,
+never yet run: no strategy has earned it), and a strategy rejected: the best
+moving-average crossover's Sharpe ratio of 0.64 beat only 25 of 100 surrogates
+where 95 were needed. Built by Sam with [Claude Code](https://claude.com/claude-code),
+Anthropic's AI coding agent, which wrote the code under his direction
+([how](#how-this-was-built)). Stack: Python 3.12 (pandas, NumPy, FastAPI,
+Typer; pytest, mypy `--strict`, ruff) and an Electron, React and TypeScript
+desktop window.
+
+| | |
+|---|---|
+| ![The Dashboard: the strategy's rules in words and its path to deployment, stopped at the failed luck test](docs/images/app-dashboard.png) | ![Tests: the luck test on record, beat 25 of 100, needed 95](docs/images/app-tests.png) |
+| **Dashboard** — the rules in plain words, and the path to deployment stopped at the failed luck test. | **Tests** — every check on record; the luck test row opened. |
+| ![Improve: the 90-version grid of in-sample Sharpe ratios, with the chosen version's growth line](docs/images/app-improve.png) | ![Compare: two strategies' newest searches side by side](docs/images/app-compare.png) |
+| **Improve** — the 90 versions searched, scored on 2005–2018 prices. | **Compare** — the second strategy here exists only for this picture and has no luck test, so its higher score proves nothing. |
+
+*How these were taken, and what the throwaway copy behind them held, is in
+[docs/images/README.md](docs/images/README.md).*
+
+## What it is
+
 A research pipeline for testing whether a trading strategy has any real edge.
 It searches parameters on years of price history, tests the survivor on data the
 search was never allowed to see, and compares the result against what the same
@@ -11,11 +35,10 @@ combinations, something will always look profitable.** Most of the machinery her
 exists to tell that apart from an actual edge.
 
 *CI runs test, lint, and type-check on every push and every pull request
-([.github/workflows/ci.yml](.github/workflows/ci.yml)). No badge is embedded: a
-badge URL hardcodes the repository owner's account name, and this README
-deliberately names no account and no absolute path. That means this file makes no
-claim about whether the pipeline is currently green — check the Actions tab,
-which is the only place that answer is ever current.*
+([.github/workflows/ci.yml](.github/workflows/ci.yml)). No badge is embedded,
+so this file makes no claim about whether the pipeline is currently green —
+check the [Actions tab](https://github.com/SJ0nes/StrategyLab/actions), which
+is the only place that answer is ever current.*
 
 ## Current state
 
@@ -196,7 +219,7 @@ Three tests start the app's server as a child process and talk to it on
 `127.0.0.1`; that is this machine and goes no further.
 
 ```bash
-git clone <this-repo> && cd StrategyLab
+git clone https://github.com/SJ0nes/StrategyLab.git && cd StrategyLab
 uv run pytest                   # 2679 tests, none touching the network
 uv run strategylab status       # what exists, and what to run next
 ```
@@ -347,6 +370,13 @@ cells, none failed.
 | Noise gate | **Failed** |
 | Buy-and-hold over the candidate's own bars, no costs | Sharpe 0.483, drawdown 55.19% |
 
+![The noise ceiling: the 90 cells of the grid on the upper row, the best cell on each of 100 surrogates on the lower row, and the candidate at 0.640 left of the shaded median-to-95th-percentile band](docs/images/noise-ceiling.png)
+
+*The figure `strategylab report` draws from that artifact. Upper row: the 90
+cells. Lower row: the best cell the same grid found on each surrogate. The band
+runs from their median to their 95th percentile; the heavy marker is the
+candidate.*
+
 **What that says.** A surrogate is the real series resampled in 200-bar blocks:
 each block is a verbatim stretch of history, and the sequence across blocks is
 not the one that happened. The best cell the same grid finds on a surrogate
@@ -395,8 +425,10 @@ threshold.
 
 ## How this was built
 
-This repository was built in supervised sessions, pair-working with an AI
-assistant. That is visible in `git log` if you look at the timestamps, and
+This repository was built in supervised sessions with
+[Claude Code](https://claude.com/claude-code), Anthropic's AI coding agent,
+which wrote the code, the tests and the documentation under Sam's direction;
+every commit carries its `Co-Authored-By` trailer. That is visible in `git log` if you look at the timestamps, and
 `git log --format=%ad --date=iso` will show you exactly when the work happened —
 including that it is more than one sitting, with a long gap in the middle. It is
 stated here rather than left to be inferred. No figure is quoted because it grows
@@ -406,7 +438,7 @@ command cited beside it disproved. The command is the only honest form.
 
 What that does and does not mean:
 
-- **Every design decision was ratified by a human at three explicit gates**: the
+- **The early design decisions were ratified by a human at three explicit gates**: the
   pre-registration in `protocol.yaml`, a review of every module contract, and a
   check of the first fetched prices against known values. The contract review
   came before every implementation except `protocol.py`, which was already
@@ -419,6 +451,12 @@ What that does and does not mean:
   prompt proposed 30, and `min_sharpe` appears in no default at all. The amendments at the second gate were not — those came from
   reviewing the contracts, and they are recorded in `docs/decisions/0003`,
   including the one that is not a uniform tightening.
+- **Not every decision was his.** On 2026-11-10 he told the assistant to finish
+  the project and settle open questions itself. From then on each record in
+  `docs/decisions/` names who made it; several, starting with
+  [0012](docs/decisions/0012-the-noise-ceiling-becomes-a-gate.md), the rule
+  that turned the noise ceiling into a gate, were the assistant's and have not
+  been ratified.
 - **Every change-set was reviewed by read-only audit agents** — one checking
   implementations against their docstring contracts, one recomputing every
   hardcoded number in the tests from first principles without reading the
